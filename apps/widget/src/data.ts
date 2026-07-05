@@ -118,8 +118,9 @@ export function subscribeMyGroupConversations(
 }
 
 /**
- * Conversación destino del chat grupal: el segmento activo (no resuelto) o uno
- * nuevo (copiando participantes del último), cuando el actual quedó resuelto.
+ * Conversación destino del chat grupal: el segmento ACTIVO (no resuelto) o uno
+ * NUEVO (copiando participantes del último) si el actual quedó resuelto. Igual que
+ * las directas: el chat de equipo contiene múltiples conversaciones segmentadas.
  */
 export async function ensureGroupConversation(
   fb: WidgetFirebase,
@@ -141,7 +142,7 @@ export async function ensureGroupConversation(
 
   const base = grupos[0]?.data() as Conversation | undefined;
   const ref = doc(collection(fb.db, 'conversations'));
-  const conv: Record<string, unknown> = {
+  await setDoc(ref, {
     tipo: 'grupo',
     siteId: session.siteId,
     clientId: base?.clientId ?? session.clientId,
@@ -155,8 +156,7 @@ export async function ensureGroupConversation(
     idioma: session.idioma,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
-  };
-  await setDoc(ref, conv);
+  });
   return ref.id;
 }
 
@@ -232,8 +232,11 @@ export function convSubcanal(data: { subcanal?: 'bot' | 'agente' }): 'bot' | 'ag
 }
 
 /**
- * Crea (si hace falta) la conversación directa activa del contacto en SU
- * subcanal: 'bot' (Preguntas del sistema) o 'agente' (Hablar con un agente).
+ * Conversación directa ACTIVA del contacto en su subcanal ('bot' o 'agente'). El
+ * "chat" (hilo) es único por (contacto, subcanal), pero contiene MÚLTIPLES
+ * conversaciones: si la activa está resuelta se abre una NUEVA (segmento), que se
+ * suma al historial de resueltas. Nunca reabre (no pierde el cierre); al haber a
+ * lo sumo una activa por (contacto, subcanal), tampoco duplica el chat.
  */
 export async function ensureDirectConversation(
   fb: WidgetFirebase,
