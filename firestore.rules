@@ -64,12 +64,17 @@ service cloud.firestore {
       }
 
       allow read: if isAgent() || participaEnConv();
-      // El contacto solo crea conversaciones directas propias, de su sitio/cliente.
+      // El contacto crea sus conversaciones directas propias, o un nuevo segmento
+      // del chat grupal de su cliente (siempre incluyéndose en participantes), de
+      // su sitio. Los segmentos de grupo se encadenan como las directas.
       allow create: if isAgent() || (
         isContact() &&
-        request.resource.data.tipo == 'directa' &&
-        request.resource.data.contactId == myContactId() &&
-        request.resource.data.siteId == request.auth.token.siteId
+        request.resource.data.siteId == request.auth.token.siteId && (
+          (request.resource.data.tipo == 'directa' &&
+            request.resource.data.contactId == myContactId()) ||
+          (request.resource.data.tipo == 'grupo' &&
+            myContactId() in request.resource.data.participantes)
+        )
       );
       // Contacto: solo campos de actividad (lastMessage/unread/updatedAt) vía su chat.
       allow update: if isAgent() || (
@@ -176,7 +181,9 @@ service cloud.firestore {
 
     // --------------------------------------------------------------------- CSAT
     match /csat/{id} {
-      allow read: if isAgent();
+      // Agentes leen todo; un contacto solo sus propias valoraciones (para que el
+      // widget sepa qué conversaciones ya calificó y no vuelva a pedir CSAT).
+      allow read: if isAgent() || (isContact() && resource.data.contactId == myContactId());
       allow create: if isContact() && request.resource.data.contactId == myContactId();
       allow update, delete: if false;
     }

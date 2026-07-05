@@ -50,6 +50,27 @@ export interface WidgetConfig {
   botonAgente: boolean;
   /** Chat de equipo por clientId — el botón solo aparece si está activo. */
   botonChatEquipo: boolean;
+  /**
+   * Overrides opcionales del texto e icono de cada botón de inicio. Si el texto
+   * está vacío se usa el default de i18n; si el icono está vacío se usa el icono
+   * Material por defecto (smart_toy / support_agent / groups). El icono es la URL
+   * de una imagen subida a Storage.
+   */
+  botonBotTexto?: string;
+  botonBotIcono?: string;
+  botonAgenteTexto?: string;
+  botonAgenteIcono?: string;
+  botonEquipoTexto?: string;
+  botonEquipoIcono?: string;
+  /**
+   * Primer mensaje (bienvenida) que ve el usuario al iniciar una conversación,
+   * por canal. Soportan `{nombre}`. Si `mensajeAI` está vacío, se usa el
+   * `saludo` del bot; si `mensajeAgente` está vacío, un default de i18n.
+   */
+  mensajeAI?: string;
+  mensajeAgente?: string;
+  /** Respuesta automática del canal de agente cuando escriben fuera de horario. */
+  mensajeFueraHorario?: string;
   ocultarBurbuja: boolean;
   zIndex?: number;
 }
@@ -218,6 +239,9 @@ export interface Conversation {
   resueltaPor?: string;
   resueltaNombre?: string;
   resueltaAt?: unknown;
+  /** Calificación CSAT recibida para esta conversación (1–5). La escribe `metricsOnCsat`. */
+  csatRating?: 1 | 2 | 3 | 4 | 5;
+  csatAt?: unknown;
   /** Intentos del bot sin resolver (para escalamiento automático). */
   botIntentos?: number;
   lastMessage?: {
@@ -251,6 +275,8 @@ export interface Message {
   ticketRef?: { ticketId: string; numero: number } | null;
   /** Nota interna de agente — nunca visible en el widget. */
   interno?: boolean;
+  /** Mensaje de bienvenida automático (primer mensaje). No dispara SLA ni push. */
+  bienvenida?: boolean;
   leidoPor?: string[];
   createdAt: unknown;
 }

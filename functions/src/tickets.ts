@@ -143,6 +143,9 @@ async function linkConversation(
   agenteNombre: string,
 ): Promise<void> {
   const convRef = db.doc(`conversations/${conversationId}`);
+  // NO se bumpea `updatedAt`: si la conversación está resuelta (historial), no debe
+  // saltar a "activa" en el hilo — el mensaje queda como parte de ESA conversación
+  // (al final de su bloque, por fecha), no suelto al fondo del hilo.
   await convRef.collection('messages').add({
     sender: { tipo: 'sistema', id: 'sistema', nombre: 'Sistema' },
     texto: `${agenteNombre} creó un ticket a partir de esta conversación`,
@@ -150,5 +153,4 @@ async function linkConversation(
     ticketRef: { ticketId, numero },
     createdAt: FieldValue.serverTimestamp(),
   });
-  await convRef.update({ updatedAt: FieldValue.serverTimestamp() });
 }

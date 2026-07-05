@@ -16,6 +16,7 @@ import {
 } from 'firebase/firestore';
 import type {
   Conversation,
+  CsatRating,
   Message,
   Ticket,
   TicketEvent,
@@ -74,6 +75,89 @@ export function subscribeMyConversations(
     }
     cb(rows);
   });
+}
+
+/**
+ * Segmentos del chat grupal del cliente donde participa el contacto. Se
+ * encadenan como las directas: la activa = la más reciente no resuelta.
+ * Consulta por `participantes` (respeta las reglas: el contacto solo lee
+ * grupos donde está).
+ */
+export function subscribeMyGroupConversations(
+  fb: WidgetFirebase,
+  session: WidgetSessionResponse,
+  cb: (convs: Doc<Conversation>[]) => void,
+): Unsubscribe {
+  // El filtro `tipo == 'grupo'` es OBLIGATORIO: la regla de lectura exige
+  // `tipo == 'grupo' && myContactId() in participantes`, y Firestore autoriza la
+  // query por alineación estática con la regla (sin él → permission-denied).
+  const q = query(
+    collection(fb.db, 'conversations'),
+    where('tipo', '==', 'grupo'),
+    where('participantes', 'array-contains', session.contactId),
+    orderBy('updatedAt', 'desc'),
+    limit(20),
+  );
+  const confirmadas = new Set<string>();
+  return onSnapshot(
+    q,
+    (snap) => {
+      const rows: Doc<Conversation>[] = [];
+      for (const d of snap.docs) {
+        if (!d.metadata.hasPendingWrites) confirmadas.add(d.id);
+        if (!confirmadas.has(d.id)) continue;
+        const data = d.data() as Conversation;
+        if (!session.clientId || data.clientId === session.clientId) {
+          rows.push({ id: d.id, data });
+        }
+      }
+      cb(rows);
+    },
+    () => cb([]), // degradar sin romper si la query falla
+  );
+}
+
+/**
+ * Conversación destino del chat grupal: el segmento activo (no resuelto) o uno
+ * nuevo (copiando participantes del último), cuando el actual quedó resuelto.
+ */
+export async function ensureGroupConversation(
+  fb: WidgetFirebase,
+  session: WidgetSessionResponse,
+): Promise<string> {
+  const q = query(
+    collection(fb.db, 'conversations'),
+    where('tipo', '==', 'grupo'),
+    where('participantes', 'array-contains', session.contactId),
+    orderBy('updatedAt', 'desc'),
+    limit(20),
+  );
+  const grupos = (await getDocs(q)).docs.filter((d) => {
+    const x = d.data() as Conversation;
+    return !session.clientId || x.clientId === session.clientId;
+  });
+  const activo = grupos.find((d) => (d.data() as Conversation).estado !== 'resolved');
+  if (activo) return activo.id;
+
+  const base = grupos[0]?.data() as Conversation | undefined;
+  const ref = doc(collection(fb.db, 'conversations'));
+  const conv: Record<string, unknown> = {
+    tipo: 'grupo',
+    siteId: session.siteId,
+    clientId: base?.clientId ?? session.clientId,
+    clientNombre: base?.clientNombre ?? session.clientNombre ?? session.clientId ?? '',
+    participantes: base?.participantes ?? [session.contactId],
+    participantesInfo: base?.participantesInfo ?? {
+      [session.contactId]: { nombre: session.nombre, tipo: 'user', rol: session.rol ?? '' },
+    },
+    estado: 'open',
+    unread: {},
+    idioma: session.idioma,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  };
+  await setDoc(ref, conv);
+  return ref.id;
 }
 
 /** Página de mensajes hacia atrás (estática) dentro de una conversación. */
@@ -326,6 +410,35 @@ export function subscribeTicketHistory(
 // ---------------------------------------------------------------------------
 // CSAT, adjuntos, reacciones y typing
 // ---------------------------------------------------------------------------
+
+/**
+ * Conversaciones que este contacto YA calificó (→ Map convId→rating). Persiste
+ * entre recargas sin depender del trigger de functions: leemos directamente las
+ * valoraciones propias (permitido por las reglas).
+ */
+export function subscribeMyCsat(
+  fb: WidgetFirebase,
+  session: WidgetSessionResponse,
+  cb: (rated: Map<string, number>) => void,
+): Unsubscribe {
+  const q = query(
+    collection(fb.db, 'csat'),
+    where('contactId', '==', session.contactId),
+    limit(200),
+  );
+  return onSnapshot(
+    q,
+    (snap) => {
+      const m = new Map<string, number>();
+      for (const d of snap.docs) {
+        const r = d.data() as CsatRating;
+        if (r.conversationId) m.set(r.conversationId, r.rating);
+      }
+      cb(m);
+    },
+    () => cb(new Map()), // degradar sin romper si la regla/consulta falla
+  );
+}
 
 export async function submitCsat(
   fb: WidgetFirebase,

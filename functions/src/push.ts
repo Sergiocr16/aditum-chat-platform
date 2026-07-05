@@ -66,7 +66,7 @@ export const pushNotify = onDocumentCreated(
   },
   async (event) => {
     const msg = event.data?.data() as Message | undefined;
-    if (!msg || msg.interno) return;
+    if (!msg || msg.interno || msg.bienvenida) return;
     if (msg.sender.tipo !== 'agent' && msg.sender.tipo !== 'bot') return;
 
     const convSnap = await db.doc(`conversations/${event.params.convId}`).get();

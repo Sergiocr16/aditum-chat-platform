@@ -1,3 +1,4 @@
+import type { VNode } from 'preact';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { Conversation, Message, WidgetSessionResponse } from '@aditum-chat/shared';
 import { categoryLabel, formatTicketNumber, makeT, widgetMessages } from '@aditum-chat/shared';
@@ -5,6 +6,7 @@ import {
   convSubcanal,
   editMessage,
   ensureDirectConversation,
+  ensureGroupConversation,
   fetchOlderMessages,
   formatTime,
   markRead,
@@ -12,9 +14,10 @@ import {
   sendMessage,
   setTyping,
   submitCsat,
-  subscribeConversation,
   subscribeLatestMessages,
   subscribeMyConversations,
+  subscribeMyCsat,
+  subscribeMyGroupConversations,
   subscribeTyping,
   toggleMute,
   toggleReaction,
@@ -25,6 +28,39 @@ import type { WidgetFirebase } from '../firebase.js';
 
 const EMOJIS = ['👍', '❤️', '😂', '😮', '🙏'];
 const PAGE = 30;
+
+/** Convierte URLs del texto en enlaces clicables (resto queda como texto plano). */
+function linkificar(texto: string): (string | VNode)[] {
+  const out: (string | VNode)[] = [];
+  const re = /(?:https?:\/\/|www\.)[^\s]+/gi;
+  let last = 0;
+  let i = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(texto))) {
+    if (m.index > last) out.push(texto.slice(last, m.index));
+    let url = m[0];
+    const trail = url.match(/[.,;:!?)\]]+$/);
+    const suffix = trail ? trail[0] : '';
+    if (suffix) url = url.slice(0, -suffix.length);
+    const href = url.startsWith('http') ? url : `https://${url}`;
+    out.push(
+      <a
+        key={i++}
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        class="ac-link-msg"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {url}
+      </a>,
+    );
+    if (suffix) out.push(suffix);
+    last = m.index + m[0].length;
+  }
+  if (last < texto.length) out.push(texto.slice(last));
+  return out;
+}
 
 /** Fila del hilo continuo: mensaje + conversación a la que pertenece. */
 interface Fila {
@@ -46,6 +82,8 @@ interface Props {
   onClose?(): void;
   /** Navega al chat de "Hablar con un agente" (chip y escalamiento del bot). */
   onIrAgente?(): void;
+  /** Abre el detalle de un ticket (chip de ticket en los mensajes). */
+  onIrTicket?(ticketId: string): void;
 }
 
 export function Chat({
@@ -58,6 +96,7 @@ export function Chat({
   onBack,
   onClose,
   onIrAgente,
+  onIrTicket,
 }: Props) {
   const t = makeT(widgetMessages, session.idioma);
   const grupo = tipo === 'grupo';
@@ -68,9 +107,10 @@ export function Chat({
   const [convsCargadas, setConvsCargadas] = useState(false);
   useEffect(() => {
     if (grupo) {
-      if (!session.grupoConversationId) return;
-      return subscribeConversation(fb, session.grupoConversationId, (c) => {
-        setConvsDesc(c ? [c] : []);
+      // El chat grupal se segmenta como las directas: todos los segmentos del
+      // cliente, activa = la más reciente no resuelta.
+      return subscribeMyGroupConversations(fb, session, (list) => {
+        setConvsDesc(list);
         setConvsCargadas(true);
       });
     }
@@ -88,6 +128,20 @@ export function Chat({
     [convsDesc],
   );
   const activa = convsDesc[0] ?? null; // la más reciente
+
+  // Conversaciones ya calificadas por este contacto (persiste entre recargas,
+  // sin depender del trigger de functions).
+  const [csatRateados, setCsatRateados] = useState<Map<string, number>>(new Map());
+  useEffect(() => {
+    if (grupo) return;
+    return subscribeMyCsat(fb, session, setCsatRateados);
+  }, [fb, session, grupo]);
+  const ratingDe = useCallback(
+    (convId: string): 1 | 2 | 3 | 4 | 5 | undefined =>
+      (csatRateados.get(convId) as 1 | 2 | 3 | 4 | 5 | undefined) ??
+      convPorId.get(convId)?.data.csatRating,
+    [csatRateados, convPorId],
+  );
 
   // Primera conversación: SOLO cuando ya llegó el primer snapshot y no hay ninguna
   // (evita crear conversaciones fantasma por la carrera del primer render).
@@ -174,12 +228,29 @@ export function Chat({
     }
   }
 
-  // Hilo final (dedup por id de mensaje en la frontera vivo/histórico).
+  // Hilo final. Dedup por clave COMPUESTA convId+msgId: el mismo mensaje puede
+  // quedar dos veces (al cambiar de conversación se vuelca lo vivo a `viejos` y
+  // luego `loadOlder` re-fetchea esa conversación), y los mensajes automáticos con
+  // id fijo (_bienvenida/_autorespuesta) se repiten entre conversaciones.
   const filas = useMemo(() => {
-    const idsViejos = new Set(viejos.map((f) => f.msg.id));
-    const todas = [...viejos, ...liveMsgs.filter((f) => !idsViejos.has(f.msg.id))];
-    return todas.filter((f) => !f.msg.data.interno);
+    const seen = new Set<string>();
+    const out: Fila[] = [];
+    for (const f of [...viejos, ...liveMsgs]) {
+      const k = `${f.convId}_${f.msg.id}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      if (!f.msg.data.interno) out.push(f);
+    }
+    return out;
   }, [viejos, liveMsgs]);
+
+  // Conversaciones que ya tienen tarjeta CSAT cargada (para no duplicar el
+  // separador "resuelta" cuando la encuesta actúa como cierre).
+  const convsConCsat = useMemo(() => {
+    const s = new Set<string>();
+    for (const f of filas) if (f.msg.data.tipoContenido === 'csat') s.add(f.convId);
+    return s;
+  }, [filas]);
 
   // Divisor "N MENSAJES NO LEÍDOS" (WhatsApp): id del primer mensaje entrante
   // de los últimos N recibidos al momento de abrir. Se congela una sola vez.
@@ -221,8 +292,27 @@ export function Chat({
   const [menuMsg, setMenuMsg] = useState<string | null>(null);
   const [typingNames, setTypingNames] = useState<string[]>([]);
   const [csatEnviados, setCsatEnviados] = useState<Set<string>>(new Set());
+  // Conversaciones cuyo "¡Gracias!" se muestra transitoriamente tras calificar
+  // (luego la tarjeta desaparece; en recargas ya no vuelve a salir).
+  const [graciasVisibles, setGraciasVisibles] = useState<Set<string>>(new Set());
+  const calificar = useCallback(
+    async (convId: string, r: 1 | 2 | 3 | 4 | 5) => {
+      setCsatEnviados((s) => new Set(s).add(convId));
+      setGraciasVisibles((s) => new Set(s).add(convId));
+      window.setTimeout(() => {
+        setGraciasVisibles((s) => {
+          const n = new Set(s);
+          n.delete(convId);
+          return n;
+        });
+      }, 3500);
+      await submitCsat(fb, session, convId, r);
+    },
+    [fb, session],
+  );
   const bodyRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const typingTimer = useRef<number | null>(null);
   const ajusteScroll = useRef<number | null>(null);
 
@@ -255,6 +345,20 @@ export function Chat({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filas.length, typingNames.length]);
 
+  // Auto-relleno del historial: si el contenido no llena el viewport y hay más
+  // (conversaciones/segmentos anteriores), cargar páginas hacia atrás. El usuario
+  // no puede hacer scroll para dispararlo cuando la conversación activa es corta
+  // (p. ej. un segmento de grupo recién abierto con 1 mensaje).
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el || cargandoMas || filas.length === 0) return;
+    if (hayMas && el.scrollHeight <= el.clientHeight + 8) {
+      ajusteScroll.current = el.scrollHeight;
+      void loadOlder();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filas.length, hayMas, cargandoMas]);
+
   // Al fijarse el divisor de no-leídos, llevar la vista ahí (no al fondo).
   useEffect(() => {
     if (!noLeidoDesde) return;
@@ -269,6 +373,18 @@ export function Chat({
       ajusteScroll.current = el.scrollHeight;
       void loadOlder();
     }
+  }
+
+  /** Scroll al mensaje original de un reply (estilo WhatsApp) + resaltado breve. */
+  function irAMensaje(messageId: string) {
+    const el = bodyRef.current?.querySelector<HTMLElement>(`[data-msgid="${messageId}"]`);
+    if (!el) return; // puede no estar cargado aún (historial paginado)
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    el.classList.remove('ac-burbuja-resaltada');
+    // reflow para reiniciar la animación si se toca dos veces seguidas
+    void el.offsetWidth;
+    el.classList.add('ac-burbuja-resaltada');
+    window.setTimeout(() => el.classList.remove('ac-burbuja-resaltada'), 1600);
   }
 
   const estado = activa?.data.estado ?? modo;
@@ -287,6 +403,19 @@ export function Chat({
           ? t('chat.enLinea')
           : t('chat.soporte');
 
+  // Saludo del BOT (primer mensaje, antes de escribir). El mensaje REAL lo crea el
+  // trigger al crear la conversación; esta versión VIRTUAL cubre el momento previo
+  // a escribir (activa resuelta o sin mensajes) y se oculta al llegar el real.
+  // El canal de AGENTE NO muestra saludo antes de escribir: responde después del
+  // primer mensaje (auto-respuesta / fuera de horario, vía trigger).
+  const esBotCanal = !grupo && session.botConfig.activo && modo === 'bot';
+  const bienvenida = (session.widgetConfig.mensajeAI?.trim() || session.botConfig.saludo || '')
+    .replace(/\{nombre\}/g, session.nombre.split(' ')[0]);
+  const mostrarBienvenida =
+    esBotCanal &&
+    !!bienvenida &&
+    (!activa || activa.data.estado === 'resolved' || filas.length === 0);
+
   function onInputDraft(value: string) {
     setDraft(value);
     if (!activa?.id) return;
@@ -298,9 +427,12 @@ export function Chat({
 
   /** Conversación destino para escribir: la activa si sigue abierta, o una nueva. */
   async function convParaEscribir(): Promise<string> {
-    if (grupo) return session.grupoConversationId!;
     if (activa && activa.data.estado !== 'resolved') return activa.id;
-    return ensureDirectConversation(fb, session, session.nombre, modo);
+    // Resuelta (o sin activa): se abre un segmento nuevo — el historial anterior
+    // queda con su cierre, igual que en las directas.
+    return grupo
+      ? ensureGroupConversation(fb, session)
+      : ensureDirectConversation(fb, session, session.nombre, modo);
   }
 
   async function submit() {
@@ -411,13 +543,39 @@ export function Chat({
         {filas.map((fila, i) => {
           const m = fila.msg;
           const prev = filas[i - 1];
+          const next = filas[i + 1];
           const cambioConv = prev && prev.convId !== fila.convId;
-          const convAnterior = cambioConv ? convPorId.get(prev.convId) : null;
+          const finDeConv = !next || next.convId !== fila.convId;
           const sep = dateSeparator(m, cambioConv ? undefined : prev?.msg, session.idioma);
           const own = m.data.sender.id === session.contactId;
           const sistema = m.data.sender.tipo === 'sistema';
           const csat = m.data.tipoContenido === 'csat';
           const esActiva = fila.convId === activa?.id;
+          const conv = convPorId.get(fila.convId);
+          const resuelta = conv?.data.estado === 'resolved';
+          // ¿Ya calificó esta conversación? Si sí, la tarjeta se oculta salvo el
+          // "¡Gracias!" transitorio justo tras calificar.
+          const yaCalifico = !!ratingDe(fila.convId) || csatEnviados.has(fila.convId);
+          const mostrarGracias = graciasVisibles.has(fila.convId);
+          const mostrarCsat = !yaCalifico || mostrarGracias;
+          // Marca "resuelta" derivada del estado (aparece de una, sin esperar
+          // el siguiente mensaje): encima de la tarjeta CSAT, o al final de la
+          // conversación si se resolvió sin encuesta.
+          // El separador de "resuelta" sí se muestra en grupos (marca el cierre de
+          // un segmento del historial); la encuesta CSAT no (queda con !grupo abajo).
+          const marcaResueltaAntes = resuelta && csat;
+          const marcaResueltaDespues =
+            resuelta && finDeConv && !csat && !convsConCsat.has(fila.convId);
+          const separadorResuelta = (
+            <div class="ac-sep ac-sep-conv">
+              <span class="ac-icon">check_circle</span>
+              {conv?.data.categoria
+                ? t('chat.convResuelta', {
+                    categoria: categoryLabel(conv.data.categoria, session.idioma),
+                  })
+                : t('chat.convResueltaSin')}
+            </div>
+          );
 
           return (
             <div key={`${fila.convId}_${m.id}`}>
@@ -428,37 +586,40 @@ export function Chat({
                     : t('chat.noLeidos', { n: unreadAlAbrir })}
                 </div>
               )}
-              {cambioConv && (
-                <div class="ac-sep ac-sep-conv">
-                  <span class="ac-icon">check_circle</span>
-                  {convAnterior?.data.categoria
-                    ? t('chat.convResuelta', {
-                        categoria: categoryLabel(convAnterior.data.categoria, session.idioma),
-                      })
-                    : t('chat.convResueltaSin')}
-                </div>
-              )}
               {sep && <div class="ac-sep">{sep}</div>}
+              {marcaResueltaAntes && separadorResuelta}
               {csat ? (
-                <CsatCard
-                  texto={m.data.texto}
-                  enviado={csatEnviados.has(fila.convId) || !esActiva}
-                  gracias={t('csat.gracias')}
-                  onRate={async (r) => {
-                    if (csatEnviados.has(fila.convId)) return;
-                    setCsatEnviados((s) => new Set(s).add(fila.convId));
-                    await submitCsat(fb, session, fila.convId, r);
-                  }}
-                />
+                mostrarCsat && (
+                  <CsatCard
+                    texto={m.data.texto}
+                    enviado={csatEnviados.has(fila.convId) || !esActiva || !!ratingDe(fila.convId)}
+                    rating={ratingDe(fila.convId)}
+                    gracias={t('csat.gracias')}
+                    onRate={(r) => {
+                      if (csatEnviados.has(fila.convId) || ratingDe(fila.convId)) return;
+                      void calificar(fila.convId, r);
+                    }}
+                  />
+                )
               ) : sistema ? (
                 <div class="ac-msg-sistema">
                   {m.data.texto}
-                  {m.data.ticketRef && (
-                    <span class="ac-ticket-chip">
-                      <span class="ac-icon">confirmation_number</span>
-                      {formatTicketNumber(m.data.ticketRef.numero)}
-                    </span>
-                  )}
+                  {m.data.ticketRef &&
+                    (onIrTicket ? (
+                      <button
+                        type="button"
+                        class="ac-ticket-chip ac-ticket-chip-btn"
+                        onClick={() => onIrTicket(m.data.ticketRef!.ticketId)}
+                      >
+                        <span class="ac-icon">confirmation_number</span>
+                        {formatTicketNumber(m.data.ticketRef.numero)}
+                      </button>
+                    ) : (
+                      <span class="ac-ticket-chip">
+                        <span class="ac-icon">confirmation_number</span>
+                        {formatTicketNumber(m.data.ticketRef.numero)}
+                      </span>
+                    ))}
                 </div>
               ) : (
                 <div class={`ac-msg ${own ? 'ac-msg-own' : 'ac-msg-other'}`}>
@@ -473,6 +634,7 @@ export function Chat({
                   )}
                   <div
                     class={`ac-burbuja ${own ? 'ac-burbuja-own' : ''}`}
+                    data-msgid={m.id}
                     onDblClick={() => setMenuMsg(menuMsg === m.id ? null : m.id)}
                   >
                     <button
@@ -494,19 +656,39 @@ export function Chat({
                       </div>
                     )}
                     {m.data.replyTo && (
-                      <div class="ac-reply-ref">
+                      <button
+                        type="button"
+                        class="ac-reply-ref"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          irAMensaje(m.data.replyTo!.messageId);
+                        }}
+                      >
                         <span class="ac-reply-nombre">{m.data.replyTo.senderNombre}</span>
                         <span class="ac-reply-texto">{m.data.replyTo.texto}</span>
-                      </div>
+                      </button>
                     )}
                     <Adjuntos m={m.data} />
-                    {m.data.texto && <div class="ac-msg-texto">{m.data.texto}</div>}
-                    {m.data.ticketRef && (
-                      <div class="ac-ticket-chip">
-                        <span class="ac-icon">confirmation_number</span>
-                        {formatTicketNumber(m.data.ticketRef.numero)}
-                      </div>
-                    )}
+                    {m.data.texto && <div class="ac-msg-texto">{linkificar(m.data.texto)}</div>}
+                    {m.data.ticketRef &&
+                      (onIrTicket ? (
+                        <button
+                          type="button"
+                          class="ac-ticket-chip ac-ticket-chip-btn"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onIrTicket(m.data.ticketRef!.ticketId);
+                          }}
+                        >
+                          <span class="ac-icon">confirmation_number</span>
+                          {formatTicketNumber(m.data.ticketRef.numero)}
+                        </button>
+                      ) : (
+                        <div class="ac-ticket-chip">
+                          <span class="ac-icon">confirmation_number</span>
+                          {formatTicketNumber(m.data.ticketRef.numero)}
+                        </div>
+                      ))}
                     <div class="ac-msg-meta">
                       {m.data.editadoAt && <span>{t('chat.editado')} · </span>}
                       {formatTime(m.data.createdAt)}
@@ -540,11 +722,25 @@ export function Chat({
                             setReplyTo(fila);
                             setEditando(null);
                             setMenuMsg(null);
+                            // Foco inmediato en el input para responder de una vez.
+                            requestAnimationFrame(() => inputRef.current?.focus());
                           }}
                         >
                           <span class="ac-icon">reply</span>
                           {session.idioma === 'es' ? 'Responder' : 'Reply'}
                         </button>
+                        {m.data.texto && (
+                          <button
+                            class="ac-msg-menu-item"
+                            onClick={() => {
+                              setMenuMsg(null);
+                              void navigator.clipboard?.writeText(m.data.texto);
+                            }}
+                          >
+                            <span class="ac-icon">content_copy</span>
+                            {session.idioma === 'es' ? 'Copiar' : 'Copy'}
+                          </button>
+                        )}
                         {own && m.data.tipoContenido === 'texto' && esActiva && (
                           <button
                             class="ac-msg-menu-item"
@@ -553,6 +749,7 @@ export function Chat({
                               setReplyTo(null);
                               setDraft(m.data.texto);
                               setMenuMsg(null);
+                              requestAnimationFrame(() => inputRef.current?.focus());
                             }}
                           >
                             <span class="ac-icon">edit</span>
@@ -564,9 +761,39 @@ export function Chat({
                   </div>
                 </div>
               )}
+              {marcaResueltaDespues && (
+                <>
+                  {separadorResuelta}
+                  {/* La encuesta CSAT es solo para conversaciones directas, nunca
+                      en el chat global de grupo. */}
+                  {!grupo && esActiva && mostrarCsat && (
+                    <CsatCard
+                      texto={t('csat.pregunta')}
+                      enviado={csatEnviados.has(fila.convId) || !!ratingDe(fila.convId)}
+                      rating={ratingDe(fila.convId)}
+                      gracias={t('csat.gracias')}
+                      onRate={(r) => {
+                        if (csatEnviados.has(fila.convId) || ratingDe(fila.convId)) return;
+                        void calificar(fila.convId, r);
+                      }}
+                    />
+                  )}
+                </>
+              )}
             </div>
           );
         })}
+
+        {mostrarBienvenida && (
+          <div class="ac-msg ac-msg-other ac-bienvenida">
+            <div class="ac-msg-avatar" data-tipo={esBotCanal ? 'bot' : 'agent'}>
+              <span class="ac-icon">{esBotCanal ? 'smart_toy' : 'support_agent'}</span>
+            </div>
+            <div class="ac-burbuja">
+              <div class="ac-msg-texto">{linkificar(bienvenida)}</div>
+            </div>
+          </div>
+        )}
 
         {typingNames.length > 0 && (
           <div class="ac-msg ac-msg-other">
@@ -638,6 +865,7 @@ export function Chat({
           <span class="ac-icon">attach_file</span>
         </button>
         <textarea
+          ref={inputRef}
           class="ac-input"
           rows={1}
           placeholder={grupo ? t('chat.placeholderGrupo') : t('chat.placeholder')}
@@ -709,20 +937,33 @@ function Reacciones({
 function CsatCard({
   texto,
   enviado,
+  rating,
   gracias,
   onRate,
 }: {
   texto: string;
   enviado: boolean;
+  rating?: 1 | 2 | 3 | 4 | 5;
   gracias: string;
   onRate(r: 1 | 2 | 3 | 4 | 5): void;
 }) {
   const [hover, setHover] = useState(0);
   const [sel, setSel] = useState(0);
+  const marcadas = rating || sel;
   return (
     <div class="ac-csat">
       <div class="ac-csat-txt">{enviado ? gracias : texto}</div>
-      {!enviado && (
+      {enviado ? (
+        marcadas > 0 && (
+          <div class="ac-csat-stars ac-csat-stars-ro">
+            {[1, 2, 3, 4, 5].map((n) => (
+              <span key={n} class={`ac-star ${n <= marcadas ? 'ac-star-on' : ''}`}>
+                <span class="ac-icon">star</span>
+              </span>
+            ))}
+          </div>
+        )
+      ) : (
         <div class="ac-csat-stars">
           {[1, 2, 3, 4, 5].map((n) => (
             <button

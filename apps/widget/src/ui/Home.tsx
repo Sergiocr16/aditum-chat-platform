@@ -35,6 +35,14 @@ export function Home({ fb, session, go, directaBot, directaAgente, grupo, activo
   const Badge = ({ n, muted }: { n: number; muted?: boolean }) =>
     n > 0 ? <span class={`ac-accion-badge ${muted ? 'ac-accion-badge-muted' : ''}`}>{n}</span> : null;
 
+  // Icono del botón: imagen configurada por el sitio o el icono Material por defecto.
+  const IcoBoton = ({ url, icono }: { url?: string; icono: string }) =>
+    url ? (
+      <img class="ac-accion-ico-img" src={url} alt="" />
+    ) : (
+      <span class="ac-icon ac-accion-ico">{icono}</span>
+    );
+
   const activoBot = activo?.view === 'chat' && activo.modo === 'bot';
   const activoAgente = activo?.view === 'chat' && activo.modo === 'open';
   const activoGrupo = activo?.view === 'grupo';
@@ -60,26 +68,27 @@ export function Home({ fb, session, go, directaBot, directaAgente, grupo, activo
       <div class="ac-home-acciones">
         {cfg.botonBot && session.botConfig.activo && (
           <button class={`ac-accion ${activoBot ? 'ac-accion-on' : ''}`} onClick={() => go('chat', { modo: 'bot' })}>
-            <span class="ac-icon ac-accion-ico">smart_toy</span>
-            <span class="ac-accion-txt">{t('inicio.preguntasSistema')}</span>
+            <IcoBoton url={cfg.botonBotIcono} icono="smart_toy" />
+            <span class="ac-accion-txt">{cfg.botonBotTexto || t('inicio.preguntasSistema')}</span>
+            <span class="ac-accion-ai">AI</span>
             <Badge n={unreadBot} />
-            <span class="ac-icon ac-accion-flecha">arrow_forward</span>
+            <span class="ac-icon ac-accion-flecha">{activoBot ? 'chevron_left' : 'chevron_right'}</span>
           </button>
         )}
         {cfg.botonAgente && (
           <button class={`ac-accion ${activoAgente ? 'ac-accion-on' : ''}`} onClick={() => go('chat', { modo: 'open' })}>
-            <span class="ac-icon ac-accion-ico">support_agent</span>
-            <span class="ac-accion-txt">{t('inicio.hablarAgente')}</span>
+            <IcoBoton url={cfg.botonAgenteIcono} icono="support_agent" />
+            <span class="ac-accion-txt">{cfg.botonAgenteTexto || t('inicio.hablarAgente')}</span>
             <Badge n={unreadAgente} />
-            <span class="ac-icon ac-accion-flecha">arrow_forward</span>
+            <span class="ac-icon ac-accion-flecha">{activoAgente ? 'chevron_left' : 'chevron_right'}</span>
           </button>
         )}
         {cfg.botonChatEquipo && session.grupoConversationId && (
           <button class={`ac-accion ${activoGrupo ? 'ac-accion-on' : ''}`} onClick={() => go('grupo')}>
-            <span class="ac-icon ac-accion-ico">groups</span>
-            <span class="ac-accion-txt">{t('inicio.chatEquipo')}</span>
+            <IcoBoton url={cfg.botonEquipoIcono} icono="groups" />
+            <span class="ac-accion-txt">{cfg.botonEquipoTexto || t('inicio.chatEquipo')}</span>
             <Badge n={unreadGrupo} muted={grupoSilenciado} />
-            <span class="ac-icon ac-accion-flecha">arrow_forward</span>
+            <span class="ac-icon ac-accion-flecha">{activoGrupo ? 'chevron_left' : 'chevron_right'}</span>
           </button>
         )}
       </div>

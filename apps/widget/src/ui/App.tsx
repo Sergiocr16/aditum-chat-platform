@@ -3,7 +3,13 @@ import type { AditumChatSettings, Conversation, WidgetSessionResponse } from '@a
 import { makeT, widgetMessages } from '@aditum-chat/shared';
 import { getWidgetFirebase, signIn, type WidgetFirebase } from '../firebase.js';
 import { openSession, usesEmulators } from '../session.js';
-import { convSubcanal, subscribeConversation, subscribeMyConversations, toDate, type Doc } from '../data.js';
+import {
+  convSubcanal,
+  subscribeMyConversations,
+  subscribeMyGroupConversations,
+  toDate,
+  type Doc,
+} from '../data.js';
 import { playNotificationSound } from '../sound.js';
 import { Home } from './Home.js';
 import { Chat } from './Chat.js';
@@ -84,8 +90,9 @@ export function App({ settings, onReady, emit }: Props) {
     if (state.status !== 'ready') return;
     const { fb, session } = state;
     const u1 = subscribeMyConversations(fb, session, setDirectas);
+    // Chat grupal segmentado: el badge usa el segmento más reciente.
     const u2 = session.grupoConversationId
-      ? subscribeConversation(fb, session.grupoConversationId, setGrupo)
+      ? subscribeMyGroupConversations(fb, session, (list) => setGrupo(list[0] ?? null))
       : undefined;
     return () => {
       u1();
@@ -302,6 +309,7 @@ export function App({ settings, onReady, emit }: Props) {
                         setChatModo('open');
                         setUnreadAlAbrir(directaAgente?.data.unread?.[contactId] ?? 0);
                       }}
+                      onIrTicket={(id) => go('tickets', { ticketId: id })}
                     />
                   )}
                   {view === 'grupo' && (
@@ -313,6 +321,7 @@ export function App({ settings, onReady, emit }: Props) {
                       mostrarVolver={false}
                       onBack={() => {}}
                       onClose={() => setView('inicio')}
+                      onIrTicket={(id) => go('tickets', { ticketId: id })}
                     />
                   )}
                   {view === 'tickets' && ticketSel && (
@@ -413,6 +422,7 @@ export function App({ settings, onReady, emit }: Props) {
                       setChatModo('open');
                       setUnreadAlAbrir(directaAgente?.data.unread?.[contactId] ?? 0);
                     }}
+                    onIrTicket={(id) => go('tickets', { ticketId: id })}
                   />
                 )}
                 {view === 'grupo' && (
@@ -429,6 +439,7 @@ export function App({ settings, onReady, emit }: Props) {
                       setUnreadAlAbrir(0);
                       setView('inicio');
                     }}
+                    onIrTicket={(id) => go('tickets', { ticketId: id })}
                   />
                 )}
                 {view === 'tickets' && (

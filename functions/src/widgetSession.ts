@@ -155,41 +155,56 @@ function esAdministrador(claims: EncryptedPayloadClaims): boolean {
   return (claims.rol ?? '').toLowerCase().includes('admin');
 }
 
+/**
+ * El chat grupal se segmenta como las directas: varias conversaciones por
+ * cliente, la activa = la más reciente no resuelta. Esta función NO crea
+ * segmentos nuevos vacíos (eso ocurre al escribir); solo garantiza el canal la
+ * primera vez y agrega a este admin como participante de TODOS los segmentos
+ * (para que pueda leer el historial), devolviendo el más reciente.
+ */
 async function ensureGroupConversation(
   siteId: string,
   clientId: string,
   contactId: string,
   claims: EncryptedPayloadClaims,
 ): Promise<string> {
-  const convId = groupConversationIdFor(siteId, clientId);
-  const ref = db.doc(`conversations/${convId}`);
-  const snap = await ref.get();
-  if (!snap.exists) {
-    await ref.set({
+  const info = { nombre: claims.nombre, tipo: 'user', rol: claims.rol ?? '' };
+  const snap = await db
+    .collection('conversations')
+    .where('tipo', '==', 'grupo')
+    .where('clientId', '==', clientId)
+    .orderBy('updatedAt', 'desc')
+    .limit(20)
+    .get();
+
+  if (snap.empty) {
+    // Primera vez: crea el segmento base con id determinístico.
+    const convId = groupConversationIdFor(siteId, clientId);
+    await db.doc(`conversations/${convId}`).set({
       tipo: 'grupo',
       siteId,
       clientId,
       clientNombre: claims.condominio ?? clientId,
       participantes: [contactId],
-      participantesInfo: {
-        [contactId]: { nombre: claims.nombre, tipo: 'user', rol: claims.rol ?? '' },
-      },
+      participantesInfo: { [contactId]: info },
       estado: 'open',
       unread: {},
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
     });
-  } else {
-    await ref.update({
+    return convId;
+  }
+
+  // Suma a este admin a todos los segmentos existentes (acceso al historial).
+  const batch = db.batch();
+  for (const d of snap.docs) {
+    batch.update(d.ref, {
       participantes: FieldValue.arrayUnion(contactId),
-      [`participantesInfo.${contactId}`]: {
-        nombre: claims.nombre,
-        tipo: 'user',
-        rol: claims.rol ?? '',
-      },
+      [`participantesInfo.${contactId}`]: info,
     });
   }
-  return convId;
+  await batch.commit();
+  return snap.docs[0].id; // el más reciente (activo o resuelto)
 }
 
 function stripUndefined(obj: Record<string, unknown>): void {

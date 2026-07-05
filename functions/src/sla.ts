@@ -51,7 +51,7 @@ export const firstResponseTracker = onDocumentCreated(
   { document: 'conversations/{convId}/messages/{msgId}', region: 'us-central1' },
   async (event) => {
     const msg = event.data?.data() as Message | undefined;
-    if (!msg || msg.sender.tipo !== 'agent' || msg.interno) return;
+    if (!msg || msg.sender.tipo !== 'agent' || msg.interno || msg.bienvenida) return;
     const convRef = db.doc(`conversations/${event.params.convId}`);
     const convSnap = await convRef.get();
     const conv = convSnap.data() as Conversation | undefined;

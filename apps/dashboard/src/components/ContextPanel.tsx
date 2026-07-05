@@ -1,10 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { Client, Ticket } from '@aditum-chat/shared';
-import { categoryLabel, formatTicketNumber } from '@aditum-chat/shared';
+import { categoryLabel, ticketStatusLabels } from '@aditum-chat/shared';
 import { useAuth } from '@/lib/auth';
 import { useT } from '@/lib/i18n';
+import { ConvHistorialRow, PanelLista, TicketCard } from './PanelLista';
 import {
   fmtFecha,
   fmtRelativo,
@@ -15,19 +16,23 @@ import {
   useResolvedConversations,
   type Row,
 } from '@/lib/data';
+import type { Conversation } from '@aditum-chat/shared';
 import { toggleContactTag, useTags } from '@/lib/data-tags';
-import { TicketEstadoChip } from './chips';
+import { ConvertTicketModal } from './ConvertTicketModal';
 import { EtiquetasBlock } from './TagAssign';
 import { TicketDetailModal } from './TicketDetailModal';
 
 export function ContextPanel({
   contactId,
   onScrollToConversation,
+  onTicketCreado,
   width,
 }: {
   contactId: string;
   /** Sube el hilo continuo a una conversación anterior (sin reabrirla). */
   onScrollToConversation?(convId: string): void;
+  /** Tras crear un ticket de una conversación: refresca su bloque y salta a ella. */
+  onTicketCreado?(convId: string): void;
   /** Ancho controlado (columna redimensionable del inbox). */
   width?: number;
 }) {
@@ -40,6 +45,17 @@ export function ContextPanel({
   const siteTags = useTags(contact?.data.siteId ?? null);
   const idioma = agent?.idioma ?? 'es';
   const [ticketSel, setTicketSel] = useState<Row<Ticket> | null>(null);
+  const [convConvertir, setConvConvertir] = useState<Row<Conversation> | null>(null);
+  const [menuConv, setMenuConv] = useState<string | null>(null);
+  // Tickets ya creados desde cada conversación (pueden ser varios).
+  const ticketsPorConv = useMemo(() => {
+    const m = new Map<string, Row<Ticket>[]>();
+    for (const tk of tickets) {
+      const cid = tk.data.conversationId;
+      if (cid) (m.get(cid) ?? m.set(cid, []).get(cid)!).push(tk);
+    }
+    return m;
+  }, [tickets]);
 
   if (!contact) return null;
   const c = contact.data;
@@ -96,63 +112,6 @@ export function ContextPanel({
         </Section>
       )}
 
-      {/* Tickets previos — clic abre el detalle del ticket */}
-      {tickets.length > 0 && (
-        <Section title={t('ctx.ticketsPrevios')} count={tickets.length}>
-          <div className="flex flex-col">
-            {tickets.slice(0, 6).map((tk) => (
-              <button
-                key={tk.id}
-                onClick={() => setTicketSel(tk)}
-                className="group flex items-center gap-2 w-full text-left rounded-lg px-2 -mx-2 py-1.5 outline-none transition-colors hover:bg-cream-1 focus-visible:bg-cream-1"
-              >
-                <span className="font-mono text-[11px] font-semibold text-warm-gray-2 flex-none">
-                  {formatTicketNumber(tk.data.numero)}
-                </span>
-                <span className="text-[12px] text-ink truncate flex-1">{tk.data.asunto}</span>
-                <TicketEstadoChip estado={tk.data.estado} idioma={idioma} />
-                <span className="msr text-[16px] text-warm-gray-3 group-hover:text-navy flex-none">
-                  chevron_right
-                </span>
-              </button>
-            ))}
-          </div>
-        </Section>
-      )}
-
-      {/* Conversaciones anteriores — clic abre la conversación completa */}
-      {anteriores.length > 0 && (
-        <Section title={t('inbox.convAnteriores')} count={anteriores.length}>
-          <div className="flex flex-col gap-0.5">
-            {anteriores.map((cv) => (
-              <button
-                key={cv.id}
-                onClick={() => onScrollToConversation?.(cv.id)}
-                title={t('inbox.verCompleta')}
-                className="group w-full text-left rounded-lg px-2 -mx-2 py-2 outline-none transition-colors hover:bg-cream-1 focus-visible:bg-cream-1"
-              >
-                <div className="flex items-center gap-1.5">
-                  <span className="msr text-[15px] text-warm-gray-3 group-hover:text-navy flex-none">
-                    forum
-                  </span>
-                  <span className="text-[9px] font-bold tracking-wide bg-cream-2 text-warm-gray px-1.5 py-0.5 rounded-full">
-                    {categoryLabel(cv.data.categoria, idioma).toUpperCase() || '—'}
-                  </span>
-                  <span className="text-[10px] text-warm-gray-2 ml-auto flex-none">
-                    {fmtFecha(cv.data.resueltaAt ?? cv.data.updatedAt)}
-                  </span>
-                </div>
-                {cv.data.lastMessage?.texto && (
-                  <div className="text-[11px] text-warm-gray truncate mt-1 pl-[21px]">
-                    {cv.data.lastMessage.texto}
-                  </div>
-                )}
-              </button>
-            ))}
-          </div>
-        </Section>
-      )}
-
       {/* Etiquetas del residente (catálogo por sitio) */}
       <Section title={t('ctx.etiquetas')} count={tagsAsignados.length || undefined}>
         <EtiquetasBlock
@@ -163,6 +122,54 @@ export function ContextPanel({
           emptyLabel={t('ctx.sinEtiquetasSitio')}
         />
       </Section>
+
+      {/* Tickets previos — clic abre el detalle del ticket */}
+      {tickets.length > 0 && (
+        <Section title={t('ctx.ticketsPrevios')} count={tickets.length}>
+          <PanelLista
+            items={tickets}
+            idioma={idioma}
+            gap="gap-1.5"
+            keyDe={(tk) => tk.id}
+            filtroDe={(tk) => tk.data.estado}
+            etiquetaFiltro={(k) => ticketStatusLabels[idioma][k as Ticket['estado']]}
+            render={(tk) => <TicketCard tk={tk} idioma={idioma} onClick={() => setTicketSel(tk)} />}
+          />
+        </Section>
+      )}
+
+      {/* Conversaciones anteriores — clic abre la conversación completa */}
+      {anteriores.length > 0 && (
+        <Section title={t('inbox.convAnteriores')} count={anteriores.length}>
+          <PanelLista
+            items={anteriores}
+            idioma={idioma}
+            keyDe={(cv) => cv.id}
+            filtroDe={(cv) => cv.data.categoria || undefined}
+            etiquetaFiltro={(k) => categoryLabel(k, idioma)}
+            filtroSelect
+            render={(cv) => (
+              <ConvHistorialRow
+                cv={cv}
+                idioma={idioma}
+                tickets={ticketsPorConv.get(cv.id) ?? []}
+                abierto={menuConv === cv.id}
+                onMenu={() => setMenuConv((p) => (p === cv.id ? null : cv.id))}
+                onAbrir={() => onScrollToConversation?.(cv.id)}
+                onCrearTicket={() => {
+                  setConvConvertir(cv);
+                  setMenuConv(null);
+                }}
+                onVerTicket={(tk) => {
+                  setTicketSel(tk);
+                  setMenuConv(null);
+                }}
+                verCompleta={t('inbox.verCompleta')}
+              />
+            )}
+          />
+        </Section>
+      )}
 
       {/* Atributos rápidos */}
       <Section title={t('ctx.atributos')} last>
@@ -175,6 +182,13 @@ export function ContextPanel({
       </Section>
 
       {ticketSel && <TicketDetailModal ticket={ticketSel} onClose={() => setTicketSel(null)} />}
+      {convConvertir && (
+        <ConvertTicketModal
+          conv={convConvertir}
+          onClose={() => setConvConvertir(null)}
+          onCreado={() => onTicketCreado?.(convConvertir.id)}
+        />
+      )}
     </aside>
   );
 }

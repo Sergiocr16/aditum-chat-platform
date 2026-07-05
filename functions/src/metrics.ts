@@ -83,6 +83,13 @@ export const metricsOnCsat = onDocumentCreated(
   async (event) => {
     const rating = event.data?.data() as CsatRating | undefined;
     if (!rating) return;
+    // Marcar la conversación como calificada para que el widget no vuelva a pedir CSAT.
+    if (rating.conversationId) {
+      await db
+        .doc(`conversations/${rating.conversationId}`)
+        .update({ csatRating: rating.rating, csatAt: FieldValue.serverTimestamp() })
+        .catch(() => {});
+    }
     const { ref, fecha } = dailyRef();
     await ref.set(
       {

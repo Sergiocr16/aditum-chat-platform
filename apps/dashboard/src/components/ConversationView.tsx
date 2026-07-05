@@ -3,7 +3,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { httpsCallable } from 'firebase/functions';
 import type { Attachment, Conversation, Idioma, Message } from '@aditum-chat/shared';
-import { categoryLabel } from '@aditum-chat/shared';
+import { categoryLabel, formatTicketNumber } from '@aditum-chat/shared';
 import { fns } from '@/lib/firebase';
 import { useAuth } from '@/lib/auth';
 import { useT } from '@/lib/i18n';
@@ -11,22 +11,29 @@ import {
   agentSendAttachment,
   agentSendMessage,
   ensureAgentConversation,
+  ensureAgentGroupConversation,
   fmtHora,
   iniciales,
+  toggleReaction,
   updateConversation,
   useContactThread,
   useCsat,
-  usePaginatedMessages,
+  useGroupThread,
   useTeam,
   type Row,
   type ThreadRow,
 } from '@/lib/data';
 import { ConvertTicketModal } from './ConvertTicketModal';
 import { ResolveModal } from './ResolveModal';
+import { TicketDetailModal } from './TicketDetailModal';
 
 export interface ConversationViewHandle {
   scrollToConversation(convId: string): void;
+  /** Refresca el bloque de una conversación (mensaje nuevo, p. ej. ticket) y salta a ella. */
+  refrescarYVer(convId: string): Promise<void>;
 }
+
+const EMOJIS = ['👍', '❤️', '😂', '😮', '🙏'];
 
 export const ConversationView = forwardRef<
   ConversationViewHandle,
@@ -39,17 +46,17 @@ export const ConversationView = forwardRef<
   const c = conv.data;
   const grupo = c.tipo === 'grupo';
 
-  // Grupo → una sola conversación. Directa → hilo continuo del contacto.
-  const pag = usePaginatedMessages(grupo ? conv.id : null);
-  const thread = useContactThread(grupo ? null : (c.contactId ?? null));
+  // Ambos son hilos continuos segmentados: el grupo encadena sus segmentos por
+  // cliente; la directa, las conversaciones del contacto.
+  const directaThread = useContactThread(grupo ? null : (c.contactId ?? null));
+  const grupoThread = useGroupThread(grupo ? (c.clientId ?? null) : null);
+  const thread = grupo ? grupoThread : directaThread;
 
-  const filas: ThreadRow[] = grupo
-    ? pag.mensajes.map((m) => ({ convId: conv.id, msg: m }))
-    : thread.filas;
-  const hayMas = grupo ? pag.hayMas : thread.hayMas;
-  const cargando = grupo ? pag.cargando : thread.cargando;
-  const loadOlder = grupo ? pag.loadOlder : thread.loadOlder;
-  const activa = grupo ? conv : (thread.activa ?? conv);
+  const filas: ThreadRow[] = thread.filas;
+  const hayMas = thread.hayMas;
+  const cargando = thread.cargando;
+  const loadOlder = thread.loadOlder;
+  const activa = thread.activa ?? conv;
   const convPorId = thread.convPorId;
 
   const [tab, setTab] = useState<'responder' | 'nota'>('responder');
@@ -57,11 +64,19 @@ export const ConversationView = forwardRef<
   const [showConvert, setShowConvert] = useState(false);
   const [showAsignar, setShowAsignar] = useState(false);
   const [showResolve, setShowResolve] = useState(false);
+  const [verTicketId, setVerTicketId] = useState<string | null>(null);
   const [sugiriendo, setSugiriendo] = useState(false);
   const [subiendo, setSubiendo] = useState(false);
   const [enElFondo, setEnElFondo] = useState(true);
+  const [replyTo, setReplyTo] = useState<{
+    messageId: string;
+    texto: string;
+    senderNombre: string;
+  } | null>(null);
+  const [menuMsg, setMenuMsg] = useState<string | null>(null);
 
   const fileRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const ajusteScroll = useRef<number | null>(null);
   const enElFondoRef = useRef(true);
@@ -123,16 +138,32 @@ export const ConversationView = forwardRef<
     if (el) el.scrollTop = el.scrollHeight;
   }
 
+  /** Re-ancla al fondo (al enviar): baja ya y deja que el mensaje nuevo también baje. */
+  function anclarAlFondo() {
+    enElFondoRef.current = true;
+    setEnElFondo(true);
+    requestAnimationFrame(irAlFondo);
+  }
+
   // Subir el hilo hasta una conversación anterior (desde el panel de contexto).
+  const refrescarConversacion = thread.refrescarConversacion;
   useImperativeHandle(
     ref,
-    () => ({
-      async scrollToConversation(convId: string) {
-        const find = () => bodyRef.current?.querySelector(`[data-convid="${CSS.escape(convId)}"]`);
+    () => {
+      const irA = async (convId: string) => {
+        const find = () =>
+          bodyRef.current?.querySelector<HTMLElement>(`[data-convid="${CSS.escape(convId)}"]`);
         for (let i = 0; i < 60; i++) {
           const el = find();
-          if (el) {
-            el.scrollIntoView({ block: 'start' });
+          const body = bodyRef.current;
+          if (el && body) {
+            // Dejar aire entre el inicio de la conversación y el header (no pegado al borde).
+            const top = el.getBoundingClientRect().top - body.getBoundingClientRect().top + body.scrollTop;
+            body.scrollTo({ top: Math.max(0, top - 20), behavior: 'smooth' });
+            // Resaltar dónde inicia la conversación (la primera burbuja) para no perderse.
+            const target = el.querySelector<HTMLElement>('[data-msgid]') ?? el;
+            target.classList.add('ring-2', 'ring-navy');
+            window.setTimeout(() => target.classList.remove('ring-2', 'ring-navy'), 1800);
             return;
           }
           if (!hayMasRef.current) return;
@@ -140,10 +171,38 @@ export const ConversationView = forwardRef<
           // dar tiempo a React a re-renderizar y commitear el DOM antes de reintentar.
           await new Promise((r) => setTimeout(r, 60));
         }
-      },
-    }),
-    [loadOlder],
+      };
+      return {
+        scrollToConversation(convId: string) {
+          void irA(convId);
+        },
+        async refrescarYVer(convId: string) {
+          await refrescarConversacion(convId);
+          await new Promise((r) => setTimeout(r, 80)); // dejar commitear el DOM
+          await irA(convId);
+        },
+      };
+    },
+    [loadOlder, refrescarConversacion],
   );
+
+  /** Scroll al mensaje citado de un reply (carga páginas si hace falta) + resaltado. */
+  async function irAMensaje(messageId: string) {
+    const find = () =>
+      bodyRef.current?.querySelector<HTMLElement>(`[data-msgid="${CSS.escape(messageId)}"]`);
+    for (let i = 0; i < 60; i++) {
+      const el = find();
+      if (el) {
+        el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        el.classList.add('ring-2', 'ring-navy');
+        window.setTimeout(() => el.classList.remove('ring-2', 'ring-navy'), 1600);
+        return;
+      }
+      if (!hayMasRef.current) return;
+      await loadOlder();
+      await new Promise((r) => setTimeout(r, 60));
+    }
+  }
 
   async function sugerirRespuesta() {
     setSugiriendo(true);
@@ -163,7 +222,13 @@ export const ConversationView = forwardRef<
 
   /** Conversación destino para escribir: activa si sigue abierta, o una nueva. */
   async function convDestino(): Promise<Row<Conversation> | null> {
-    if (grupo) return conv;
+    if (grupo) {
+      // Segmento activo del grupo; si el actual está resuelto, se abre uno nuevo
+      // (el anterior queda con su cierre en el historial).
+      if (activa.data.estado !== 'resolved') return activa;
+      const id = await ensureAgentGroupConversation(activa);
+      return { id, data: { ...activa.data, estado: 'open' } };
+    }
     if (!c.contactId || !agent) return null;
     const targetId = await ensureAgentConversation({
       contactId: c.contactId,
@@ -190,14 +255,24 @@ export const ConversationView = forwardRef<
     }
   }
 
+  /** Empezar a responder un mensaje concreto (cita + foco en el input). */
+  function responderA(r: { messageId: string; texto: string; senderNombre: string }) {
+    setReplyTo(r);
+    setTab('responder');
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }
+
   async function enviar() {
     const texto = draft.trim();
     if (!texto || !agent) return;
     setDraft('');
+    const cita = tab === 'responder' ? replyTo : null;
+    setReplyTo(null);
+    anclarAlFondo();
     const nombreChat = agent.perfil?.nombreChat ?? agent.perfil?.nombre ?? 'Soporte';
     const target = await convDestino();
     if (!target) return;
-    await agentSendMessage(target, agent.uid, nombreChat, texto, tab === 'nota');
+    await agentSendMessage(target, agent.uid, nombreChat, texto, tab === 'nota', cita);
     if (!grupo && tab === 'responder') await tomarSiBot(target.id);
   }
 
@@ -206,6 +281,7 @@ export const ConversationView = forwardRef<
     e.target.value = '';
     if (!file || !agent || subiendo) return;
     setSubiendo(true);
+    anclarAlFondo();
     try {
       const nombreChat = agent.perfil?.nombreChat ?? agent.perfil?.nombre ?? 'Soporte';
       const target = await convDestino();
@@ -301,6 +377,7 @@ export const ConversationView = forwardRef<
         <div
           ref={bodyRef}
           onScroll={onScrollBody}
+          onClick={() => setMenuMsg(null)}
           className="chat-doodle-bg absolute inset-0 overflow-y-auto px-5 py-4 flex flex-col gap-2.5 [&>*:first-child]:mt-auto"
         >
           {cargando && (
@@ -310,8 +387,10 @@ export const ConversationView = forwardRef<
             const prev = filas[i - 1];
             const next = filas[i + 1];
             const primeraFila = i === 0;
-            const cambioConv = !grupo && !!prev && prev.convId !== f.convId;
-            const finDeConv = !grupo && (!next || next.convId !== f.convId);
+            // Grupo y directa son hilos segmentados: separadores por límite de
+            // conversación en ambos.
+            const cambioConv = !!prev && prev.convId !== f.convId;
+            const finDeConv = !next || next.convId !== f.convId;
             const convActual = convPorId.get(f.convId);
             const dataConvId = primeraFila || cambioConv ? f.convId : undefined;
             const md = f.msg.data;
@@ -338,7 +417,22 @@ export const ConversationView = forwardRef<
               }
             } else {
               nodes.push(
-                <Burbuja key={`${f.convId}_${f.msg.id}`} m={md} grupo={grupo} dataConvId={dataConvId} />,
+                <Burbuja
+                  key={`${f.convId}_${f.msg.id}`}
+                  m={md}
+                  msgId={f.msg.id}
+                  grupo={grupo}
+                  dataConvId={dataConvId}
+                  selfId={agent?.uid ?? ''}
+                  menuAbierto={menuMsg === f.msg.id}
+                  onMenu={() => setMenuMsg((prev) => (prev === f.msg.id ? null : f.msg.id))}
+                  onReaccion={(emoji) =>
+                    agent && toggleReaction(f.convId, f.msg.id, emoji, agent.uid, md.reacciones)
+                  }
+                  onVerTicket={setVerTicketId}
+                  onIrMensaje={irAMensaje}
+                  onResponder={responderA}
+                />,
               );
             }
 
@@ -349,13 +443,12 @@ export const ConversationView = forwardRef<
                 ? categoryLabel(convActual.data.categoria, idioma)
                 : '';
               nodes.push(
-                <div
-                  key={`res_${f.convId}`}
-                  className="self-center my-1 inline-flex items-center gap-1.5 text-[10px] font-bold tracking-wide bg-ok-bg text-ok-dark rounded-full px-3 py-1"
-                >
-                  <span className="msr text-[13px]">check_circle</span>
-                  {t('inbox.convResuelta')}
-                  {cat ? ` · ${cat}` : ''}
+                <div key={`res_${f.convId}_${f.msg.id}`} className="self-stretch my-1 flex justify-center">
+                  <span className="inline-flex items-center gap-1.5 text-[10px] font-bold tracking-wide bg-ok-bg text-ok-dark rounded-full px-3 py-1">
+                    <span className="msr text-[13px]">check_circle</span>
+                    {t('inbox.convResuelta')}
+                    {cat ? ` · ${cat}` : ''}
+                  </span>
                 </div>,
               );
             }
@@ -404,6 +497,22 @@ export const ConversationView = forwardRef<
             {sugiriendo ? '…' : 'IA'}
           </button>
         </div>
+        {replyTo && tab === 'responder' && (
+          <div className="flex items-start gap-2 mb-2 rounded-lg bg-cream-1 border-l-2 border-navy px-2.5 py-1.5">
+            <div className="flex-1 min-w-0">
+              <div className="text-[10.5px] font-bold text-navy">{replyTo.senderNombre}</div>
+              <div className="text-[11.5px] text-warm-gray truncate">{replyTo.texto}</div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setReplyTo(null)}
+              className="flex-none text-warm-gray hover:text-ink"
+              aria-label="Cancelar"
+            >
+              <span className="msr text-[16px]">close</span>
+            </button>
+          </div>
+        )}
         <div
           className={`flex items-end gap-2 rounded-xl border p-2 ${
             tab === 'nota' ? 'bg-gold-bg border-gold' : 'bg-cream-0 border-warm-border'
@@ -433,6 +542,7 @@ export const ConversationView = forwardRef<
             </>
           )}
           <textarea
+            ref={inputRef}
             rows={2}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
@@ -462,30 +572,97 @@ export const ConversationView = forwardRef<
 
       {showConvert && <ConvertTicketModal conv={activa} onClose={() => setShowConvert(false)} />}
       {showResolve && <ResolveModal convId={activa.id} onClose={() => setShowResolve(false)} />}
+      {verTicketId && (
+        <TicketDetailModal ticketId={verTicketId} onClose={() => setVerTicketId(null)} />
+      )}
     </div>
   );
 });
 
+/** Convierte URLs del texto en enlaces clicables (resto queda como texto plano). */
+function linkificar(texto: string): React.ReactNode[] {
+  const out: React.ReactNode[] = [];
+  const re = /(?:https?:\/\/|www\.)[^\s]+/gi;
+  let last = 0;
+  let i = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(texto))) {
+    if (m.index > last) out.push(texto.slice(last, m.index));
+    let url = m[0];
+    const trail = url.match(/[.,;:!?)\]]+$/);
+    const suffix = trail ? trail[0] : '';
+    if (suffix) url = url.slice(0, -suffix.length);
+    const href = url.startsWith('http') ? url : `https://${url}`;
+    out.push(
+      <a
+        key={i++}
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-navy underline break-all hover:text-navy-light"
+      >
+        {url}
+      </a>,
+    );
+    if (suffix) out.push(suffix);
+    last = m.index + m[0].length;
+  }
+  if (last < texto.length) out.push(texto.slice(last));
+  return out;
+}
+
 function Burbuja({
   m,
+  msgId,
   grupo,
   dataConvId,
+  selfId,
+  menuAbierto,
+  onMenu,
+  onReaccion,
+  onVerTicket,
+  onIrMensaje,
+  onResponder,
 }: {
   m: Message;
+  msgId?: string;
   grupo: boolean;
   dataConvId?: string;
+  selfId?: string;
+  menuAbierto?: boolean;
+  onMenu?(): void;
+  onReaccion?(emoji: string): void;
+  onVerTicket?(ticketId: string): void;
+  onIrMensaje?(messageId: string): void;
+  onResponder?(r: { messageId: string; texto: string; senderNombre: string }): void;
 }) {
   const own = m.sender.tipo === 'agent';
   const bot = m.sender.tipo === 'bot';
   const sistema = m.sender.tipo === 'sistema';
+  const reacciones = Object.entries(m.reacciones ?? {}).filter(([, ids]) => ids.length > 0);
+
+  const chipTicket = m.ticketRef ? (
+    <button
+      type="button"
+      onClick={() => onVerTicket?.(m.ticketRef!.ticketId)}
+      className="inline-flex items-center gap-1 rounded-md bg-tag-blue-bg px-2 py-1 text-[11px] font-bold text-navy transition hover:brightness-95 disabled:cursor-default disabled:hover:brightness-100"
+      disabled={!onVerTicket}
+    >
+      <span className="msr text-[13px]">confirmation_number</span>
+      {formatTicketNumber(m.ticketRef.numero)}
+    </button>
+  ) : null;
 
   if (sistema) {
     return (
       <div
         data-convid={dataConvId}
-        className="self-center text-[11px] text-warm-gray bg-cream-2 rounded-full px-3 py-1"
+        className="self-center flex flex-col items-center gap-1.5"
       >
-        {m.texto}
+        <span className="text-[11px] text-warm-gray bg-cream-2 rounded-full px-3 py-1">
+          {m.texto}
+        </span>
+        {chipTicket}
       </div>
     );
   }
@@ -499,7 +676,7 @@ function Burbuja({
           <span className="msr text-[12px]">lock</span>
           NOTA INTERNA · {m.sender.nombre}
         </div>
-        <div className="text-[13px] text-ink-2 whitespace-pre-wrap">{m.texto}</div>
+        <div className="text-[13px] text-ink-2 whitespace-pre-wrap">{linkificar(m.texto)}</div>
         <div className="text-[10px] text-warm-gray-2 text-right mt-0.5">{fmtHora(m.createdAt)}</div>
       </div>
     );
@@ -507,7 +684,7 @@ function Burbuja({
   return (
     <div
       data-convid={dataConvId}
-      className={`flex gap-2 max-w-[75%] ${own ? 'self-end flex-row-reverse' : 'self-start'}`}
+      className={`group flex gap-2 max-w-[75%] ${own ? 'self-end flex-row-reverse' : 'self-start'}`}
     >
       <div
         className={`h-7 w-7 rounded-full flex-none self-end flex items-center justify-center text-[9px] font-bold text-white ${
@@ -516,13 +693,101 @@ function Burbuja({
       >
         {bot ? <span className="msr text-[15px]">smart_toy</span> : iniciales(m.sender.nombre)}
       </div>
-      <div className={`rounded-xl px-3 py-2 shadow-card ${own ? 'bg-[#D9FDD3]' : 'bg-white'}`}>
+      <div
+        data-msgid={msgId}
+        onClick={(e) => e.stopPropagation()}
+        className={`relative rounded-xl px-3 py-2 shadow-card transition-shadow ${own ? 'bg-[#D9FDD3]' : 'bg-white'}`}
+      >
+        {/* Flechita: abre menú de acciones (reaccionar / responder / copiar). */}
+        <button
+          type="button"
+          aria-label="Opciones"
+          onClick={() => onMenu?.()}
+          className="absolute top-1 right-1 h-5 w-5 rounded-full text-[#8696a0] opacity-0 group-hover:opacity-100 hover:bg-black/5 flex items-center justify-center transition-opacity"
+        >
+          <span className="msr text-[16px]">expand_more</span>
+        </button>
+        {menuAbierto && (
+          <div className="absolute z-20 top-6 right-1 w-40 bg-white border border-warm-border rounded-lg shadow-raised py-1">
+            <div className="flex justify-around px-1 pb-1 mb-1 border-b border-cream-3">
+              {EMOJIS.map((e2) => (
+                <button
+                  key={e2}
+                  onClick={() => {
+                    onMenu?.();
+                    onReaccion?.(e2);
+                  }}
+                  className="text-[17px] leading-none p-1 rounded hover:bg-cream-1"
+                >
+                  {e2}
+                </button>
+              ))}
+            </div>
+            {onResponder && m.texto && (
+              <button
+                onClick={() =>
+                  onResponder({ messageId: msgId ?? '', texto: m.texto, senderNombre: m.sender.nombre })
+                }
+                className="w-full text-left px-3 py-1.5 text-[12.5px] hover:bg-cream-1 flex items-center gap-2"
+              >
+                <span className="msr text-[15px] text-warm-gray">reply</span>
+                Responder
+              </button>
+            )}
+            {m.texto && (
+              <button
+                onClick={() => {
+                  onMenu?.();
+                  void navigator.clipboard?.writeText(m.texto);
+                }}
+                className="w-full text-left px-3 py-1.5 text-[12.5px] hover:bg-cream-1 flex items-center gap-2"
+              >
+                <span className="msr text-[15px] text-warm-gray">content_copy</span>
+                Copiar
+              </button>
+            )}
+          </div>
+        )}
         {(grupo || bot) && (
           <div className="text-[10.5px] font-bold text-navy mb-0.5">{m.sender.nombre}</div>
         )}
+        {m.replyTo && (
+          <button
+            type="button"
+            onClick={() => onIrMensaje?.(m.replyTo!.messageId)}
+            className="mb-1 w-full text-left rounded-md bg-black/5 border-l-2 border-navy px-2 py-1 transition-colors hover:bg-black/10"
+          >
+            <div className="text-[10.5px] font-bold text-navy">{m.replyTo.senderNombre}</div>
+            <div className="text-[11.5px] text-warm-gray truncate max-w-[240px]">
+              {m.replyTo.texto}
+            </div>
+          </button>
+        )}
         <Adjuntos adjuntos={m.adjuntos} />
         {m.texto && (
-          <div className="text-[13px] text-[#111B21] whitespace-pre-wrap break-words">{m.texto}</div>
+          <div className="text-[13px] text-[#111B21] whitespace-pre-wrap break-words">
+            {linkificar(m.texto)}
+          </div>
+        )}
+        {chipTicket && <div className="mt-1">{chipTicket}</div>}
+        {reacciones.length > 0 && (
+          <div className="flex flex-wrap gap-1 mt-1">
+            {reacciones.map(([emoji, ids]) => {
+              const mio = !!selfId && ids.includes(selfId);
+              return (
+                <button
+                  key={emoji}
+                  onClick={() => onReaccion?.(emoji)}
+                  className={`inline-flex items-center gap-0.5 text-[11px] rounded-full px-1.5 py-0.5 border transition-colors ${
+                    mio ? 'bg-tag-blue-bg border-navy/30' : 'bg-cream-1 border-warm-border hover:bg-cream-2'
+                  }`}
+                >
+                  <span>{emoji}</span>
+                  <span className="text-[10px] text-warm-gray font-semibold">{ids.length}</span>
+                </button>
+              );
+            })}
+          </div>
         )}
         <div className="text-[10px] text-[#667781] text-right mt-0.5">
           {m.editadoAt ? 'editado · ' : ''}

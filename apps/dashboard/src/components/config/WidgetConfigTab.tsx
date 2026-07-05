@@ -76,6 +76,20 @@ const M = {
     botonEquipo: 'Chat del equipo administrador',
     botonEquipoHint: 'El botón solo aparece si este toggle está activo',
     botonEquipoHint2: 'Chat del equipo administrador · Grupo con todos los administradores de {condominio}',
+    botonTexto: 'Texto del botón (opcional)',
+    botonIcono: 'Icono',
+    iconoSubir: 'Subir imagen',
+    iconoQuitar: 'Usar default',
+    iconoHint: 'PNG/JPG/SVG · cuadrado · reemplaza el icono por defecto',
+    bienvenida: 'Respuestas automáticas',
+    bienvenidaSub: 'Saludo del bot y respuestas automáticas del canal de agente',
+    bienvenidaAI: 'Bot · saludo inicial',
+    bienvenidaAIHint: 'Se muestra al abrir. Vacío = saludo por defecto del bot',
+    bienvenidaAgente: 'Agente · en horario',
+    bienvenidaAgenteHint: 'Se envía después del primer mensaje del usuario',
+    bienvenidaFuera: 'Agente · fuera de horario',
+    bienvenidaFueraHint: 'Respuesta automática cuando escriben fuera del horario de atención',
+    bienvenidaNombre: 'Podés usar {nombre} para el nombre del residente',
     horario: 'Horario de atención',
     horarioSub: 'Zona horaria: America/Costa_Rica',
     textoAuto: 'El texto que ve el usuario se genera solo del horario configurado:',
@@ -120,6 +134,20 @@ const M = {
     botonEquipo: 'Admin team chat',
     botonEquipoHint: 'The button only appears if this toggle is on',
     botonEquipoHint2: 'Admin team chat · Group with every administrator of {condominio}',
+    botonTexto: 'Button label (optional)',
+    botonIcono: 'Icon',
+    iconoSubir: 'Upload image',
+    iconoQuitar: 'Use default',
+    iconoHint: 'PNG/JPG/SVG · square · replaces the default icon',
+    bienvenida: 'Automatic replies',
+    bienvenidaSub: 'Bot greeting and automatic replies for the agent channel',
+    bienvenidaAI: 'Bot · initial greeting',
+    bienvenidaAIHint: 'Shown on open. Empty = the bot default greeting',
+    bienvenidaAgente: 'Agent · within hours',
+    bienvenidaAgenteHint: 'Sent after the user’s first message',
+    bienvenidaFuera: 'Agent · after hours',
+    bienvenidaFueraHint: 'Automatic reply when they write outside business hours',
+    bienvenidaNombre: 'You can use {nombre} for the resident’s name',
     horario: 'Business hours',
     horarioSub: 'Timezone: America/Costa_Rica',
     textoAuto: 'The text the user sees is generated from the configured hours:',
@@ -193,6 +221,56 @@ export function WidgetConfigTab() {
     <HerenciaTag porSitio={override[key] !== undefined} idioma={idioma} />
   );
 
+  /** Personalización por botón: texto e icono (imagen que reemplaza el default). */
+  const botonPersonalizacion = (
+    textoKey: 'botonBotTexto' | 'botonAgenteTexto' | 'botonEquipoTexto',
+    iconoKey: 'botonBotIcono' | 'botonAgenteIcono' | 'botonEquipoIcono',
+    iconoDefault: string,
+    on: boolean,
+  ) =>
+    on ? (
+      <div className="mt-2 flex flex-col gap-2 border-t border-cream-3 pt-2.5">
+        <input
+          value={eff[textoKey] ?? ''}
+          onChange={(e) => setW(textoKey, e.target.value)}
+          placeholder={m.botonTexto}
+          className={inputCls}
+        />
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-[10.5px] font-bold tracking-wide text-warm-gray uppercase">
+            {m.botonIcono}
+          </span>
+          <div className="h-9 w-9 rounded-lg bg-cream-1 flex items-center justify-center overflow-hidden flex-none">
+            {eff[iconoKey] ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={eff[iconoKey]} alt="" className="h-6 w-6 object-contain" />
+            ) : (
+              <span className="msr text-[18px] text-navy">{iconoDefault}</span>
+            )}
+          </div>
+          <label className="flex items-center gap-1.5 border border-warm-border text-ink text-[12px] font-semibold px-2.5 py-1.5 rounded-lg hover:border-navy cursor-pointer">
+            <span className="msr text-[14px]">upload</span>
+            {m.iconoSubir}
+            <input
+              type="file"
+              accept="image/png,image/jpeg,image/svg+xml"
+              hidden
+              onChange={(e) => subirIcono(iconoKey, e)}
+            />
+          </label>
+          {override[iconoKey] !== undefined && (
+            <button
+              onClick={() => quitarCampo(iconoKey)}
+              className="text-warm-gray text-[12px] font-semibold px-2 py-1.5 rounded-lg hover:bg-cream-1"
+            >
+              {m.iconoQuitar}
+            </button>
+          )}
+        </div>
+        <span className="text-[10.5px] text-warm-gray-2">{m.iconoHint}</span>
+      </div>
+    ) : null;
+
   function diaConfig(dia: number): ScheduleDay {
     return effSchedule.dias.find((d) => d.dia === dia) ?? { dia, abierto: false };
   }
@@ -230,12 +308,36 @@ export function WidgetConfigTab() {
   }
 
   function quitarLogo() {
+    quitarCampo('logoUrl');
+  }
+
+  /** Quita un override puntual (vuelve a heredar / al default). */
+  function quitarCampo(key: keyof WidgetConfig) {
     setOverride((prev) => {
       const next = { ...prev };
-      delete next.logoUrl;
+      delete next[key];
       return next;
     });
     setDirty(true);
+  }
+
+  /** Sube una imagen de icono de botón y guarda su URL en el override indicado. */
+  async function subirIcono(
+    key: 'botonBotIcono' | 'botonAgenteIcono' | 'botonEquipoIcono',
+    e: React.ChangeEvent<HTMLInputElement>,
+  ) {
+    const file = e.target.files?.[0];
+    if (!file || !siteId) return;
+    e.target.value = '';
+    setError(null);
+    try {
+      const ext = file.type === 'image/png' ? 'png' : file.type === 'image/svg+xml' ? 'svg' : 'jpg';
+      const r = storageRef(storage, `perfiles/${key}-${siteId}.${ext}`);
+      await uploadBytes(r, file, { contentType: file.type });
+      setW(key, await getDownloadURL(r));
+    } catch {
+      setError(m.error);
+    }
   }
 
   async function guardar() {
@@ -402,14 +504,24 @@ export function WidgetConfigTab() {
                 hint={m.botonBotHint}
                 on={eff.botonBot}
                 onChange={(v) => setW('botonBot', v)}
-                extra={<span className="inline-block mt-1"><HerenciaTag porSitio={override.botonBot !== undefined} idioma={idioma} /></span>}
+                extra={
+                  <>
+                    <span className="inline-block mt-1"><HerenciaTag porSitio={override.botonBot !== undefined} idioma={idioma} /></span>
+                    {botonPersonalizacion('botonBotTexto', 'botonBotIcono', 'smart_toy', eff.botonBot)}
+                  </>
+                }
               />
               <ToggleRow
                 label={m.botonAgente}
                 hint={m.botonAgenteHint}
                 on={eff.botonAgente}
                 onChange={(v) => setW('botonAgente', v)}
-                extra={<span className="inline-block mt-1"><HerenciaTag porSitio={override.botonAgente !== undefined} idioma={idioma} /></span>}
+                extra={
+                  <>
+                    <span className="inline-block mt-1"><HerenciaTag porSitio={override.botonAgente !== undefined} idioma={idioma} /></span>
+                    {botonPersonalizacion('botonAgenteTexto', 'botonAgenteIcono', 'support_agent', eff.botonAgente)}
+                  </>
+                }
               />
               <ToggleRow
                 label={m.botonEquipo}
@@ -420,9 +532,44 @@ export function WidgetConfigTab() {
                   <div className="mt-1 flex flex-col gap-1">
                     <span className="text-[10.5px] text-warm-gray-2">{m.botonEquipoHint2}</span>
                     <span><HerenciaTag porSitio={override.botonChatEquipo !== undefined} idioma={idioma} /></span>
+                    {botonPersonalizacion('botonEquipoTexto', 'botonEquipoIcono', 'groups', eff.botonChatEquipo)}
                   </div>
                 }
               />
+            </div>
+          </Card>
+
+          <Card icon="waving_hand" title={m.bienvenida} subtitle={m.bienvenidaSub}>
+            <div className="flex flex-col gap-3">
+              <Campo label={m.bienvenidaAI} tag={her('mensajeAI')}>
+                <textarea
+                  rows={2}
+                  value={eff.mensajeAI ?? ''}
+                  onChange={(e) => setW('mensajeAI', e.target.value)}
+                  placeholder={m.bienvenidaAIHint}
+                  className={`${inputCls} resize-none`}
+                />
+                <span className="text-[10.5px] text-warm-gray-2">{m.bienvenidaAIHint}</span>
+              </Campo>
+              <Campo label={m.bienvenidaAgente} tag={her('mensajeAgente')}>
+                <textarea
+                  rows={2}
+                  value={eff.mensajeAgente ?? ''}
+                  onChange={(e) => setW('mensajeAgente', e.target.value)}
+                  className={`${inputCls} resize-none`}
+                />
+                <span className="text-[10.5px] text-warm-gray-2">{m.bienvenidaAgenteHint}</span>
+              </Campo>
+              <Campo label={m.bienvenidaFuera} tag={her('mensajeFueraHorario')}>
+                <textarea
+                  rows={2}
+                  value={eff.mensajeFueraHorario ?? ''}
+                  onChange={(e) => setW('mensajeFueraHorario', e.target.value)}
+                  className={`${inputCls} resize-none`}
+                />
+                <span className="text-[10.5px] text-warm-gray-2">{m.bienvenidaFueraHint}</span>
+              </Campo>
+              <span className="text-[10.5px] text-warm-gray-2">{m.bienvenidaNombre}</span>
             </div>
           </Card>
 
@@ -549,13 +696,32 @@ function WidgetPreview({
           {/* Botones de inicio según toggles — el primero muestra el color de acento (activo) */}
           <div className="flex flex-col gap-1.5 mt-2.5">
             {config.botonBot && (
-              <PreviewBoton icon="smart_toy" label={m.previewBot} color={config.color} accent={accent} activo />
+              <PreviewBoton
+                icon="smart_toy"
+                iconUrl={config.botonBotIcono}
+                label={config.botonBotTexto || m.previewBot}
+                color={config.color}
+                accent={accent}
+                activo
+                ai
+              />
             )}
             {config.botonAgente && (
-              <PreviewBoton icon="support_agent" label={m.previewAgente} color={config.color} badge={2} />
+              <PreviewBoton
+                icon="support_agent"
+                iconUrl={config.botonAgenteIcono}
+                label={config.botonAgenteTexto || m.previewAgente}
+                color={config.color}
+                badge={2}
+              />
             )}
             {config.botonChatEquipo && (
-              <PreviewBoton icon="groups" label={m.previewEquipo} color={config.color} />
+              <PreviewBoton
+                icon="groups"
+                iconUrl={config.botonEquipoIcono}
+                label={config.botonEquipoTexto || m.previewEquipo}
+                color={config.color}
+              />
             )}
           </div>
         </div>
@@ -591,34 +757,50 @@ function WidgetPreview({
 
 function PreviewBoton({
   icon,
+  iconUrl,
   label,
   color,
   accent,
   activo,
   badge,
+  ai,
 }: {
   icon: string;
+  iconUrl?: string;
   label: string;
   color: string;
   accent?: string;
   activo?: boolean;
   badge?: number;
+  ai?: boolean;
 }) {
   return (
     <div
       className="flex items-center gap-2 border border-warm-border rounded-lg px-3 py-2 text-[12px] font-semibold text-ink shadow-card"
       style={{ background: activo ? accent : '#fff' }}
     >
-      <span className="msr text-[16px]" style={{ color }}>
-        {icon}
-      </span>
-      <span className="flex-1">{label}</span>
+      {iconUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={iconUrl} alt="" className="h-[18px] w-[18px] object-contain rounded flex-none" />
+      ) : (
+        <span className="msr text-[16px] flex-none" style={{ color }}>
+          {icon}
+        </span>
+      )}
+      <span className="flex-1 truncate">{label}</span>
+      {ai && (
+        <span className="text-[8.5px] font-extrabold tracking-wide text-ai bg-ai-bg px-1.5 py-0.5 rounded-full flex-none">
+          AI
+        </span>
+      )}
       {badge != null && (
-        <span className="h-[17px] min-w-[17px] px-1 rounded-full bg-danger text-white text-[10px] font-bold flex items-center justify-center">
+        <span className="h-[17px] min-w-[17px] px-1 rounded-full bg-danger text-white text-[10px] font-bold flex items-center justify-center flex-none">
           {badge}
         </span>
       )}
-      <span className="msr text-[14px] text-warm-gray-2">arrow_forward</span>
+      <span className="msr text-[14px] text-warm-gray-2 flex-none">
+        {activo ? 'chevron_left' : 'chevron_right'}
+      </span>
     </div>
   );
 }

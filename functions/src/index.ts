@@ -10,6 +10,7 @@ export { kbIngestPdf, kbSyncHelpCenter, kbSyncNow } from './kb.js';
 export { manageTeam, rotateSiteKey } from './team.js';
 export { ticketSlaInit, firstResponseTracker, slaEngine } from './sla.js';
 export { metricsOnConversation, metricsOnResolve, metricsOnCsat, metricsOnMessage } from './metrics.js';
+export { welcomeOnConversation, agentAutoReply } from './welcome.js';
 export { pushNotify } from './push.js';
 export { notifyAgentsOnMessage } from './pushAgentes.js';
 export { setSiteFcmCredentials } from './pushConfig.js';

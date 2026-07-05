@@ -184,11 +184,17 @@ export default function InboxPage() {
         <ContextPanel
           contactId={sel!.data.contactId!}
           onScrollToConversation={(id) => convViewRef.current?.scrollToConversation(id)}
+          onTicketCreado={(id) => convViewRef.current?.refrescarYVer(id)}
           width={montado ? contexto.width : undefined}
         />
       )}
       {esGrupoCtx && (
-        <GroupContextPanel conv={sel!} width={montado ? contexto.width : undefined} />
+        <GroupContextPanel
+          conv={sel!}
+          onScrollToConversation={(id) => convViewRef.current?.scrollToConversation(id)}
+          onTicketCreado={(id) => convViewRef.current?.refrescarYVer(id)}
+          width={montado ? contexto.width : undefined}
+        />
       )}
     </div>
   );

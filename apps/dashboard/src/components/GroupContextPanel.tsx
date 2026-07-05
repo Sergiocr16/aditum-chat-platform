@@ -1,13 +1,21 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { Client, Conversation, Ticket } from '@aditum-chat/shared';
-import { formatTicketNumber } from '@aditum-chat/shared';
+import { categoryLabel, ticketStatusLabels } from '@aditum-chat/shared';
 import { useAuth } from '@/lib/auth';
 import { useT } from '@/lib/i18n';
-import { iniciales, useClientTickets, useDoc, type Row } from '@/lib/data';
+import { ConvHistorialRow, PanelLista, TicketCard } from './PanelLista';
+import {
+  fmtFecha,
+  iniciales,
+  useClientTickets,
+  useDoc,
+  useResolvedGroupConversations,
+  type Row,
+} from '@/lib/data';
 import { toggleClientTag, useTags } from '@/lib/data-tags';
-import { TicketEstadoChip } from './chips';
+import { ConvertTicketModal } from './ConvertTicketModal';
 import { EtiquetasBlock } from './TagAssign';
 import { TicketDetailModal } from './TicketDetailModal';
 
@@ -15,15 +23,36 @@ import { TicketDetailModal } from './TicketDetailModal';
  * Panel de contexto para conversaciones de EQUIPO (grupo). En vez de un residente
  * muestra el condominio: participantes, etiquetas del cliente y sus tickets.
  */
-export function GroupContextPanel({ conv, width }: { conv: Row<Conversation>; width?: number }) {
+export function GroupContextPanel({
+  conv,
+  width,
+  onScrollToConversation,
+  onTicketCreado,
+}: {
+  conv: Row<Conversation>;
+  width?: number;
+  onScrollToConversation?(convId: string): void;
+  onTicketCreado?(convId: string): void;
+}) {
   const { agent } = useAuth();
   const t = useT();
   const c = conv.data;
   const client = useDoc<Client>(c.clientId ? `clients/${c.clientId}` : null);
   const siteTags = useTags(c.siteId);
   const tickets = useClientTickets(c.clientId ?? null);
+  const anteriores = useResolvedGroupConversations(c.clientId ?? null);
   const idioma = agent?.idioma ?? 'es';
   const [ticketSel, setTicketSel] = useState<Row<Ticket> | null>(null);
+  const [convConvertir, setConvConvertir] = useState<Row<Conversation> | null>(null);
+  const [menuConv, setMenuConv] = useState<string | null>(null);
+  const ticketsPorConv = useMemo(() => {
+    const m = new Map<string, Row<Ticket>[]>();
+    for (const tk of tickets) {
+      const cid = tk.data.conversationId;
+      if (cid) (m.get(cid) ?? m.set(cid, []).get(cid)!).push(tk);
+    }
+    return m;
+  }, [tickets]);
 
   const asignadas = new Set(client?.data.tags ?? []);
   const participantes = Object.entries(c.participantesInfo ?? {});
@@ -85,6 +114,39 @@ export function GroupContextPanel({ conv, width }: { conv: Row<Conversation>; wi
         />
       </Section>
 
+      {/* Conversaciones anteriores del equipo — clic abre el segmento completo */}
+      {anteriores.length > 0 && (
+        <Section title={t('inbox.convAnteriores')} count={anteriores.length}>
+          <PanelLista
+            items={anteriores}
+            idioma={idioma}
+            keyDe={(cv) => cv.id}
+            filtroDe={(cv) => cv.data.categoria || undefined}
+            etiquetaFiltro={(k) => categoryLabel(k, idioma)}
+            filtroSelect
+            render={(cv) => (
+              <ConvHistorialRow
+                cv={cv}
+                idioma={idioma}
+                tickets={ticketsPorConv.get(cv.id) ?? []}
+                abierto={menuConv === cv.id}
+                onMenu={() => setMenuConv((p) => (p === cv.id ? null : cv.id))}
+                onAbrir={() => onScrollToConversation?.(cv.id)}
+                onCrearTicket={() => {
+                  setConvConvertir(cv);
+                  setMenuConv(null);
+                }}
+                onVerTicket={(tk) => {
+                  setTicketSel(tk);
+                  setMenuConv(null);
+                }}
+                verCompleta={t('inbox.verCompleta')}
+              />
+            )}
+          />
+        </Section>
+      )}
+
       {/* Participantes del equipo */}
       {participantes.length > 0 && (
         <Section title={t('ctx.participantes')} count={participantes.length}>
@@ -113,28 +175,26 @@ export function GroupContextPanel({ conv, width }: { conv: Row<Conversation>; wi
       {/* Tickets del condominio — clic abre el detalle */}
       {tickets.length > 0 && (
         <Section title={t('ctx.ticketsCliente')} count={tickets.length} last>
-          <div className="flex flex-col">
-            {tickets.slice(0, 6).map((tk) => (
-              <button
-                key={tk.id}
-                onClick={() => setTicketSel(tk)}
-                className="group flex items-center gap-2 w-full text-left rounded-lg px-2 -mx-2 py-1.5 outline-none transition-colors hover:bg-cream-1 focus-visible:bg-cream-1"
-              >
-                <span className="font-mono text-[11px] font-semibold text-warm-gray-2 flex-none">
-                  {formatTicketNumber(tk.data.numero)}
-                </span>
-                <span className="text-[12px] text-ink truncate flex-1">{tk.data.asunto}</span>
-                <TicketEstadoChip estado={tk.data.estado} idioma={idioma} />
-                <span className="msr text-[16px] text-warm-gray-3 group-hover:text-navy flex-none">
-                  chevron_right
-                </span>
-              </button>
-            ))}
-          </div>
+          <PanelLista
+            items={tickets}
+            idioma={idioma}
+            gap="gap-1.5"
+            keyDe={(tk) => tk.id}
+            filtroDe={(tk) => tk.data.estado}
+            etiquetaFiltro={(k) => ticketStatusLabels[idioma][k as Ticket['estado']]}
+            render={(tk) => <TicketCard tk={tk} idioma={idioma} onClick={() => setTicketSel(tk)} />}
+          />
         </Section>
       )}
 
       {ticketSel && <TicketDetailModal ticket={ticketSel} onClose={() => setTicketSel(null)} />}
+      {convConvertir && (
+        <ConvertTicketModal
+          conv={convConvertir}
+          onClose={() => setConvConvertir(null)}
+          onCreado={() => onTicketCreado?.(convConvertir.id)}
+        />
+      )}
     </aside>
   );
 }

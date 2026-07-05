@@ -12,9 +12,12 @@ import { useMessages, useTeam, useTickets, type Row } from '@/lib/data';
 export function ConvertTicketModal({
   conv,
   onClose,
+  onCreado,
 }: {
   conv: Row<Conversation>;
   onClose(): void;
+  /** Se llama tras crear el ticket (para refrescar el hilo de esa conversación). */
+  onCreado?(): void;
 }) {
   const { agent } = useAuth();
   const t = useT();
@@ -85,6 +88,7 @@ export function ConvertTicketModal({
         asignadoNombre: asignado?.data.nombre ?? null,
         ...(adjuntar && ticketExistente ? { adjuntarA: ticketExistente } : {}),
       });
+      onCreado?.();
       onClose();
     } catch (e) {
       setError((e as Error).message);
