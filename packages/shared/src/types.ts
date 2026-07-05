@@ -270,6 +270,8 @@ export interface Message {
   /** emoji → lista de ids (contactId/uid) que reaccionaron. */
   reacciones?: Record<string, string[]>;
   editadoAt?: unknown;
+  /** Texto previo a la última edición (se muestra en hover del "editado"). */
+  textoAnterior?: string;
   replyTo?: { messageId: string; texto: string; senderNombre: string } | null;
   /** Chip de referencia a ticket (ej. "quedó el ticket #TK-0042"). */
   ticketRef?: { ticketId: string; numero: number } | null;
@@ -327,6 +329,7 @@ export type TicketEventTipo =
   | 'publico'
   | 'desarrollo'
   | 'resolucion'
+  | 'edicion'
   | 'comentario';
 
 /** tickets/{id}/historial/{id} — timeline visible en el widget (si ticket visible). */
@@ -345,6 +348,8 @@ export interface TicketNote {
   autor: MessageSender;
   texto: string;
   createdAt: unknown;
+  /** Presente si la nota fue editada. */
+  editadoAt?: unknown;
 }
 
 // ---------------------------------------------------------------------------

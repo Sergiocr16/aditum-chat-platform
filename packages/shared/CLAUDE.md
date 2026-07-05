@@ -8,7 +8,9 @@ The shared source of truth for the data model, design system, and i18n. `"type":
 
 - **`types.ts`** — the full multitenant Firestore data model (sites, clients, contacts,
   conversations + messages, tickets, csat, kb, team, settings, metrics). The canonical shape for
-  every collection.
+  every collection. Recent additions: `Message.editadoAt`/`textoAnterior`/`bienvenida`;
+  `Conversation.csatRating`; `WidgetConfig` per-button `boton*Texto`/`boton*Icono` + welcome texts
+  `mensajeAI`/`mensajeAgente`/`mensajeFueraHorario`; `TicketEventTipo` `'edicion'`; `TicketNote.editadoAt`.
 - **`i18n.ts`** — es/en catalogs (**Costa Rican voseo**), `CONVERSATION_CATEGORIES` + bilingual
   labels, `makeT`/`categoryLabel`, `widgetMessages`.
 - **`tokens.ts`** — design tokens from the "Aditum Chat" Claude Design spec: brand navy

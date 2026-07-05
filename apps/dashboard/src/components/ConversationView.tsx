@@ -8,6 +8,7 @@ import { fns } from '@/lib/firebase';
 import { useAuth } from '@/lib/auth';
 import { useT } from '@/lib/i18n';
 import {
+  agentEditMessage,
   agentSendAttachment,
   agentSendMessage,
   ensureAgentConversation,
@@ -74,6 +75,9 @@ export const ConversationView = forwardRef<
     senderNombre: string;
   } | null>(null);
   const [menuMsg, setMenuMsg] = useState<string | null>(null);
+  const [editando, setEditando] = useState<{ convId: string; msgId: string; texto: string } | null>(
+    null,
+  );
 
   const fileRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -258,13 +262,32 @@ export const ConversationView = forwardRef<
   /** Empezar a responder un mensaje concreto (cita + foco en el input). */
   function responderA(r: { messageId: string; texto: string; senderNombre: string }) {
     setReplyTo(r);
+    setEditando(null);
     setTab('responder');
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }
+
+  /** Empezar a editar un mensaje propio (rellena el input). */
+  function editarMensaje(convId: string, msgId: string, texto: string) {
+    setEditando({ convId, msgId, texto });
+    setReplyTo(null);
+    setTab('responder');
+    setDraft(texto);
     requestAnimationFrame(() => inputRef.current?.focus());
   }
 
   async function enviar() {
     const texto = draft.trim();
     if (!texto || !agent) return;
+    // Modo edición: actualiza el mensaje (guarda la versión anterior).
+    if (editando) {
+      if (texto !== editando.texto) {
+        await agentEditMessage(editando.convId, editando.msgId, texto, editando.texto);
+      }
+      setEditando(null);
+      setDraft('');
+      return;
+    }
     setDraft('');
     const cita = tab === 'responder' ? replyTo : null;
     setReplyTo(null);
@@ -432,6 +455,7 @@ export const ConversationView = forwardRef<
                   onVerTicket={setVerTicketId}
                   onIrMensaje={irAMensaje}
                   onResponder={responderA}
+                  onEditar={() => editarMensaje(f.convId, f.msg.id, md.texto)}
                 />,
               );
             }
@@ -497,7 +521,7 @@ export const ConversationView = forwardRef<
             {sugiriendo ? '…' : 'IA'}
           </button>
         </div>
-        {replyTo && tab === 'responder' && (
+        {replyTo && tab === 'responder' && !editando && (
           <div className="flex items-start gap-2 mb-2 rounded-lg bg-cream-1 border-l-2 border-navy px-2.5 py-1.5">
             <div className="flex-1 min-w-0">
               <div className="text-[10.5px] font-bold text-navy">{replyTo.senderNombre}</div>
@@ -506,6 +530,23 @@ export const ConversationView = forwardRef<
             <button
               type="button"
               onClick={() => setReplyTo(null)}
+              className="flex-none text-warm-gray hover:text-ink"
+              aria-label="Cancelar"
+            >
+              <span className="msr text-[16px]">close</span>
+            </button>
+          </div>
+        )}
+        {editando && (
+          <div className="flex items-center gap-2 mb-2 rounded-lg bg-cream-1 border-l-2 border-navy px-2.5 py-1.5">
+            <span className="msr text-[15px] text-navy flex-none">edit</span>
+            <div className="text-[11.5px] font-semibold text-navy flex-1">Editando mensaje</div>
+            <button
+              type="button"
+              onClick={() => {
+                setEditando(null);
+                setDraft('');
+              }}
               className="flex-none text-warm-gray hover:text-ink"
               aria-label="Cancelar"
             >
@@ -564,7 +605,7 @@ export const ConversationView = forwardRef<
             disabled={!draft.trim()}
             className="bg-navy text-white text-[12px] font-semibold px-4 py-2 rounded-lg disabled:opacity-40 hover:bg-navy-light"
           >
-            {t('inbox.enviar')}
+            {editando ? 'Guardar' : t('inbox.enviar')}
           </button>
         </div>
         <div className="text-[10.5px] text-warm-gray-2 mt-1.5">{t('inbox.hintEnter')}</div>
@@ -623,6 +664,7 @@ function Burbuja({
   onVerTicket,
   onIrMensaje,
   onResponder,
+  onEditar,
 }: {
   m: Message;
   msgId?: string;
@@ -635,6 +677,7 @@ function Burbuja({
   onVerTicket?(ticketId: string): void;
   onIrMensaje?(messageId: string): void;
   onResponder?(r: { messageId: string; texto: string; senderNombre: string }): void;
+  onEditar?(): void;
 }) {
   const own = m.sender.tipo === 'agent';
   const bot = m.sender.tipo === 'bot';
@@ -746,6 +789,18 @@ function Burbuja({
                 Copiar
               </button>
             )}
+            {onEditar && !!selfId && m.sender.id === selfId && m.texto && (
+              <button
+                onClick={() => {
+                  onMenu?.();
+                  onEditar();
+                }}
+                className="w-full text-left px-3 py-1.5 text-[12.5px] hover:bg-cream-1 flex items-center gap-2"
+              >
+                <span className="msr text-[15px] text-warm-gray">edit</span>
+                Editar
+              </button>
+            )}
           </div>
         )}
         {(grupo || bot) && (
@@ -790,7 +845,18 @@ function Burbuja({
           </div>
         )}
         <div className="text-[10px] text-[#667781] text-right mt-0.5">
-          {m.editadoAt ? 'editado · ' : ''}
+          {!!m.editadoAt && (
+            <span className="relative cursor-help group/ed">
+              editado
+              {m.textoAnterior && (
+                <span className="hidden group-hover/ed:flex flex-col gap-0.5 absolute bottom-full right-0 mb-1.5 w-max max-w-[240px] bg-[#2b2b2b] text-white text-[11px] font-normal leading-snug px-2 py-1.5 rounded-lg shadow-raised z-30 whitespace-pre-wrap break-words text-left normal-case">
+                  <b className="text-[9px] font-semibold opacity-60">Versión anterior</b>
+                  <span>{m.textoAnterior}</span>
+                </span>
+              )}
+              <span> · </span>
+            </span>
+          )}
           {fmtHora(m.createdAt)}
         </div>
       </div>

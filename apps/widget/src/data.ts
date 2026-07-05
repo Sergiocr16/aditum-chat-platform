@@ -523,10 +523,12 @@ export async function editMessage(
   convId: string,
   messageId: string,
   texto: string,
+  textoAnterior?: string,
 ): Promise<void> {
   await updateDoc(doc(fb.db, 'conversations', convId, 'messages', messageId), {
     texto,
     editadoAt: serverTimestamp(),
+    ...(textoAnterior !== undefined ? { textoAnterior } : {}),
   });
 }
 

@@ -14,18 +14,36 @@ see [`docs/design-spec.md`](docs/design-spec.md).
 
 **Widget (what your users see)**
 - One embeddable `widget.js` — Preact in a **Shadow DOM**, so host styles never collide.
-- Continuous, WhatsApp-style thread that merges all of a contact's conversations.
-- Two sub-channels per contact: **ask the bot** and **talk to an agent** (seamless escalation).
-- Native tickets, CSAT rating, attachments (image/video/file), emoji reactions, typing
-  indicators, read receipts, per-user mute, and per-client group chat.
+- Continuous, WhatsApp-style thread that merges all of a contact's conversations. The thread is a
+  single **chat** per (contact, channel), but **segmented** into multiple conversations: resolving
+  one closes it into the resolved history, and writing again opens a fresh conversation (see
+  [Conversation model](#conversation-model-segmented-history)).
+- Two sub-channels per contact: **ask the bot** and **talk to an agent** (seamless escalation),
+  plus a per-client **group chat** — all segmented.
+- Configurable **welcome / auto-reply** messages per channel: bot greeting on open, agent
+  auto-reply after the first message, and a separate after-hours reply.
+- Message actions: **reply** (quote + jump-to-message), **react**, **copy**, and **edit** (marks
+  "edited" and shows the previous version on hover). URLs are auto-linkified.
+- Native tickets, CSAT rating (persistent, one-time), attachments (image/video/file), typing
+  indicators, read receipts, per-user mute.
+- Launcher buttons with **configurable text and icon** per button (upload an image), an "AI" chip
+  on the bot button, and open/close chevrons.
 
 **Console (what your agents use)**
-- **Inbox** — live conversations with continuous thread, resizable columns, and context panel.
-- **Tickets** — sequential numbering, priorities, SLA tracking, internal notes, timeline.
+- **Inbox** — live conversations with continuous segmented thread, resizable columns, and context
+  panel; same message actions as the widget (reply, react, copy, edit).
+- **Tickets** — sequential numbering, priorities, SLA tracking, internal notes, timeline. The
+  ticket detail is **fully editable** (title, description, status, assignee, priority, visibility)
+  and applied only on **Save** with a confirmation modal; every change is logged to the timeline.
+  Internal notes are editable by their author.
+- **Context panel** — a resident/team sidebar with the **resolved-conversation history** (filter by
+  category, CSAT stars, and a kebab menu to create a ticket from a conversation or open the
+  ticket(s) already linked to it) and client tickets as compact cards.
 - **Contactos** — auto-populated contact directory with tags.
 - **Bot** — configure the bot, upload knowledge-base PDFs/URLs, and test it live.
 - **Reportes** — CSAT, SLA, and daily activity metrics.
-- **Configuración** — sites, widget appearance, SLA policy, team, tags, closing categories.
+- **Configuración** — sites, widget appearance (including per-button text/icon and welcome/auto-reply
+  messages), SLA policy, team, tags, closing categories.
 - Desktop push (FCM Web Push) so agents get notified even with the tab closed.
 
 **Bot (Claude)**
@@ -258,19 +276,41 @@ push when a user writes (to the assigned agent, or all site agents if unassigned
 
 ---
 
+## Conversation model (segmented history)
+
+A **chat** (the continuous thread) is unique per **(contact, subcanal)** for directas and per
+**(client)** for the group chat — the inbox never shows a duplicate chat. Inside it lives a
+**sequence of conversation docs (segments)**:
+
+- Resolving a conversation (`estado: 'resolved'`) closes that segment; it stays resolved and shows
+  up in the console's **resolved-conversation history**.
+- Writing after the active conversation is resolved opens a **new** conversation (segment) in the
+  same chat — never reopens, never duplicates. At most one open segment per (contact, subcanal).
+- The console stitches all of a contact's segments into one scroll with `useContactThread` (directa)
+  and `useGroupThread` (grupo), both built on the shared `useConvThread`; rows dedup by `convId+msgId`.
+- The group chat is segmented the same way: multiple `tipo:'grupo'` docs per client, discovered via
+  `participantes array-contains contactId` (widget) or `tipo+clientId` (console).
+
 ## Data model (Firestore)
 
 - **`sites/{siteId}`** — connected host app; per-site widget/bot/schedule overrides + push config.
   `sites/{id}/secrets/{current|previous|fcm}` hold AES keys / encrypted service account (rules-denied).
 - **`clients/{clientId}`** — condominium (plan, modules, tags, CSAT average, group-chat toggle).
-- **`contacts/{siteId_externalId}`** — auto-populated directory (role, filial, device tokens, tags).
+- **`contacts/{siteId_externalId}`** — auto-populated directory (role, filial, device tokens, tags,
+  `csatRating`/`csatPromedio`).
 - **`conversations/{id}`** — `tipo` directa|grupo, `estado` bot|open|pending|resolved, `subcanal`
-  bot|agente; assignment, per-participant unread/mute, SLA, category.
+  bot|agente; assignment, per-participant unread/mute, SLA, category, `csatRating` (written by
+  `metricsOnCsat`). Segmented per the model above.
   Subcollection **`messages/{id}`** — sender user|agent|bot|sistema; content texto|imagen|video|
-  archivo|sistema|csat; attachments, reactions, `replyTo`, `interno` (internal notes never leave the console).
+  archivo|sistema|csat; attachments, reactions, `replyTo`, `ticketRef`, `interno` (internal notes
+  never leave the console), `editadoAt`/`textoAnterior` (edits, with the previous version), and
+  `bienvenida` (auto welcome/auto-reply, skipped by SLA/push). Fixed message ids `_bienvenida` and
+  `_autorespuesta` make the auto messages idempotent.
 - **`tickets/{id}`** — sequential `numero`, estado, prioridad, scope cliente|sistema, SLA,
-  resolution. Subcollections **`historial`** (timeline) and **`notas`** (internal).
-- **`csat/{id}`** — 1–5 rating tied to conversation/ticket/contact/agent.
+  `conversationId` (source conversation), resolution. Subcollections **`historial`** (timeline;
+  event types include `edicion`) and **`notas`** (internal, editable — `editadoAt`).
+- **`csat/{id}`** — 1–5 rating tied to conversation/ticket/contact/agent. The widget reads its own
+  ratings (`subscribeMyCsat`) so it never re-prompts.
 - **`kb/{docId}` + `kb/{docId}/chunks/{id}`** — RAG docs and embedded chunks (`FieldValue.vector`).
 - **`team/{uid}`** — agents (rol admin|agente, sites, FCM tokens, presence).
 - **`settings/global`**, **`settings/sla`** — global defaults and SLA policy.
@@ -300,6 +340,23 @@ from the widget. All privileged writes go through Cloud Functions with the Admin
   agent-only callables.
 - **Embeddings** use **Voyage AI** (`voyage-3.5-lite`, 768-dim) with a keyword-search fallback
   when `VOYAGE_API_KEY` is unset; semantic search uses Firestore `findNearest` (COSINE).
+
+---
+
+## Automatic replies (welcome / after-hours)
+
+Configured per site in **Configuración → Widget → "Respuestas automáticas"**, applied by Cloud
+Functions (`functions/src/welcome.ts`):
+
+- `welcomeOnConversation` — on a new **bot** conversation, posts the greeting (`widget.mensajeAI`,
+  fallback `bot.saludo`) as the first message. Idempotent (`_bienvenida`, timestamped at the
+  conversation's `createdAt` so it stays first).
+- `agentAutoReply` — on the user's **first message** in an **agente** conversation, posts an
+  automatic reply: `widget.mensajeAgente` in business hours, `widget.mensajeFueraHorario` after
+  hours (via `isWithinSchedule`). Idempotent (`_autorespuesta`).
+
+Both are marked `bienvenida: true`, so `firstResponseTracker` (SLA) and `pushNotify` ignore them.
+All texts support `{nombre}`.
 
 ---
 

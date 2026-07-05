@@ -114,6 +114,21 @@ export function GroupContextPanel({
         />
       </Section>
 
+      {/* Tickets del condominio — clic abre el detalle */}
+      {tickets.length > 0 && (
+        <Section title={t('ctx.ticketsCliente')} count={tickets.length}>
+          <PanelLista
+            items={tickets}
+            idioma={idioma}
+            gap="gap-1.5"
+            keyDe={(tk) => tk.id}
+            filtroDe={(tk) => tk.data.estado}
+            etiquetaFiltro={(k) => ticketStatusLabels[idioma][k as Ticket['estado']]}
+            render={(tk) => <TicketCard tk={tk} idioma={idioma} onClick={() => setTicketSel(tk)} />}
+          />
+        </Section>
+      )}
+
       {/* Conversaciones anteriores del equipo — clic abre el segmento completo */}
       {anteriores.length > 0 && (
         <Section title={t('inbox.convAnteriores')} count={anteriores.length}>
@@ -149,7 +164,7 @@ export function GroupContextPanel({
 
       {/* Participantes del equipo */}
       {participantes.length > 0 && (
-        <Section title={t('ctx.participantes')} count={participantes.length}>
+        <Section title={t('ctx.participantes')} count={participantes.length} last>
           <div className="flex flex-col gap-2">
             {participantes.map(([id, p]) => (
               <div key={id} className="flex items-center gap-2.5">
@@ -169,21 +184,6 @@ export function GroupContextPanel({
               </div>
             ))}
           </div>
-        </Section>
-      )}
-
-      {/* Tickets del condominio — clic abre el detalle */}
-      {tickets.length > 0 && (
-        <Section title={t('ctx.ticketsCliente')} count={tickets.length} last>
-          <PanelLista
-            items={tickets}
-            idioma={idioma}
-            gap="gap-1.5"
-            keyDe={(tk) => tk.id}
-            filtroDe={(tk) => tk.data.estado}
-            etiquetaFiltro={(k) => ticketStatusLabels[idioma][k as Ticket['estado']]}
-            render={(tk) => <TicketCard tk={tk} idioma={idioma} onClick={() => setTicketSel(tk)} />}
-          />
         </Section>
       )}
 

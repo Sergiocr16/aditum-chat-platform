@@ -26,7 +26,8 @@ Secrets in `functions/.secret.local` (gitignored): `ANTHROPIC_API_KEY`, `VOYAGE_
 | KB / RAG | `kbIngestPdf` (onObjectFinalized), `kbSyncHelpCenter` (scheduled), `kbSyncNow` — `kb.ts` |
 | Team / keys | `manageTeam`, `rotateSiteKey` (admin only) — `team.ts` |
 | SLA | `ticketSlaInit`, `firstResponseTracker`, `slaEngine` (runs every 1 min) — `sla.ts` |
-| Metrics | `metricsOnConversation`, `metricsOnResolve`, `metricsOnCsat`, `metricsOnMessage` — `metrics.ts` |
+| Metrics | `metricsOnConversation`, `metricsOnResolve`, `metricsOnCsat` (also writes `csatRating` to the conversation), `metricsOnMessage` — `metrics.ts` |
+| Auto replies | `welcomeOnConversation` (bot greeting on a new bot conversation), `agentAutoReply` (agent-channel reply after the user's first message; after-hours variant) — `welcome.ts` |
 | Push | `pushNotify` (to end user, host project), `notifyAgentsOnMessage` (to console agents), `setSiteFcmCredentials` |
 
 Shared `src/lib/` provides `db`, `FieldValue`, `resolveSiteConfig`, schedule helpers, and the
@@ -40,6 +41,13 @@ AES/crypto helpers.
   `botReply` fires on `user` messages in `directa` + `estado:'bot'` conversations; it runs an
   agentic **tool loop (≤3 turns)** with `escalar_a_agente` and `crear_ticket`, grounded on KB RAG
   context, and auto-escalates after N failed attempts.
+- **Auto replies** (`welcome.ts`): `welcomeOnConversation` and `agentAutoReply` post idempotent
+  messages (`_bienvenida` / `_autorespuesta`) using per-site config (`widget.mensajeAI` /
+  `mensajeAgente` / `mensajeFueraHorario`, fallback `bot.saludo`). They set `bienvenida: true` so
+  `firstResponseTracker` and `pushNotify` skip them — replicate that guard for any new auto message.
+- **Tickets** (`tickets.ts`): `linkConversation` (used by `createTicket` with a `conversationId`)
+  posts the "created a ticket" system message but does **not** bump the conversation's `updatedAt`,
+  so the message stays in that conversation's segment instead of jumping the thread.
 - **KB embeddings** use **Voyage AI** (`voyage-3.5-lite`, 768-dim) with a keyword fallback when
   `VOYAGE_API_KEY` is unset; search via Firestore `findNearest` (COSINE, vector index on
   `chunks.embedding`).

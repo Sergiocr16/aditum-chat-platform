@@ -67,6 +67,11 @@ Ports: Auth `9101`, Functions `5201`, Firestore `8181`, RTDB `9102`, Storage `91
   `VOYAGE_API_KEY` (optional), `CONFIG_KEK`, `BOT_MODEL`. Never commit them.
 - All privileged writes (tickets, keys, team, KB chunks, metrics) go through Cloud Functions with
   the Admin SDK — client SDK writes are constrained by `firestore.rules`.
-- The conversation model allows **multiple conversation docs per contact** (segmented by
-  `subcanal` and `estado`); the "active" one is the most recent with estado in `[bot,open,pending]`.
-  Writing after a conversation is resolved creates a **new** conversation (do not reopen).
+- **Segmented conversation model.** A "chat" is unique per (contact, `subcanal` bot|agente) and per
+  (client) for groups, but holds **multiple conversation docs (segments)**; the active one is the
+  most recent with estado in `[bot,open,pending]`. Writing after a conversation is resolved opens a
+  **new** conversation — never reopen, never duplicate. The console stitches segments with
+  `useContactThread`/`useGroupThread`; the widget with `subscribeMy(Group)Conversations`.
+- **Auto replies** live server-side (`functions/welcome.ts`): `welcomeOnConversation` (bot greeting)
+  and `agentAutoReply` (agent channel, after the first user message, with an after-hours variant),
+  both idempotent and marked `bienvenida:true` so SLA/push skip them.

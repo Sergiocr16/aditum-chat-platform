@@ -34,7 +34,7 @@ import {
   useTicketNotes,
   type Row,
 } from '@/lib/data';
-import { addTicketEvent, addTicketNote, updateTicket } from '@/lib/data-tickets';
+import { addTicketEvent, addTicketNote, updateTicket, updateTicketNote } from '@/lib/data-tickets';
 import { PrioridadChip, SitioChip } from '@/components/chips';
 
 // ---------------------------------------------------------------- i18n local
@@ -51,6 +51,15 @@ const M = {
     cerrar: 'Cerrar',
     sinEventos: 'Sin eventos todavía',
     sinNotas: 'Todavía no hay notas internas',
+    descripcion: 'Descripción',
+    tituloLabel: 'Título',
+    guardarCambios: 'Guardar cambios',
+    confTitulo: '¿Guardar los cambios?',
+    confTexto: 'Se actualizará el título y/o la descripción del ticket.',
+    confSi: 'Sí, guardar',
+    editoTicket: 'Editó el ticket',
+    editar: 'Editar',
+    editada: 'editada',
   },
   en: {
     slaVencido: 'Resolution SLA breached {tiempo} ago',
@@ -63,6 +72,15 @@ const M = {
     cerrar: 'Close',
     sinEventos: 'No events yet',
     sinNotas: 'No internal notes yet',
+    descripcion: 'Description',
+    tituloLabel: 'Title',
+    guardarCambios: 'Save changes',
+    confTitulo: 'Save changes?',
+    confTexto: 'The ticket title and/or description will be updated.',
+    confSi: 'Yes, save',
+    editoTicket: 'Edited the ticket',
+    editar: 'Edit',
+    editada: 'edited',
   },
 } satisfies Record<Idioma, Record<string, string>>;
 
@@ -75,6 +93,7 @@ const EVENT_ICONS: Record<TicketEventTipo, string> = {
   publico: 'public',
   desarrollo: 'code',
   resolucion: 'task_alt',
+  edicion: 'edit',
   comentario: 'chat_bubble',
 };
 
@@ -120,13 +139,33 @@ export function TicketDetailModal({
   const [devRef, setDevRef] = useState('');
   const [resDraft, setResDraft] = useState('');
   const [notaDraft, setNotaDraft] = useState('');
+  const [notaEditId, setNotaEditId] = useState<string | null>(null);
+  const [notaEditDraft, setNotaEditDraft] = useState('');
   const [busy, setBusy] = useState(false);
+  const [asuntoDraft, setAsuntoDraft] = useState('');
+  const [descDraft, setDescDraft] = useState('');
+  const [estadoDraft, setEstadoDraft] = useState<TicketStatus>('abierto');
+  const [asignadoDraft, setAsignadoDraft] = useState('');
+  const [prioridadDraft, setPrioridadDraft] = useState<TicketPriority>('media');
+  const [publicoDraft, setPublicoDraft] = useState(false);
+  const [confirmarGuardar, setConfirmarGuardar] = useState(false);
 
   // Sincroniza el input devRef con el doc en vivo (llega async si solo hay ticketId).
   useEffect(() => {
     setDevRef(tk?.devRef ?? '');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [row?.id, tk?.devRef]);
+
+  // Sincroniza TODOS los borradores editables con el doc en vivo (se aplican al Guardar).
+  useEffect(() => {
+    setAsuntoDraft(tk?.asunto ?? '');
+    setDescDraft(tk?.descripcion ?? '');
+    setEstadoDraft(tk?.estado ?? 'abierto');
+    setAsignadoDraft(tk?.asignadoA ?? '');
+    setPrioridadDraft(tk?.prioridad ?? 'media');
+    setPublicoDraft(tk?.publico ?? false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [row?.id, tk?.asunto, tk?.descripcion, tk?.estado, tk?.asignadoA, tk?.prioridad, tk?.publico]);
 
   if (!id || !tk || !agent) return null;
 
@@ -141,56 +180,67 @@ export function TicketDetailModal({
 
   // ------------------------------------------------------------- escrituras
 
-  async function cambiarEstado(nuevo: TicketStatus) {
-    if (!tk || nuevo === tk.estado) return;
-    await updateTicket(id!, {
-      estado: nuevo,
-      ...(nuevo === 'resuelto' ? { resueltoAt: serverTimestamp() } : {}),
-    });
-    await addTicketEvent(id!, {
-      tipo: 'estado',
-      descripcion: `Estado cambió a ${ticketStatusLabels.es[nuevo]}`,
-      de: tk.estado,
-      a: nuevo,
-      por,
-    });
-  }
+  /** Aplica TODOS los cambios pendientes (título, descripción, estado, asignado,
+   *  prioridad, visibilidad) en un solo guardado y registra cada evento. */
+  async function guardarEdicion() {
+    if (!tk || busy) return;
+    const asunto = asuntoDraft.trim();
+    const desc = descDraft.trim();
+    if (!asunto) return;
+    setBusy(true);
+    try {
+      const patch: Record<string, unknown> = {};
+      const eventos: { tipo: TicketEventTipo; descripcion: string; de?: string; a?: string }[] = [];
 
-  async function asignar(uid: string) {
-    if (!tk || uid === (tk.asignadoA ?? '')) return;
-    const miembro = team.find((x) => x.id === uid);
-    await updateTicket(id!, {
-      asignadoA: uid || null,
-      asignadoNombre: miembro?.data.nombre ?? null,
-    });
-    await addTicketEvent(id!, {
-      tipo: 'asignado',
-      descripcion: miembro ? `Asignado a ${miembro.data.nombre}` : 'Ticket sin asignar',
-      por,
-    });
-  }
+      if (asunto !== tk.asunto || desc !== (tk.descripcion ?? '')) {
+        patch.asunto = asunto;
+        patch.descripcion = desc;
+        eventos.push({ tipo: 'edicion', descripcion: m('editoTicket') });
+      }
+      if (estadoDraft !== tk.estado) {
+        patch.estado = estadoDraft;
+        if (estadoDraft === 'resuelto') patch.resueltoAt = serverTimestamp();
+        eventos.push({
+          tipo: 'estado',
+          descripcion: `Estado cambió a ${ticketStatusLabels.es[estadoDraft]}`,
+          de: tk.estado,
+          a: estadoDraft,
+        });
+      }
+      if (asignadoDraft !== (tk.asignadoA ?? '')) {
+        const miembro = team.find((x) => x.id === asignadoDraft);
+        patch.asignadoA = asignadoDraft || null;
+        patch.asignadoNombre = miembro?.data.nombre ?? null;
+        eventos.push({
+          tipo: 'asignado',
+          descripcion: miembro ? `Asignado a ${miembro.data.nombre}` : 'Ticket sin asignar',
+        });
+      }
+      if (prioridadDraft !== tk.prioridad) {
+        patch.prioridad = prioridadDraft;
+        eventos.push({
+          tipo: 'prioridad',
+          descripcion: `Prioridad cambió a ${ticketPriorityLabels.es[prioridadDraft]}`,
+          de: tk.prioridad,
+          a: prioridadDraft,
+        });
+      }
+      if (publicoDraft !== tk.publico) {
+        patch.publico = publicoDraft;
+        eventos.push({
+          tipo: 'publico',
+          descripcion: publicoDraft ? 'Ticket marcado como público' : 'Ticket marcado como privado',
+        });
+      }
 
-  async function cambiarPrioridad(nueva: TicketPriority) {
-    if (!tk || nueva === tk.prioridad) return;
-    await updateTicket(id!, { prioridad: nueva });
-    await addTicketEvent(id!, {
-      tipo: 'prioridad',
-      descripcion: `Prioridad cambió a ${ticketPriorityLabels.es[nueva]}`,
-      de: tk.prioridad,
-      a: nueva,
-      por,
-    });
-  }
-
-  async function togglePublico() {
-    if (!tk) return;
-    const nuevo = !tk.publico;
-    await updateTicket(id!, { publico: nuevo });
-    await addTicketEvent(id!, {
-      tipo: 'publico',
-      descripcion: nuevo ? 'Ticket marcado como público' : 'Ticket marcado como privado',
-      por,
-    });
+      if (Object.keys(patch).length > 0) {
+        await updateTicket(id!, patch);
+        for (const ev of eventos) await addTicketEvent(id!, { ...ev, por });
+      }
+      setConfirmarGuardar(false);
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function guardarDevRef() {
@@ -235,6 +285,23 @@ export function TicketDetailModal({
     await addTicketNote(id!, por, texto);
   }
 
+  async function guardarNotaEdit(notaId: string) {
+    const texto = notaEditDraft.trim();
+    if (!texto) return;
+    await updateTicketNote(id!, notaId, texto);
+    setNotaEditId(null);
+    setNotaEditDraft('');
+  }
+
+  const hayCambios =
+    asuntoDraft.trim().length > 0 &&
+    (asuntoDraft.trim() !== tk.asunto ||
+      descDraft.trim() !== (tk.descripcion ?? '') ||
+      estadoDraft !== tk.estado ||
+      asignadoDraft !== (tk.asignadoA ?? '') ||
+      prioridadDraft !== tk.prioridad ||
+      publicoDraft !== tk.publico);
+
   // ------------------------------------------------------------- render
 
   return (
@@ -246,27 +313,42 @@ export function TicketDetailModal({
         className="bg-white rounded-panel shadow-modal w-full max-w-3xl max-h-[90vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header */}
-        <div className="px-6 py-5 border-b border-cream-3 flex items-start gap-4">
+        {/* Header (sticky al hacer scroll) */}
+        <div className="sticky top-0 z-10 bg-white px-6 py-5 border-b border-cream-3 flex items-start gap-4">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <span className="font-mono text-[13px] font-bold text-navy">
                 {formatTicketNumber(tk.numero)}
               </span>
-              {tk.publico && (
+              {publicoDraft && (
                 <span className="msr text-[16px] text-warm-gray" title={t('ticket.publico')}>
                   public
                 </span>
               )}
-              <PrioridadChip prioridad={tk.prioridad} idioma={idioma} />
+              <PrioridadChip prioridad={prioridadDraft} idioma={idioma} />
             </div>
-            <h2 className="text-[17px] font-bold mt-1.5 leading-snug">{tk.asunto}</h2>
+            <input
+              value={asuntoDraft}
+              onChange={(e) => setAsuntoDraft(e.target.value)}
+              title={m('tituloLabel')}
+              className="w-full text-[17px] font-bold mt-1.5 leading-snug bg-transparent outline-none rounded border border-transparent px-1 -mx-1 hover:border-warm-border focus:border-navy focus:bg-cream-0"
+            />
             <div className="flex items-center gap-2 mt-1.5 text-[11.5px] text-warm-gray">
               {t('ticket.reportadoPor', { nombre: tk.contactNombre ?? '—' })}
               <span>·</span>
               <SitioChip nombre={siteNombre} />
             </div>
           </div>
+          {hayCambios && (
+            <button
+              onClick={() => setConfirmarGuardar(true)}
+              disabled={busy}
+              className="flex-none flex items-center gap-1.5 bg-navy text-white text-[12px] font-semibold px-3.5 py-2 rounded-lg hover:bg-navy-light disabled:opacity-40"
+            >
+              <span className="msr text-[15px]">save</span>
+              {m('guardarCambios')}
+            </button>
+          )}
           <button
             onClick={onClose}
             title={m('cerrar')}
@@ -292,8 +374,21 @@ export function TicketDetailModal({
 
         {/* Cuerpo: historial + sidebar */}
         <div className="grid grid-cols-[1fr_240px] gap-6 p-6">
-          {/* Columna izquierda — historial */}
+          {/* Columna izquierda — descripción + historial */}
           <div className="min-w-0">
+            {/* Descripción editable */}
+            <div className="mb-5">
+              <div className="text-[10.5px] font-bold tracking-wider text-warm-gray-2 mb-2">
+                {m('descripcion')}
+              </div>
+              <textarea
+                rows={4}
+                value={descDraft}
+                onChange={(e) => setDescDraft(e.target.value)}
+                className="w-full border border-warm-border rounded-lg bg-cream-0 px-3 py-2 text-[12.5px] text-ink-2 leading-relaxed outline-none focus:border-navy focus:bg-white resize-y"
+              />
+            </div>
+
             <div className="text-[10.5px] font-bold tracking-wider text-warm-gray-2 mb-3">
               {t('ticket.historial')}
             </div>
@@ -367,13 +462,13 @@ export function TicketDetailModal({
           <div className="flex flex-col gap-4">
             <SidebarCampo label={t('ticket.estado')} hint={t('ticket.estadoHint')}>
               <select
-                value={tk.estado}
-                onChange={(e) => cambiarEstado(e.target.value as TicketStatus)}
+                value={estadoDraft}
+                onChange={(e) => setEstadoDraft(e.target.value as TicketStatus)}
                 className="w-full border border-warm-border rounded-lg bg-white px-2.5 py-2 text-[12.5px] outline-none focus:border-navy cursor-pointer"
               >
-                {(ESTADOS_MODAL.includes(tk.estado)
+                {(ESTADOS_MODAL.includes(estadoDraft)
                   ? ESTADOS_MODAL
-                  : [...ESTADOS_MODAL, tk.estado]
+                  : [...ESTADOS_MODAL, estadoDraft]
                 ).map((es) => (
                   <option key={es} value={es}>
                     {ticketStatusLabels[idioma][es]}
@@ -384,8 +479,8 @@ export function TicketDetailModal({
 
             <SidebarCampo label={t('ticket.asignadoA')}>
               <select
-                value={tk.asignadoA ?? ''}
-                onChange={(e) => asignar(e.target.value)}
+                value={asignadoDraft}
+                onChange={(e) => setAsignadoDraft(e.target.value)}
                 className="w-full border border-warm-border rounded-lg bg-white px-2.5 py-2 text-[12.5px] outline-none focus:border-navy cursor-pointer"
               >
                 <option value="">{m('sinAsignar')}</option>
@@ -401,8 +496,8 @@ export function TicketDetailModal({
 
             <SidebarCampo label={t('ticket.prioridad')}>
               <select
-                value={tk.prioridad}
-                onChange={(e) => cambiarPrioridad(e.target.value as TicketPriority)}
+                value={prioridadDraft}
+                onChange={(e) => setPrioridadDraft(e.target.value as TicketPriority)}
                 className="w-full border border-warm-border rounded-lg bg-white px-2.5 py-2 text-[12.5px] outline-none focus:border-navy cursor-pointer"
               >
                 {PRIORIDADES.map((p) => (
@@ -415,17 +510,17 @@ export function TicketDetailModal({
 
             <SidebarCampo label={t('ticket.visibilidad')}>
               <button
-                onClick={togglePublico}
+                onClick={() => setPublicoDraft((v) => !v)}
                 className="flex items-center gap-2.5 text-[12.5px] text-ink-2"
               >
                 <span
                   className={`relative inline-block h-5 w-9 rounded-full transition-colors ${
-                    tk.publico ? 'bg-navy' : 'bg-warm-gray-4'
+                    publicoDraft ? 'bg-navy' : 'bg-warm-gray-4'
                   }`}
                 >
                   <span
                     className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-card transition-all ${
-                      tk.publico ? 'left-[18px]' : 'left-0.5'
+                      publicoDraft ? 'left-[18px]' : 'left-0.5'
                     }`}
                   />
                 </span>
@@ -460,20 +555,66 @@ export function TicketDetailModal({
           <div className="text-[11px] text-warm-gray-2 mb-3">{t('ticket.notasHint')}</div>
 
           <div className="flex flex-col gap-2">
-            {notas.map((n) => (
-              <div key={n.id} className="bg-gold-bg rounded-lg px-3 py-2">
-                <div className="flex items-center gap-2 mb-0.5">
-                  <span className="h-5 w-5 rounded-full bg-gold text-white text-[8px] font-bold flex items-center justify-center">
-                    {iniciales(n.data.autor.nombre)}
-                  </span>
-                  <span className="text-[11px] font-bold text-warn-dark flex-1">
-                    {n.data.autor.nombre}
-                  </span>
-                  <span className="text-[10px] text-warm-gray-2">{fmtHora(n.data.createdAt)}</span>
+            {notas.map((n) => {
+              const propia = n.data.autor.id === agent.uid;
+              const editando = notaEditId === n.id;
+              return (
+                <div key={n.id} className="group bg-gold-bg rounded-lg px-3 py-2">
+                  <div className="flex items-center gap-2 mb-0.5">
+                    <span className="h-5 w-5 rounded-full bg-gold text-white text-[8px] font-bold flex items-center justify-center">
+                      {iniciales(n.data.autor.nombre)}
+                    </span>
+                    <span className="text-[11px] font-bold text-warn-dark flex-1">
+                      {n.data.autor.nombre}
+                    </span>
+                    {!!n.data.editadoAt && (
+                      <span className="text-[10px] text-warm-gray-2">{m('editada')} ·</span>
+                    )}
+                    <span className="text-[10px] text-warm-gray-2">{fmtHora(n.data.createdAt)}</span>
+                    {propia && !editando && (
+                      <button
+                        onClick={() => {
+                          setNotaEditId(n.id);
+                          setNotaEditDraft(n.data.texto);
+                        }}
+                        title={m('editar')}
+                        className="opacity-0 group-hover:opacity-100 transition-opacity text-warm-gray hover:text-warn-dark"
+                      >
+                        <span className="msr text-[14px]">edit</span>
+                      </button>
+                    )}
+                  </div>
+                  {editando ? (
+                    <div className="mt-1">
+                      <textarea
+                        rows={2}
+                        value={notaEditDraft}
+                        onChange={(e) => setNotaEditDraft(e.target.value)}
+                        autoFocus
+                        className="w-full border border-gold/50 rounded-lg bg-white px-2.5 py-1.5 text-[12.5px] outline-none focus:border-warn-dark resize-y"
+                      />
+                      <div className="flex justify-end gap-2 mt-1.5">
+                        <button
+                          onClick={() => setNotaEditId(null)}
+                          className="text-[11.5px] font-semibold text-warm-gray px-2 py-1 rounded hover:bg-gold/20"
+                        >
+                          {m('cerrar')}
+                        </button>
+                        <button
+                          onClick={() => guardarNotaEdit(n.id)}
+                          disabled={!notaEditDraft.trim()}
+                          className="bg-warn-dark text-white text-[11.5px] font-semibold px-3 py-1 rounded disabled:opacity-40"
+                        >
+                          {m('guardarCambios')}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-[12.5px] text-ink-2 whitespace-pre-wrap">{n.data.texto}</div>
+                  )}
                 </div>
-                <div className="text-[12.5px] text-ink-2 whitespace-pre-wrap">{n.data.texto}</div>
-              </div>
-            ))}
+              );
+            })}
             {notas.length === 0 && (
               <div className="text-[12px] text-warm-gray-2">{m('sinNotas')}</div>
             )}
@@ -504,6 +645,43 @@ export function TicketDetailModal({
           </div>
         </div>
       </div>
+
+      {/* Confirmación antes de guardar título/descripción */}
+      {confirmarGuardar && (
+        <div
+          className="fixed inset-0 z-[60] bg-navy-deep/40 flex items-center justify-center p-6"
+          onClick={(e) => {
+            e.stopPropagation();
+            setConfirmarGuardar(false);
+          }}
+        >
+          <div
+            className="bg-white rounded-xl shadow-raised w-full max-w-sm p-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-2">
+              <span className="msr text-[20px] text-navy">save</span>
+              <div className="text-[14px] font-bold text-ink">{m('confTitulo')}</div>
+            </div>
+            <div className="text-[12.5px] text-warm-gray mt-2 leading-relaxed">{m('confTexto')}</div>
+            <div className="flex justify-end gap-2 mt-5">
+              <button
+                onClick={() => setConfirmarGuardar(false)}
+                className="text-[12.5px] font-semibold text-warm-gray px-3 py-2 rounded-lg hover:bg-cream-1"
+              >
+                {m('cerrar')}
+              </button>
+              <button
+                onClick={guardarEdicion}
+                disabled={busy}
+                className="bg-navy text-white text-[12.5px] font-semibold px-4 py-2 rounded-lg hover:bg-navy-light disabled:opacity-40"
+              >
+                {m('confSi')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

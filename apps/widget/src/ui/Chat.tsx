@@ -440,7 +440,7 @@ export function Chat({
     if (!texto) return;
     setDraft('');
     if (editando) {
-      await editMessage(fb, editando.convId, editando.msg.id, texto);
+      await editMessage(fb, editando.convId, editando.msg.id, texto, editando.msg.data.texto);
       setEditando(null);
       return;
     }
@@ -690,7 +690,18 @@ export function Chat({
                         </div>
                       ))}
                     <div class="ac-msg-meta">
-                      {m.data.editadoAt && <span>{t('chat.editado')} · </span>}
+                      {m.data.editadoAt && (
+                        <span class="ac-editado">
+                          {t('chat.editado')}
+                          {m.data.textoAnterior && (
+                            <span class="ac-editado-tip">
+                              <b>{t('chat.versionAnterior')}</b>
+                              <span>{m.data.textoAnterior}</span>
+                            </span>
+                          )}
+                          <span> · </span>
+                        </span>
+                      )}
                       {formatTime(m.data.createdAt)}
                       {own && <span class="ac-icon ac-check">done_all</span>}
                     </div>

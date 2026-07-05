@@ -26,14 +26,20 @@ demo/           Host-simulator page. scripts/verify-*.mjs headless checks.
   `window.AditumChatSettings = { siteId, payload }`. `widgetSession` (a Cloud Function) decrypts
   it, upserts the contact/client, and mints a Firebase custom token. See `README.md` for the
   payload format and Node/Java snippets.
-- **Continuous thread (two layers):** `subscribeMyConversations` (last ~20 directas) +
-  `subscribeLatestMessages` + `fetchOlderMessages` (paginated) render all of a contact's direct
-  conversations as one thread. Two sub-channels per contact (`bot` / `agente`) via
-  `ensureDirectConversation` / `convSubcanal`; `escalateToAgent` flips state to `open`.
-- **Other data.ts APIs:** `sendMessage` (with `replyTo`), `editMessage`, `sendAttachment`
-  (Storage `adjuntos/{convId}/…`), `submitCsat` (`csat/{id}`, 1–5), `toggleReaction`
+- **Continuous thread (two layers, segmented):** `subscribeMyConversations` (last ~20 directas) or
+  `subscribeMyGroupConversations` (grupos via `participantes array-contains`) + `subscribeLatestMessages`
+  + `fetchOlderMessages` (paginated) render all of a contact's segments as one thread. Two
+  sub-channels per contact (`bot` / `agente`) via `ensureDirectConversation` / `convSubcanal`; the
+  group via `ensureGroupConversation`; `escalateToAgent` flips state to `open`. The chat is unique
+  per (contact, subcanal) / (client, group) but **segmented** — `ensure*Conversation` reuses the
+  active segment and opens a NEW one when the last is resolved (never reopens, never duplicates).
+- **Other data.ts APIs:** `sendMessage` (with `replyTo`), `editMessage` (stores `textoAnterior` for
+  the "edited" hover), `sendAttachment` (Storage `adjuntos/{convId}/…`), `submitCsat` (`csat/{id}`,
+  1–5), `subscribeMyCsat` (so a rated conversation never re-prompts), `toggleReaction`
   (`👍❤️😂😮🙏`), `setTyping`/`subscribeTyping` (**RTDB**, `onDisconnect().remove()`, degrades
   gracefully), `markRead`, `toggleMute`, ticket subscriptions.
+- **Welcome / auto-reply** is server-side (`functions/welcome.ts`); the widget just renders those
+  first messages. Launcher button text/icon and the AI chip come from `session.widgetConfig`.
 
 ## Notes
 
