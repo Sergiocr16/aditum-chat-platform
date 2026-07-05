@@ -1,0 +1,21 @@
+{
+  "name": "@aditum-chat/widget",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aditum-chat/shared": "workspace:*",
+    "firebase": "^11.10.0",
+    "preact": "^10.26.0"
+  },
+  "devDependencies": {
+    "@preact/preset-vite": "^2.10.0",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.0"
+  }
+}

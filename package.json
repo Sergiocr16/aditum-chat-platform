@@ -1,0 +1,22 @@
+{
+  "name": "aditum-chat",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@9.15.9",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "emulators": "firebase emulators:start --project demo-aditum-chat"
+  },
+  "devDependencies": {
+    "firebase-tools": "^13.35.1",
+    "puppeteer-core": "^25.3.0",
+    "turbo": "^2.5.0",
+    "typescript": "^5.8.3"
+  }
+}

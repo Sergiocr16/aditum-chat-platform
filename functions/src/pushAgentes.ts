@@ -1,0 +1,93 @@
+import { onDocumentCreated } from 'firebase-functions/v2/firestore';
+import { logger } from 'firebase-functions/v2';
+import { FieldValue } from 'firebase-admin/firestore';
+import type { Conversation, Message, TeamMember } from '@aditum-chat/shared';
+import { db, messaging } from './lib/admin.js';
+
+/**
+ * Web Push (FCM) a los AGENTES de la consola cuando un usuario escribe.
+ * Los tokens viven en team/{uid}.fcmTokens (los registra el dashboard con la
+ * VAPID key del proyecto propio). Con conversación asignada notifica solo al
+ * asignado; sin asignar, a todos los agentes del sitio.
+ *
+ * En el emulador (proyecto demo-*) el envío falla contra FCM real: se captura
+ * y se loguea como warning sin romper el flujo.
+ */
+export const notifyAgentsOnMessage = onDocumentCreated(
+  {
+    document: 'conversations/{convId}/messages/{msgId}',
+    region: 'us-central1',
+    memory: '256MiB',
+  },
+  async (event) => {
+    const msg = event.data?.data() as Message | undefined;
+    if (!msg || msg.sender.tipo !== 'user' || msg.interno) return;
+
+    const convId = event.params.convId;
+    const convSnap = await db.doc(`conversations/${convId}`).get();
+    if (!convSnap.exists) return;
+    const conv = convSnap.data() as Conversation;
+
+    // Destinatarios: TODOS los agentes con acceso al sitio, siempre
+    // (sin importar a quién esté asignada la conversación).
+    const teamSnap = await db.collection('team').get();
+    const destinatarios = teamSnap.docs.filter((d) => {
+      const m = d.data() as TeamMember;
+      return !m.sitios || m.sitios.length === 0 || m.sitios.includes(conv.siteId);
+    });
+
+    const tokenDuenos = new Map<string, string>(); // token → uid (para limpiar inválidos)
+    for (const d of destinatarios) {
+      for (const t of (d.data() as TeamMember).fcmTokens ?? []) tokenDuenos.set(t, d.id);
+    }
+    const tokens = [...tokenDuenos.keys()];
+    if (tokens.length === 0) return;
+
+    const titulo = [conv.contactNombre ?? msg.sender.nombre, conv.clientNombre]
+      .filter(Boolean)
+      .join(' · ');
+    const cuerpo =
+      msg.texto.length > 120 ? `${msg.texto.slice(0, 117)}…` : msg.texto || 'Nuevo mensaje';
+    const link = `/inbox?c=${convId}`;
+
+    try {
+      // Data-only: el service worker construye la notificación desde `data`.
+      // Evita el auto-display de FCM (que dependía de config en el SW) y duplicados.
+      const res = await messaging.sendEachForMulticast({
+        tokens,
+        data: { title: titulo, body: cuerpo, convId, link },
+        webpush: { fcmOptions: { link } },
+      });
+
+      // Limpieza de tokens muertos.
+      const bajas: Promise<unknown>[] = [];
+      res.responses.forEach((r, i) => {
+        const code = (r.error as { code?: string } | undefined)?.code;
+        if (
+          code === 'messaging/registration-token-not-registered' ||
+          code === 'messaging/invalid-argument'
+        ) {
+          const token = tokens[i];
+          const uid = tokenDuenos.get(token)!;
+          bajas.push(
+            db.doc(`team/${uid}`).update({ fcmTokens: FieldValue.arrayRemove(token) }),
+          );
+        }
+      });
+      await Promise.all(bajas);
+      logger.info('notifyAgentsOnMessage', {
+        convId,
+        tokens: tokens.length,
+        ok: res.successCount,
+        fallidos: res.failureCount,
+      });
+    } catch (err) {
+      // Emulador / proyecto demo sin FCM: no romper el pipeline de mensajes.
+      logger.warn('notifyAgentsOnMessage: envío FCM omitido', {
+        convId,
+        tokens: tokens.length,
+        error: (err as Error).message,
+      });
+    }
+  },
+);

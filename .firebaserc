@@ -1,0 +1,18 @@
+{
+  "projects": {
+    "default": "aditum-chat-1a5cd"
+  },
+  "targets": {
+    "aditum-chat-1a5cd": {
+      "hosting": {
+        "dashboard": [
+          "aditum-chat-1a5cd"
+        ],
+        "widget": [
+          "aditum-chat-widget"
+        ]
+      }
+    }
+  },
+  "etags": {}
+}

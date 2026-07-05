@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Aditum Chat — página de prueba del widget</title>
+  <style>
+    body { margin: 0; font-family: system-ui, sans-serif; background: #eef1f5; color: #1a2433; }
+    header { background: #123C68; color: #fff; padding: 16px 28px; }
+    header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+    main { padding: 28px; max-width: 900px; margin: 0 auto; }
+    .card { background: #fff; border-radius: 10px; padding: 22px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+    .muted { color: #667; font-size: 14px; line-height: 1.5; }
+    .row { display: flex; gap: 14px; align-items: end; flex-wrap: wrap; margin-top: 12px; }
+    label { font-size: 13px; font-weight: 600; display: flex; flex-direction: column; gap: 4px; }
+    select, button { font-size: 14px; padding: 8px 12px; border-radius: 8px; border: 1px solid #cdd4de; background: #fff; }
+    button { background: #123C68; color: #fff; border: none; cursor: pointer; font-weight: 600; }
+    #estado { margin-top: 14px; font-size: 13px; }
+    #estado.ok { color: #1e7a46; }
+    #estado.err { color: #c0392b; }
+    code { background: #f2f4f7; padding: 1px 5px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <header><h1>Página host de prueba — Aditum Chat</h1></header>
+  <main>
+    <div class="card">
+      <h2 style="margin-top:0">Simulador del host</h2>
+      <p class="muted">
+        Simula la app que integra el widget: pide un payload cifrado al endpoint <code>demoPayload</code>,
+        define <code>window.AditumChatSettings</code> y carga <code>widget.js</code>. El bundle decide el
+        entorno según el <code>apiUrl</code>.
+      </p>
+      <div class="row">
+        <label>Entorno
+          <select id="entorno">
+            <option value="local">Local (emuladores)</option>
+            <option value="prod">Producción (aditum-chat-1a5cd)</option>
+          </select>
+        </label>
+        <label>Usuario
+          <select id="user">
+            <option value="juan">Juan Rodríguez — Admin, Vistas del Este (es)</option>
+            <option value="roberto">Roberto Jiménez — Admin, Vistas del Este (es)</option>
+            <option value="ana">Ana Brenes — Residente, Torres de Sabana (en)</option>
+          </select>
+        </label>
+        <button id="reload">Cargar widget</button>
+      </div>
+      <div id="estado" class="muted"></div>
+    </div>
+    <div class="card">
+      <h2 style="margin-top:0">Contenido de relleno</h2>
+      <p class="muted">Módulos de cobros, reservas y mantenimiento irían acá…</p>
+    </div>
+  </main>
+
+  <script>
+    // Endpoints por entorno. widget.js se sirve local desde ./dist/ (mismo build
+    // para ambos); en un host real iría <script src="https://aditum-chat-widget.web.app/widget.js">.
+    const ENTORNOS = {
+      local: {
+        functions: 'http://127.0.0.1:5201/demo-aditum-chat/us-central1',
+        widgetJs: './dist/widget.js',
+      },
+      prod: {
+        functions: 'https://us-central1-aditum-chat-1a5cd.cloudfunctions.net',
+        widgetJs: 'https://aditum-chat-widget.web.app/widget.js',
+        // En prod demoPayload está bloqueada por diseño; el payload lo genera
+        // el "simulador del host" local (node scripts/host-sim.mjs).
+        payloadUrl: 'http://127.0.0.1:4186/payload',
+      },
+    };
+
+    const estado = document.getElementById('estado');
+    const setEstado = (msg, cls) => { estado.textContent = msg; estado.className = cls || 'muted'; };
+
+    // El widget usa un getWidgetFirebase() singleton: la primera carga fija el
+    // entorno (emulador o prod) para toda la vida de la página. Por eso, para
+    // cambiar de entorno recargamos la página completa (contexto JS fresco).
+    const params = new URLSearchParams(location.search);
+    const selEnt = document.getElementById('entorno');
+    const selUser = document.getElementById('user');
+    selEnt.value = params.get('env') || 'local';
+    selUser.value = params.get('user') || 'juan';
+
+    // "Cargar widget" recarga la página con el entorno/usuario elegidos.
+    document.getElementById('reload').addEventListener('click', () => {
+      location.search = `?env=${selEnt.value}&user=${selUser.value}`;
+    });
+
+    async function boot() {
+      const env = ENTORNOS[selEnt.value];
+      const user = selUser.value;
+      setEstado(`Pidiendo payload cifrado… (entorno: ${selEnt.value})`);
+      try {
+        // Local: demoPayload del emulador. Prod: simulador del host (host-sim.mjs).
+        const url = env.payloadUrl
+          ? `${env.payloadUrl}?user=${user}`
+          : `${env.functions}/demoPayload?user=${user}`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`payload HTTP ${res.status}` +
+          (env.payloadUrl ? ' — ¿está corriendo host-sim.mjs en :4186?' : ''));
+        const { siteId, payload } = await res.json();
+
+        window.AditumChatSettings = { siteId, payload, apiUrl: env.functions };
+        const s = document.createElement('script');
+        s.src = env.widgetJs + '?v=' + Date.now(); // cache-buster
+        s.onerror = () => setEstado('No se pudo cargar widget.js desde ' + env.widgetJs, 'err');
+        document.body.appendChild(s);
+        setEstado(`Widget cargado ✓ · entorno ${selEnt.value} · usuario ${user} (mirá la burbuja).`, 'ok');
+      } catch (e) {
+        setEstado('Error: ' + e.message, 'err');
+        console.error('[host-demo]', e);
+      }
+    }
+
+    boot();
+  </script>
+</body>
+</html>

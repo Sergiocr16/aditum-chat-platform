@@ -1,0 +1,201 @@
+rules_version = '2';
+
+// Aditum Chat — aislamiento multitenant.
+// Dos tipos de identidad (custom claims):
+//   contact: { kind: 'contact', siteId, clientId?, contactId }  ← widget
+//   agent:   { kind: 'agent', rol: 'admin' | 'agente' }         ← consola
+// Las escrituras sensibles (tickets, claves, equipo) pasan por Cloud Functions.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function isAgent() { return signedIn() && request.auth.token.kind == 'agent'; }
+    function isAdmin() { return isAgent() && request.auth.token.rol == 'admin'; }
+    function isContact() { return signedIn() && request.auth.token.kind == 'contact'; }
+    function myContactId() { return request.auth.token.contactId; }
+    function myClientId() { return request.auth.token.get('clientId', ''); }
+
+    // ------------------------------------------------------------------ sitios
+    match /sites/{siteId} {
+      allow read: if isAgent();
+      allow write: if isAdmin();
+
+      // Claves de cifrado: SOLO Admin SDK (functions). Nadie desde cliente.
+      match /secrets/{doc} {
+        allow read, write: if false;
+      }
+    }
+
+    // ----------------------------------------------------------------- clientes
+    match /clients/{clientId} {
+      allow read: if isAgent() || (isContact() && myClientId() == clientId);
+      // Admin edita todo; un agente solo puede tocar las etiquetas del condominio.
+      allow update: if isAdmin() ||
+        (isAgent() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['tags']));
+      allow create, delete: if isAdmin();
+    }
+
+    // ---------------------------------------------------------------- contactos
+    match /contacts/{contactId} {
+      allow read: if isAgent() || (isContact() && myContactId() == contactId);
+      // Alta/actualización de contactos la hace widgetSession (Admin SDK).
+      // Los agentes también asignan etiquetas (contacts.tags).
+      allow write: if isAgent();
+    }
+
+    // ---------------------------------------------------------- etiquetas (tags)
+    // Catálogo de etiquetas por sitio. Lo administran los Admin en Configuración;
+    // cualquier agente las lee para mostrarlas/asignarlas en el panel.
+    match /tags/{tagId} {
+      allow read: if isAgent();
+      allow write: if isAdmin();
+    }
+
+    // ------------------------------------------------------------ conversaciones
+    match /conversations/{convId} {
+
+      function convData() { return resource.data; }
+      function participaEnConv() {
+        return isContact() && (
+          (convData().tipo == 'directa' && convData().contactId == myContactId()) ||
+          (convData().tipo == 'grupo' && myContactId() in convData().get('participantes', []))
+        );
+      }
+
+      allow read: if isAgent() || participaEnConv();
+      // El contacto solo crea conversaciones directas propias, de su sitio/cliente.
+      allow create: if isAgent() || (
+        isContact() &&
+        request.resource.data.tipo == 'directa' &&
+        request.resource.data.contactId == myContactId() &&
+        request.resource.data.siteId == request.auth.token.siteId
+      );
+      // Contacto: solo campos de actividad (lastMessage/unread/updatedAt) vía su chat.
+      allow update: if isAgent() || (
+        participaEnConv() &&
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['lastMessage', 'unread', 'updatedAt', 'estado', 'botIntentos', 'silenciado'])
+      );
+      allow delete: if isAdmin();
+
+      match /messages/{msgId} {
+        function parentConv() {
+          return get(/databases/$(database)/documents/conversations/$(convId)).data;
+        }
+        function participaEnParent() {
+          return isContact() && (
+            (parentConv().tipo == 'directa' && parentConv().contactId == myContactId()) ||
+            (parentConv().tipo == 'grupo' && myContactId() in parentConv().get('participantes', []))
+          );
+        }
+
+        // Las notas internas (interno == true) jamás se leen desde el widget.
+        allow read: if isAgent() ||
+          (participaEnParent() && resource.data.get('interno', false) == false);
+        allow create: if isAgent() || (
+          participaEnParent() &&
+          request.resource.data.sender.tipo == 'user' &&
+          request.resource.data.sender.id == myContactId() &&
+          request.resource.data.get('interno', false) == false
+        );
+        // Edición y reacciones del propio contacto; agentes libres.
+        allow update: if isAgent() || (
+          participaEnParent() && (
+            resource.data.sender.id == myContactId() ||
+            request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['reacciones', 'leidoPor'])
+          )
+        );
+        allow delete: if isAgent();
+      }
+    }
+
+    // ------------------------------------------------------------------ tickets
+    match /tickets/{ticketId} {
+
+      function ticketVisibleParaContacto() {
+        return isContact() && (
+          resource.data.get('contactId', '') == myContactId() ||
+          (resource.data.publico == true && (
+            resource.data.ambito == 'sistema' ||
+            resource.data.get('clientId', '') == myClientId()
+          ))
+        );
+      }
+
+      allow read: if isAgent() || ticketVisibleParaContacto();
+      // Creación/edición solo por agentes o functions (createTicket).
+      allow write: if isAgent();
+
+      match /historial/{eventId} {
+        function parentTicket() {
+          return get(/databases/$(database)/documents/tickets/$(ticketId)).data;
+        }
+        allow read: if isAgent() || (isContact() && (
+          parentTicket().get('contactId', '') == myContactId() ||
+          (parentTicket().publico == true && (
+            parentTicket().ambito == 'sistema' ||
+            parentTicket().get('clientId', '') == myClientId()
+          ))
+        ));
+        allow write: if isAgent();
+      }
+
+      match /notas/{notaId} {
+        // Notas internas: exclusivas del equipo.
+        allow read, write: if isAgent();
+      }
+    }
+
+    // ------------------------------------------------------------------- equipo
+    match /team/{uid} {
+      allow read: if isAgent();
+      // Alta/roles vía function manageTeam; el propio agente edita su perfil básico.
+      allow update: if isAdmin() || (isAgent() && request.auth.uid == uid &&
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['nombreChat', 'fotoUrl', 'idioma', 'presencia', 'nombre', 'fcmTokens']));
+      allow create, delete: if isAdmin();
+    }
+
+    // ----------------------------------------------------------------- settings
+    match /settings/{doc} {
+      allow read: if isAgent();
+      allow write: if isAdmin();
+    }
+
+    // ----------------------------------------------------------------------- KB
+    match /kb/{docId} {
+      allow read: if isAgent();
+      allow write: if isAdmin();
+      match /chunks/{chunkId} {
+        allow read: if isAgent();
+        allow write: if false; // solo kbIngest (Admin SDK)
+      }
+    }
+
+    // --------------------------------------------------------------------- CSAT
+    match /csat/{id} {
+      allow read: if isAgent();
+      allow create: if isContact() && request.resource.data.contactId == myContactId();
+      allow update, delete: if false;
+    }
+
+    // ------------------------------------------------------------------ métricas
+    match /metrics_daily/{doc} {
+      allow read: if isAgent();
+      allow write: if false; // solo functions (Admin SDK)
+    }
+
+    // -------------------------------------------------------------- notificaciones
+    match /notifications/{id} {
+      allow read: if isAgent();
+      allow write: if false; // solo slaEngine (Admin SDK)
+    }
+
+    // ----------------------------------------------------------------- counters
+    match /counters/{doc} {
+      allow read, write: if false; // solo functions
+    }
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
+  "storage": {
+    "rules": "storage.rules"
+  },
+  "database": {
+    "rules": "database.rules.json"
+  },
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "default",
+      "runtime": "nodejs22",
+      "predeploy": ["npm --prefix \"$RESOURCE_DIR\" run build"]
+    }
+  ],
+  "hosting": [
+    {
+      "target": "dashboard",
+      "public": "apps/dashboard/out",
+      "cleanUrls": true,
+      "ignore": ["firebase.json", "**/.*", "**/node_modules/**"]
+    },
+    {
+      "target": "widget",
+      "public": "apps/widget/dist",
+      "headers": [
+        {
+          "source": "widget.js",
+          "headers": [
+            { "key": "Access-Control-Allow-Origin", "value": "*" },
+            { "key": "Cache-Control", "value": "public, max-age=300" }
+          ]
+        }
+      ]
+    }
+  ],
+  "emulators": {
+    "auth": { "port": 9101 },
+    "functions": { "port": 5201 },
+    "firestore": { "port": 8181 },
+    "database": { "port": 9102 },
+    "storage": { "port": 9103 },
+    "hosting": { "port": 5099 },
+    "ui": { "enabled": true, "port": 4100 },
+    "hub": { "port": 4601 },
+    "logging": { "port": 4602 },
+    "singleProjectMode": true
+  }
+}

@@ -1,0 +1,529 @@
+'use client';
+
+// Modal de detalle de ticket — diseño 1n.
+// Recibe `ticketId` o un `Row<Ticket>` ya cargado; siempre se suscribe al doc
+// en vivo para reflejar los cambios que él mismo escribe.
+
+import { useEffect, useMemo, useState } from 'react';
+import { serverTimestamp } from 'firebase/firestore';
+import type {
+  Idioma,
+  MessageSender,
+  Ticket,
+  TicketEventTipo,
+  TicketPriority,
+  TicketStatus,
+} from '@aditum-chat/shared';
+import {
+  formatTicketNumber,
+  makeT,
+  ticketPriorityLabels,
+  ticketStatusLabels,
+} from '@aditum-chat/shared';
+import { useAuth } from '@/lib/auth';
+import { useT } from '@/lib/i18n';
+import {
+  fmtFecha,
+  fmtHora,
+  iniciales,
+  toDate,
+  useDoc,
+  useSites,
+  useTeam,
+  useTicketHistory,
+  useTicketNotes,
+  type Row,
+} from '@/lib/data';
+import { addTicketEvent, addTicketNote, updateTicket } from '@/lib/data-tickets';
+import { PrioridadChip, SitioChip } from '@/components/chips';
+
+// ---------------------------------------------------------------- i18n local
+
+const M = {
+  es: {
+    slaVencido: 'SLA de resolución venció hace {tiempo}',
+    sinAsignar: 'Sin asignar',
+    devRef: 'Ref. desarrollo',
+    devRefHint: 'Ticket del equipo de desarrollo',
+    guardarResolucion: 'Guardar y marcar como resuelto',
+    resueltoPor: 'Resuelto por {nombre} · {fecha}',
+    agregar: 'Agregar',
+    cerrar: 'Cerrar',
+    sinEventos: 'Sin eventos todavía',
+    sinNotas: 'Todavía no hay notas internas',
+  },
+  en: {
+    slaVencido: 'Resolution SLA breached {tiempo} ago',
+    sinAsignar: 'Unassigned',
+    devRef: 'Dev reference',
+    devRefHint: 'Development team ticket',
+    guardarResolucion: 'Save and mark as resolved',
+    resueltoPor: 'Resolved by {nombre} · {fecha}',
+    agregar: 'Add',
+    cerrar: 'Close',
+    sinEventos: 'No events yet',
+    sinNotas: 'No internal notes yet',
+  },
+} satisfies Record<Idioma, Record<string, string>>;
+
+// El historial se persiste en español (idioma de los datos del seed y del widget).
+const EVENT_ICONS: Record<TicketEventTipo, string> = {
+  creado: 'confirmation_number',
+  asignado: 'person',
+  estado: 'swap_horiz',
+  prioridad: 'flag',
+  publico: 'public',
+  desarrollo: 'code',
+  resolucion: 'task_alt',
+  comentario: 'chat_bubble',
+};
+
+const ESTADOS_MODAL: TicketStatus[] = ['abierto', 'en_progreso', 'en_desarrollo', 'resuelto'];
+const PRIORIDADES: TicketPriority[] = ['alta', 'media', 'baja'];
+
+function tiempoRestante(dueAt: unknown): { ms: number; label: string } | null {
+  const d = toDate(dueAt);
+  if (!d) return null;
+  const ms = d.getTime() - Date.now();
+  const abs = Math.abs(ms);
+  const h = Math.floor(abs / 3_600_000);
+  const min = Math.floor((abs % 3_600_000) / 60_000);
+  return { ms, label: h > 0 ? `${h} h ${min} m` : `${min} m` };
+}
+
+// ---------------------------------------------------------------- componente
+
+export function TicketDetailModal({
+  ticketId,
+  ticket,
+  onClose,
+}: {
+  ticketId?: string;
+  ticket?: Row<Ticket>;
+  onClose(): void;
+}) {
+  const { agent } = useAuth();
+  const t = useT();
+  const id = ticketId ?? ticket?.id ?? null;
+  const live = useDoc<Ticket>(id ? `tickets/${id}` : null);
+  const eventos = useTicketHistory(id);
+  const notas = useTicketNotes(id);
+  const team = useTeam();
+  const sites = useSites();
+
+  const idioma: Idioma = agent?.idioma ?? 'es';
+  const m = useMemo(() => makeT(M, idioma), [idioma]);
+
+  const row = live ?? ticket ?? null;
+  const tk = row?.data ?? null;
+
+  const [devRef, setDevRef] = useState('');
+  const [resDraft, setResDraft] = useState('');
+  const [notaDraft, setNotaDraft] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  // Sincroniza el input devRef con el doc en vivo (llega async si solo hay ticketId).
+  useEffect(() => {
+    setDevRef(tk?.devRef ?? '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [row?.id, tk?.devRef]);
+
+  if (!id || !tk || !agent) return null;
+
+  const por: MessageSender = {
+    tipo: 'agent',
+    id: agent.uid,
+    nombre: agent.perfil?.nombre ?? agent.user.email ?? '',
+  };
+  const siteNombre = sites.find((s) => s.id === tk.siteId)?.data.nombre ?? tk.siteId;
+  const resuelto = tk.estado === 'resuelto';
+  const sla = !resuelto && tk.sla?.dueAt ? tiempoRestante(tk.sla.dueAt) : null;
+
+  // ------------------------------------------------------------- escrituras
+
+  async function cambiarEstado(nuevo: TicketStatus) {
+    if (!tk || nuevo === tk.estado) return;
+    await updateTicket(id!, {
+      estado: nuevo,
+      ...(nuevo === 'resuelto' ? { resueltoAt: serverTimestamp() } : {}),
+    });
+    await addTicketEvent(id!, {
+      tipo: 'estado',
+      descripcion: `Estado cambió a ${ticketStatusLabels.es[nuevo]}`,
+      de: tk.estado,
+      a: nuevo,
+      por,
+    });
+  }
+
+  async function asignar(uid: string) {
+    if (!tk || uid === (tk.asignadoA ?? '')) return;
+    const miembro = team.find((x) => x.id === uid);
+    await updateTicket(id!, {
+      asignadoA: uid || null,
+      asignadoNombre: miembro?.data.nombre ?? null,
+    });
+    await addTicketEvent(id!, {
+      tipo: 'asignado',
+      descripcion: miembro ? `Asignado a ${miembro.data.nombre}` : 'Ticket sin asignar',
+      por,
+    });
+  }
+
+  async function cambiarPrioridad(nueva: TicketPriority) {
+    if (!tk || nueva === tk.prioridad) return;
+    await updateTicket(id!, { prioridad: nueva });
+    await addTicketEvent(id!, {
+      tipo: 'prioridad',
+      descripcion: `Prioridad cambió a ${ticketPriorityLabels.es[nueva]}`,
+      de: tk.prioridad,
+      a: nueva,
+      por,
+    });
+  }
+
+  async function togglePublico() {
+    if (!tk) return;
+    const nuevo = !tk.publico;
+    await updateTicket(id!, { publico: nuevo });
+    await addTicketEvent(id!, {
+      tipo: 'publico',
+      descripcion: nuevo ? 'Ticket marcado como público' : 'Ticket marcado como privado',
+      por,
+    });
+  }
+
+  async function guardarDevRef() {
+    if (!tk) return;
+    const valor = devRef.trim();
+    if (valor === (tk.devRef ?? '')) return;
+    await updateTicket(id!, { devRef: valor || null });
+    await addTicketEvent(id!, {
+      tipo: 'desarrollo',
+      descripcion: valor
+        ? `Vinculado a desarrollo ${valor}`
+        : 'Referencia de desarrollo removida',
+      por,
+    });
+  }
+
+  async function guardarResolucion() {
+    const texto = resDraft.trim();
+    if (!texto || busy) return;
+    setBusy(true);
+    try {
+      await updateTicket(id!, {
+        resolucion: { texto, por: agent!.uid, porNombre: por.nombre, at: serverTimestamp() },
+        estado: 'resuelto',
+        resueltoAt: serverTimestamp(),
+      });
+      await addTicketEvent(id!, {
+        tipo: 'resolucion',
+        descripcion: `Resolución final: ${texto}`,
+        por,
+      });
+      setResDraft('');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function agregarNota() {
+    const texto = notaDraft.trim();
+    if (!texto) return;
+    setNotaDraft('');
+    await addTicketNote(id!, por, texto);
+  }
+
+  // ------------------------------------------------------------- render
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-navy-deep/50 flex items-center justify-center p-6"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-panel shadow-modal w-full max-w-3xl max-h-[90vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="px-6 py-5 border-b border-cream-3 flex items-start gap-4">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="font-mono text-[13px] font-bold text-navy">
+                {formatTicketNumber(tk.numero)}
+              </span>
+              {tk.publico && (
+                <span className="msr text-[16px] text-warm-gray" title={t('ticket.publico')}>
+                  public
+                </span>
+              )}
+              <PrioridadChip prioridad={tk.prioridad} idioma={idioma} />
+            </div>
+            <h2 className="text-[17px] font-bold mt-1.5 leading-snug">{tk.asunto}</h2>
+            <div className="flex items-center gap-2 mt-1.5 text-[11.5px] text-warm-gray">
+              {t('ticket.reportadoPor', { nombre: tk.contactNombre ?? '—' })}
+              <span>·</span>
+              <SitioChip nombre={siteNombre} />
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            title={m('cerrar')}
+            className="h-8 w-8 flex-none rounded-lg flex items-center justify-center text-warm-gray hover:bg-cream-1 hover:text-ink"
+          >
+            <span className="msr text-[20px]">close</span>
+          </button>
+        </div>
+
+        {/* Aviso SLA */}
+        {sla && (
+          <div
+            className={`px-6 py-2.5 flex items-center gap-2 text-[12px] font-semibold border-b border-cream-3 ${
+              sla.ms > 0 ? 'bg-warn-bg text-warn-dark' : 'bg-danger-bg text-danger'
+            }`}
+          >
+            <span className="msr text-[16px]">schedule</span>
+            {sla.ms > 0
+              ? t('ticket.slaVence', { tiempo: sla.label })
+              : m('slaVencido', { tiempo: sla.label })}
+          </div>
+        )}
+
+        {/* Cuerpo: historial + sidebar */}
+        <div className="grid grid-cols-[1fr_240px] gap-6 p-6">
+          {/* Columna izquierda — historial */}
+          <div className="min-w-0">
+            <div className="text-[10.5px] font-bold tracking-wider text-warm-gray-2 mb-3">
+              {t('ticket.historial')}
+            </div>
+            <div className="flex flex-col gap-3.5">
+              {eventos.map((ev) => (
+                <div key={ev.id} className="flex gap-3">
+                  <div className="h-7 w-7 flex-none rounded-full bg-cream-2 text-ink-2 flex items-center justify-center">
+                    <span className="msr text-[15px]">
+                      {EVENT_ICONS[ev.data.tipo] ?? 'circle'}
+                    </span>
+                  </div>
+                  <div className="min-w-0 pt-0.5">
+                    <div className="text-[12.5px] text-ink-2">{ev.data.descripcion}</div>
+                    <div className="text-[10.5px] text-warm-gray-2 mt-0.5">
+                      {fmtFecha(ev.data.createdAt, true)}
+                      {ev.data.por?.nombre ? ` · ${ev.data.por.nombre}` : ''}
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {eventos.length === 0 && (
+                <div className="text-[12px] text-warm-gray-2">{m('sinEventos')}</div>
+              )}
+            </div>
+
+            {/* Resolución final */}
+            {!resuelto ? (
+              <div className="mt-5 border border-warm-border rounded-lg p-3.5 bg-cream-0">
+                <div className="flex items-center gap-1.5 text-[12px] font-bold text-ink-2 mb-2">
+                  <span className="msr text-[15px] text-ok-dark">task_alt</span>
+                  {t('ticket.resolucionFinal')}
+                </div>
+                <textarea
+                  rows={3}
+                  value={resDraft}
+                  onChange={(e) => setResDraft(e.target.value)}
+                  placeholder={t('ticket.resolucionHint')}
+                  className="w-full border border-warm-border rounded-lg bg-white px-3 py-2 text-[12.5px] outline-none focus:border-navy resize-none"
+                />
+                <button
+                  onClick={guardarResolucion}
+                  disabled={busy || !resDraft.trim()}
+                  className="mt-2 bg-ok-dark text-white text-[12px] font-semibold px-3.5 py-2 rounded-lg hover:bg-ok disabled:opacity-40 flex items-center gap-1.5"
+                >
+                  <span className="msr text-[15px]">check_circle</span>
+                  {busy ? '…' : m('guardarResolucion')}
+                </button>
+              </div>
+            ) : (
+              tk.resolucion && (
+                <div className="mt-5 border border-ok/30 bg-ok-bg rounded-lg p-3.5">
+                  <div className="flex items-center gap-1.5 text-[12px] font-bold text-ok-dark mb-1.5">
+                    <span className="msr text-[15px]">task_alt</span>
+                    {t('ticket.resolucionFinal')}
+                  </div>
+                  <div className="text-[12.5px] text-ink-2 whitespace-pre-wrap">
+                    {tk.resolucion.texto}
+                  </div>
+                  <div className="text-[10.5px] text-warm-gray mt-1.5">
+                    {m('resueltoPor', {
+                      nombre: tk.resolucion.porNombre,
+                      fecha: fmtFecha(tk.resolucion.at, true),
+                    })}
+                  </div>
+                </div>
+              )
+            )}
+          </div>
+
+          {/* Columna derecha — sidebar de propiedades */}
+          <div className="flex flex-col gap-4">
+            <SidebarCampo label={t('ticket.estado')} hint={t('ticket.estadoHint')}>
+              <select
+                value={tk.estado}
+                onChange={(e) => cambiarEstado(e.target.value as TicketStatus)}
+                className="w-full border border-warm-border rounded-lg bg-white px-2.5 py-2 text-[12.5px] outline-none focus:border-navy cursor-pointer"
+              >
+                {(ESTADOS_MODAL.includes(tk.estado)
+                  ? ESTADOS_MODAL
+                  : [...ESTADOS_MODAL, tk.estado]
+                ).map((es) => (
+                  <option key={es} value={es}>
+                    {ticketStatusLabels[idioma][es]}
+                  </option>
+                ))}
+              </select>
+            </SidebarCampo>
+
+            <SidebarCampo label={t('ticket.asignadoA')}>
+              <select
+                value={tk.asignadoA ?? ''}
+                onChange={(e) => asignar(e.target.value)}
+                className="w-full border border-warm-border rounded-lg bg-white px-2.5 py-2 text-[12.5px] outline-none focus:border-navy cursor-pointer"
+              >
+                <option value="">{m('sinAsignar')}</option>
+                {team
+                  .filter((x) => x.data.activo)
+                  .map((x) => (
+                    <option key={x.id} value={x.id}>
+                      {x.data.nombre}
+                    </option>
+                  ))}
+              </select>
+            </SidebarCampo>
+
+            <SidebarCampo label={t('ticket.prioridad')}>
+              <select
+                value={tk.prioridad}
+                onChange={(e) => cambiarPrioridad(e.target.value as TicketPriority)}
+                className="w-full border border-warm-border rounded-lg bg-white px-2.5 py-2 text-[12.5px] outline-none focus:border-navy cursor-pointer"
+              >
+                {PRIORIDADES.map((p) => (
+                  <option key={p} value={p}>
+                    {ticketPriorityLabels[idioma][p]}
+                  </option>
+                ))}
+              </select>
+            </SidebarCampo>
+
+            <SidebarCampo label={t('ticket.visibilidad')}>
+              <button
+                onClick={togglePublico}
+                className="flex items-center gap-2.5 text-[12.5px] text-ink-2"
+              >
+                <span
+                  className={`relative inline-block h-5 w-9 rounded-full transition-colors ${
+                    tk.publico ? 'bg-navy' : 'bg-warm-gray-4'
+                  }`}
+                >
+                  <span
+                    className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-card transition-all ${
+                      tk.publico ? 'left-[18px]' : 'left-0.5'
+                    }`}
+                  />
+                </span>
+                <span className="msr text-[15px] text-warm-gray">public</span>
+                {t('ticket.publico')}
+              </button>
+            </SidebarCampo>
+
+            <SidebarCampo label={m('devRef')} hint={m('devRefHint')}>
+              <input
+                value={devRef}
+                onChange={(e) => setDevRef(e.target.value)}
+                onBlur={guardarDevRef}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                }}
+                placeholder="DEV-318"
+                className="w-full border border-warm-border rounded-lg bg-white px-2.5 py-2 text-[12.5px] font-mono outline-none focus:border-navy"
+              />
+            </SidebarCampo>
+          </div>
+        </div>
+
+        {/* Notas internas */}
+        <div className="border-t border-cream-3 px-6 py-5">
+          <div className="flex items-center gap-1.5 mb-1">
+            <span className="msr text-[14px] text-warn-dark">lock</span>
+            <span className="text-[10.5px] font-bold tracking-wider text-warm-gray-2">
+              {t('ticket.notasInternas')}
+            </span>
+          </div>
+          <div className="text-[11px] text-warm-gray-2 mb-3">{t('ticket.notasHint')}</div>
+
+          <div className="flex flex-col gap-2">
+            {notas.map((n) => (
+              <div key={n.id} className="bg-gold-bg rounded-lg px-3 py-2">
+                <div className="flex items-center gap-2 mb-0.5">
+                  <span className="h-5 w-5 rounded-full bg-gold text-white text-[8px] font-bold flex items-center justify-center">
+                    {iniciales(n.data.autor.nombre)}
+                  </span>
+                  <span className="text-[11px] font-bold text-warn-dark flex-1">
+                    {n.data.autor.nombre}
+                  </span>
+                  <span className="text-[10px] text-warm-gray-2">{fmtHora(n.data.createdAt)}</span>
+                </div>
+                <div className="text-[12.5px] text-ink-2 whitespace-pre-wrap">{n.data.texto}</div>
+              </div>
+            ))}
+            {notas.length === 0 && (
+              <div className="text-[12px] text-warm-gray-2">{m('sinNotas')}</div>
+            )}
+          </div>
+
+          <div className="flex items-end gap-2 mt-3 bg-cream-0 border border-warm-border rounded-xl p-2">
+            <textarea
+              rows={1}
+              value={notaDraft}
+              onChange={(e) => setNotaDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  agregarNota();
+                }
+              }}
+              placeholder={t('inbox.placeholderNota')}
+              className="flex-1 bg-transparent resize-none outline-none text-[12.5px] px-1.5 py-1"
+            />
+            <button
+              onClick={agregarNota}
+              disabled={!notaDraft.trim()}
+              title={m('agregar')}
+              className="bg-navy text-white h-8 w-8 rounded-lg flex items-center justify-center disabled:opacity-40 hover:bg-navy-light"
+            >
+              <span className="msr text-[16px]">send</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SidebarCampo({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <div className="text-[10px] font-bold tracking-wider text-warm-gray-2 uppercase mb-1.5">
+        {label}
+      </div>
+      {children}
+      {hint && <div className="text-[10px] text-warm-gray-2 mt-1">{hint}</div>}
+    </div>
+  );
+}

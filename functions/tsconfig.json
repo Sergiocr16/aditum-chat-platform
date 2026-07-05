@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@aditum-chat/shared": ["../packages/shared/src/index.ts"]
+    },
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "sourceMap": true,
+    "resolveJsonModule": true
+  },
+  "include": ["src"]
+}

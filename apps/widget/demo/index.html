@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Demo — App Aditum con Aditum Chat embebido</title>
+  <style>
+    body { margin: 0; font-family: system-ui, sans-serif; background: #f0f2f5; }
+    header { background: #123C68; color: #fff; padding: 16px 32px; display: flex; align-items: center; gap: 12px; }
+    header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+    main { padding: 32px; max-width: 960px; margin: 0 auto; }
+    .card { background: #fff; border-radius: 8px; padding: 24px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+    .muted { color: #667; font-size: 14px; }
+    select, label { font-size: 14px; }
+  </style>
+</head>
+<body>
+  <header><h1>App Aditum — página host de demo</h1></header>
+  <main>
+    <div class="card">
+      <h2>Simulador del host</h2>
+      <p class="muted">
+        Esta página simula la app de Aditum: pide un payload cifrado al endpoint de demo
+        (solo emulador), define <code>window.AditumChatSettings</code> y carga el widget.
+      </p>
+      <label>
+        Usuario:
+        <select id="user">
+          <option value="juan">Juan Rodríguez — Admin, Vistas del Este (es)</option>
+          <option value="roberto">Roberto Jiménez — Admin, Vistas del Este (es)</option>
+          <option value="ana">Ana Brenes — Residente, Torres de Sabana (en)</option>
+        </select>
+      </label>
+      <button id="reload">Recargar widget</button>
+    </div>
+    <div class="card">
+      <h2>Contenido de relleno</h2>
+      <p class="muted">Módulo de cobros, reservas y mantenimiento irían acá…</p>
+    </div>
+  </main>
+  <script type="module">
+    const FUNCTIONS = 'http://127.0.0.1:5201/demo-aditum-chat/us-central1';
+
+    async function boot() {
+      const user = document.getElementById('user').value;
+      const res = await fetch(`${FUNCTIONS}/demoPayload?user=${user}`);
+      if (!res.ok) {
+        console.error('[demo] ¿Están corriendo los emuladores? pnpm emulators');
+        return;
+      }
+      const { siteId, payload } = await res.json();
+      window.AditumChat?.destroy?.();
+      window.AditumChatSettings = { siteId, payload, apiUrl: FUNCTIONS };
+      if (window.AditumChat) {
+        window.AditumChat.init(window.AditumChatSettings);
+      } else {
+        await import('/src/main.tsx');
+      }
+    }
+
+    document.getElementById('reload').addEventListener('click', boot);
+    boot();
+  </script>
+</body>
+</html>

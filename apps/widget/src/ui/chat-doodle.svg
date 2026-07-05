@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="320" viewBox="0 0 320 320">
+  <g fill="none" stroke="#123C68" stroke-opacity="0.09" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+    <!-- casa -->
+    <g transform="translate(22,20) rotate(-8)">
+      <path d="M2 12 L13 3 L24 12 V24 H2 Z"/>
+      <path d="M10 24 V17 H16 V24"/>
+    </g>
+    <!-- burbuja de chat -->
+    <g transform="translate(120,38) rotate(6)">
+      <path d="M2 4 Q2 1 5 1 H21 Q24 1 24 4 V13 Q24 16 21 16 H10 L4 21 V16 Q2 16 2 13 Z"/>
+      <path d="M7 7 H19 M7 11 H15"/>
+    </g>
+    <!-- llave -->
+    <g transform="translate(228,24) rotate(24)">
+      <circle cx="7" cy="7" r="5"/>
+      <path d="M11 11 L24 24 M18 18 L21 15 M21 21 L24 18"/>
+    </g>
+    <!-- edificio -->
+    <g transform="translate(60,120) rotate(4)">
+      <rect x="2" y="2" width="18" height="26" rx="1"/>
+      <path d="M7 8 H9 M13 8 H15 M7 14 H9 M13 14 H15 M7 20 H9 M13 20 H15"/>
+    </g>
+    <!-- calendario -->
+    <g transform="translate(170,132) rotate(-6)">
+      <rect x="1" y="4" width="24" height="20" rx="2"/>
+      <path d="M1 10 H25 M7 1 V6 M19 1 V6"/>
+    </g>
+    <!-- estrella -->
+    <g transform="translate(268,120) rotate(10)">
+      <path d="M12 2 L15 9 L23 10 L17 15 L19 23 L12 19 L5 23 L7 15 L1 10 L9 9 Z"/>
+    </g>
+    <!-- ticket -->
+    <g transform="translate(24,220) rotate(8)">
+      <path d="M2 6 H24 V11 Q21 11 21 14 Q21 17 24 17 V22 H2 V17 Q5 17 5 14 Q5 11 2 11 Z"/>
+      <path d="M10 10 V12 M10 16 V18"/>
+    </g>
+    <!-- llave inglesa -->
+    <g transform="translate(130,236) rotate(-18)">
+      <path d="M20 3 Q25 5 24 10 L14 20 Q16 25 12 27 Q8 29 5 26 Q2 23 4 19 Q6 15 11 17 L21 7 Q19 4 20 3 Z"/>
+    </g>
+    <!-- documento -->
+    <g transform="translate(232,214) rotate(-8)">
+      <path d="M3 1 H16 L22 7 V27 H3 Z M16 1 V7 H22"/>
+      <path d="M7 13 H18 M7 18 H18 M7 23 H14"/>
+    </g>
+    <!-- corazon chiquito -->
+    <g transform="translate(88,288) rotate(-4)">
+      <path d="M9 16 Q1 10 1 5.5 Q1 1 5 1 Q8 1 9 4 Q10 1 13 1 Q17 1 17 5.5 Q17 10 9 16 Z"/>
+    </g>
+    <!-- moneda -->
+    <g transform="translate(196,290) rotate(12)">
+      <circle cx="10" cy="10" r="9"/>
+      <path d="M10 5 V15 M7 7.5 Q10 5.5 13 7.5 M7 12.5 Q10 14.5 13 12.5"/>
+    </g>
+    <!-- sobre -->
+    <g transform="translate(282,282) rotate(-14)">
+      <rect x="1" y="3" width="22" height="15" rx="2"/>
+      <path d="M1 5 L12 12 L23 5"/>
+    </g>
+  </g>
+</svg>
