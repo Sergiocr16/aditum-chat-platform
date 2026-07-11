@@ -12,7 +12,7 @@ export type ConversationCanal = string; // = siteId de origen
 
 export type TicketStatus = 'abierto' | 'en_progreso' | 'en_desarrollo' | 'resuelto' | 'pendiente';
 export type TicketPriority = 'alta' | 'media' | 'baja';
-export type TicketAmbito = 'cliente' | 'sistema';
+export type TicketAmbito = 'cliente' | 'grupo' | 'sistema';
 export type SlaEstado = 'en_sla' | 'por_vencer' | 'vencido' | 'cumplido' | 'pausado';
 
 export type SenderType = 'user' | 'agent' | 'bot' | 'sistema';
@@ -143,6 +143,27 @@ export interface Client {
 }
 
 // ---------------------------------------------------------------------------
+// Grupos (organizaciones con varios admins que administran N clientes)
+// ---------------------------------------------------------------------------
+
+/**
+ * groups/{groupId} — p. ej. una administradora que maneja varios condominios.
+ * Se upsertea desde widgetSession con lo que declara el host (last-write-wins).
+ */
+export interface Group {
+  siteId: string;
+  name: string;
+  /** Si el grupo tiene chat grupal contratado (lo dicta el host). */
+  chatEnabled: boolean;
+  /** Unidades que administra (condominios para Aditum). */
+  clients: GroupClientRef[];
+  /** Etiquetas asignadas al grupo (catálogo `tags`, por sitio). */
+  tags?: string[];
+  createdAt: unknown;
+  updatedAt: unknown;
+}
+
+// ---------------------------------------------------------------------------
 // Contactos (directorio auto-poblado) — pantalla 1r
 // ---------------------------------------------------------------------------
 
@@ -151,6 +172,9 @@ export interface Contact {
   externalId: string;
   siteId: string;
   clientId?: string;
+  /** Organización del admin (si vino en el payload). */
+  groupId?: string;
+  groupName?: string;
   nombre: string;
   email?: string;
   telefono?: string;
@@ -216,6 +240,9 @@ export interface Conversation {
   siteId: string;
   clientId?: string;
   clientNombre?: string;
+  /** Para tipo 'grupo': organización dueña del canal. */
+  groupId?: string;
+  groupName?: string;
   /** Para tipo 'directa'. */
   contactId?: string;
   contactNombre?: string;
@@ -300,6 +327,9 @@ export interface Ticket {
   siteId: string;
   clientId?: string;
   clientNombre?: string;
+  /** Para ambito 'grupo': organización a la que pertenece el ticket. */
+  groupId?: string;
+  groupName?: string;
   contactId?: string;
   contactNombre?: string;
   conversationId?: string | null;
@@ -466,16 +496,52 @@ export interface DailyMetrics {
 // Payload cifrado del host y settings del snippet — pantalla 1o
 // ---------------------------------------------------------------------------
 
+/** Unidad administrada por un grupo (condominio, sitio, sucursal…). */
+export interface GroupClientRef {
+  id: string;
+  name: string;
+}
+
+/** Máximo de unidades aceptadas en `groupClients` por payload. */
+export const GROUP_CLIENTS_MAX = 300;
+
+/**
+ * Metadatos del cliente que el host manda en el payload para el panel de
+ * contexto de la consola. Se upsertean en clients/{clientId} en cada sesión.
+ */
+export interface ClientInfo {
+  /** "Sabana, San José" */
+  location?: string;
+  /** Cantidad de filiales/unidades. */
+  units?: number;
+  /** "Empresarial" */
+  plan?: string;
+  /** Año desde el que es cliente. */
+  customerSince?: number;
+  /** ["Cobros", "Reservas", "Mant."] */
+  modules?: string[];
+}
+
 /** JSON que el server del host cifra con la clave del sitio (AES-256-GCM). */
 export interface EncryptedPayloadClaims {
   userId: string;
-  nombre: string;
+  name: string;
   email?: string;
-  rol?: string;
-  condominio?: string;
+  role?: string;
+  /** Cliente/condominio del usuario (tenencia de directas y tickets). */
   clientId?: string;
+  clientName?: string;
+  /** Metadatos del cliente para el panel de contexto (requiere clientId). */
+  clientInfo?: ClientInfo;
+  /** Organización a la que pertenece un admin (tiene la lista de clientes). */
+  groupId?: string;
+  groupName?: string;
+  /** El host dicta si el grupo tiene chat grupal contratado. */
+  groupChatEnabled?: boolean;
+  /** Unidades que administra el grupo. Máx GROUP_CLIENTS_MAX. */
+  groupClients?: GroupClientRef[];
   deviceToken?: string;
-  idioma?: Idioma;
+  language?: Idioma;
   metadata?: Record<string, string | number | boolean>;
   /** Epoch seconds. exp máx = iat + 300 (5 min). */
   iat: number;
@@ -486,7 +552,14 @@ export interface EncryptedPayloadClaims {
 export interface AditumChatSettings {
   siteId: string;
   /** base64(iv ‖ ciphertext ‖ tag) generado server-side por el host. */
-  payload: string;
+  payload?: string;
+  /**
+   * Endpoint del host que devuelve `{ payload }` fresco (mismo formato que
+   * `payload`). El payload embebido vence a los 5 min; con esta URL el widget
+   * pide uno nuevo al momento de iniciar sesión — recomendado para páginas que
+   * viven más que eso (SPAs). Se llama con `credentials: 'include'`.
+   */
+  payloadUrl?: string;
   config?: Partial<WidgetConfig>;
   /** Override del endpoint (emuladores / staging). */
   apiUrl?: string;
@@ -501,6 +574,8 @@ export interface WidgetSessionResponse {
   nombre: string;
   rol?: string;
   clientNombre?: string;
+  groupId?: string;
+  groupName?: string;
   idioma: Idioma;
   widgetConfig: WidgetConfig;
   botConfig: Pick<BotConfig, 'activo' | 'nombre' | 'avatarUrl' | 'saludo'>;
@@ -517,6 +592,7 @@ export interface ContactClaims {
   kind: 'contact';
   siteId: string;
   clientId?: string;
+  groupId?: string;
   contactId: string;
 }
 

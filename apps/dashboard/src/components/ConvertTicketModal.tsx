@@ -39,7 +39,9 @@ export function ConvertTicketModal({
   const [descripcion, setDescripcion] = useState('');
   const [prioridad, setPrioridad] = useState<TicketPriority>('media');
   const [asignadoA, setAsignadoA] = useState(agent?.uid ?? '');
-  const [publico, setPublico] = useState(false);
+  // Tickets de conversaciones grupales nacen públicos: los demás admins del
+  // grupo los ven en "Mi grupo" del widget.
+  const [publico, setPublico] = useState(conv.data.tipo === 'grupo');
   const [adjuntar, setAdjuntar] = useState(false);
   const [ticketExistente, setTicketExistente] = useState('');
   const [busy, setBusy] = useState(false);
@@ -76,6 +78,7 @@ export function ConvertTicketModal({
         siteId: c.siteId,
         clientId: c.clientId,
         clientNombre: c.clientNombre,
+        ...(c.groupId ? { groupId: c.groupId, groupName: c.groupName } : {}),
         contactId: c.contactId,
         contactNombre: c.contactNombre,
         conversationId: conv.id,
@@ -83,7 +86,7 @@ export function ConvertTicketModal({
         descripcion: desc,
         prioridad,
         publico,
-        ambito: 'cliente',
+        ambito: c.tipo === 'grupo' ? 'grupo' : 'cliente',
         asignadoA: asignado?.id ?? null,
         asignadoNombre: asignado?.data.nombre ?? null,
         ...(adjuntar && ticketExistente ? { adjuntarA: ticketExistente } : {}),
@@ -106,7 +109,7 @@ export function ConvertTicketModal({
         <div className="px-5 py-4 border-b border-cream-3">
           <div className="text-[15px] font-bold">{t('convertir.titulo')}</div>
           <div className="text-[11.5px] text-warm-gray mt-0.5">
-            {[c.contactNombre, c.clientNombre].filter(Boolean).join(' · ')}
+            {[c.contactNombre, c.groupName ?? c.clientNombre].filter(Boolean).join(' · ')}
           </div>
         </div>
 

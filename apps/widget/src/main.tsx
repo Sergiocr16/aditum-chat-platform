@@ -19,8 +19,8 @@ export function emit(event: EventName, data?: unknown): void {
 
 function init(settings: AditumChatSettings): void {
   if (host) destroy();
-  if (!settings?.siteId || !settings?.payload) {
-    console.error('[AditumChat] Falta siteId o payload en AditumChatSettings.');
+  if (!settings?.siteId || (!settings?.payload && !settings?.payloadUrl)) {
+    console.error('[AditumChat] Falta siteId y payload (o payloadUrl) en AditumChatSettings.');
     return;
   }
   host = document.createElement('div');

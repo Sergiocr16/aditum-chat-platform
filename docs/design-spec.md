@@ -41,11 +41,12 @@ cards 8px; paneles/modales 14px con `shadow-modal`. Chips de estado de ticket:
 ## Modelo de datos (Firestore, colecciones planas)
 
 `sites/{siteId}` (App Aditum `apartment`, Portal residentes `home_work`; widgetConfig/botConfig/scheduleConfig
-override por sitio, herencia de `settings/global`) · `clients/{clientId}` · `contacts/{contactId}`
+override por sitio, herencia de `settings/global`) · `clients/{clientId}` · `groups/{groupId}`
+(organización: `name`, `chatEnabled`, `clients[{id,name}]`) · `contacts/{contactId}`
 (id = `${siteId}_${externalId}`) · `conversations/{id}` (+`messages`) · `tickets/{id}` (+`historial`, `notas`)
 · `team/{uid}` · `settings/global|sla` · `kb/{docId}` (+`chunks`) · `csat/{id}` · `metrics/daily/{fecha}`.
 Estados ticket: `abierto|en_progreso|en_desarrollo|resuelto|pendiente`. Prioridad: `alta|media|baja`.
-Ámbito: `cliente|sistema` + `publico: bool`.
+Ámbito: `cliente|grupo|sistema` + `publico: bool`.
 
 ---
 
@@ -133,9 +134,9 @@ Estados ticket: `abierto|en_progreso|en_desarrollo|resuelto|pendiente`. Priorida
 - Cards por sitio: icono, nombre, dominio, chip Activo, stats (conversaciones/tickets/usuarios),
   y "+ Conectar otro servicio" ("Sitio web, app móvil o cualquier producto con HTML").
 - Card "Código de instalación": snippet `<script>` con `content_copy`.
-- Card "Payload cifrado": lista de campos `userId, nombre, email, rol, condominio, clientId · chat global,
-  deviceToken · push, idioma, exp · 5 min` + nota "Se descifra solo en nuestro servidor con la clave
-  privada del sitio."
+- Card "Payload cifrado": lista de campos `userId, name, email, role, clientId · clientName,
+  groupId · groupName, groupChatEnabled, groupClients [{id,name}], deviceToken · push, language,
+  exp · 5 min` + nota "Se descifra solo en nuestro servidor con la clave privada del sitio."
 - Card "Clave de cifrado del sitio" (`key`): muestra `pk_app-aditum_••••••3f8a`, botones
   **Rotar clave** (callable `rotateSiteKey` → muestra la nueva UNA vez) y copiar.
 - Tabla de herencia de config: qué es Por sitio vs Global.

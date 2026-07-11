@@ -35,11 +35,16 @@ export default function InboxPage() {
   const { siteId } = useSiteFilter();
   const [filtro, setFiltro] = useState<InboxFiltro>('todas');
   const [selId, setSelId] = useState<string | null>(null);
+  const [scrollAOrigen, setScrollAOrigen] = useState<string | null>(null);
 
-  // Deep link desde una notificación push: /inbox?c=<convId>.
+  // Deep link a una conversación (/inbox?c=<convId> desde una notificación push):
+  // la selecciona y sube el hilo hasta ella.
   useEffect(() => {
     const c = new URLSearchParams(window.location.search).get('c');
-    if (c) setSelId(c);
+    if (c) {
+      setSelId(c);
+      setScrollAOrigen(c);
+    }
   }, []);
 
   const convs = useConversations(siteId, filtro, agent?.uid ?? '_');
@@ -84,6 +89,17 @@ export default function InboxPage() {
 
   // Para que el panel de contexto pueda subir el hilo a una conversación anterior.
   const convViewRef = useRef<ConversationViewHandle>(null);
+
+  // Deep link a un segmento concreto (ej. "Ver conversación" desde un ticket):
+  // una vez montada la vista de esa conversación, sube el hilo hasta ella.
+  useEffect(() => {
+    if (!scrollAOrigen || sel?.id !== scrollAOrigen) return;
+    const id = setTimeout(() => {
+      convViewRef.current?.scrollToConversation(scrollAOrigen);
+      setScrollAOrigen(null);
+    }, 500);
+    return () => clearTimeout(id);
+  }, [scrollAOrigen, sel]);
 
   return (
     <div className="flex h-full">
@@ -161,12 +177,7 @@ export default function InboxPage() {
         {sel ? (
           <ConversationView ref={convViewRef} key={sel.id} conv={sel} onBack={() => setSelId(null)} />
         ) : (
-          <div className="flex-1 flex items-center justify-center text-warm-gray-2 text-sm">
-            <div className="text-center">
-              <span className="msr text-[40px] block mb-2 text-warm-gray-3">forum</span>
-              Seleccioná una conversación
-            </div>
-          </div>
+          <InboxVacio convs={convs} t={t} />
         )}
       </section>
 
@@ -200,6 +211,45 @@ export default function InboxPage() {
   );
 }
 
+/** Estado vacío del panel de conversación: guía + pulso de la bandeja visible. */
+function InboxVacio({ convs, t }: { convs: Row<Conversation>[]; t: ReturnType<typeof useT> }) {
+  const abiertas = convs.filter((c) => c.data.estado !== 'resolved').length;
+  const sinLeer = convs.filter((c) => (c.data.unread?.agentes ?? 0) > 0).length;
+
+  return (
+    <div className="flex-1 flex items-center justify-center">
+      <div className="flex flex-col items-center text-center px-6">
+        <div className="relative">
+          <div className="h-16 w-16 rounded-full bg-white border border-cream-3 shadow-card flex items-center justify-center">
+            <span className="msr text-[28px] text-warm-gray-2">forum</span>
+          </div>
+          {sinLeer > 0 && (
+            <span className="absolute -top-0.5 -right-0.5 h-[18px] min-w-[18px] px-1 rounded-full bg-navy text-white text-[10px] font-bold flex items-center justify-center">
+              {sinLeer}
+            </span>
+          )}
+        </div>
+        <div className="mt-4 text-[14px] font-bold text-ink">{t('inbox.vacioTitulo')}</div>
+        <div className="mt-1 text-[12px] text-warm-gray max-w-[250px] leading-relaxed">
+          {t('inbox.vacioSub')}
+        </div>
+        {abiertas > 0 && (
+          <div className="mt-4 flex gap-1.5">
+            <span className="text-[11px] font-semibold text-ink-2 bg-white border border-cream-3 rounded-full px-2.5 py-1">
+              {t('inbox.vacioAbiertas', { n: abiertas })}
+            </span>
+            {sinLeer > 0 && (
+              <span className="text-[11px] font-semibold text-navy bg-tag-blue-bg rounded-full px-2.5 py-1">
+                {t('inbox.vacioSinLeer', { n: sinLeer })}
+              </span>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ConversationRow({
   conv,
   activa,
@@ -217,7 +267,7 @@ function ConversationRow({
 }) {
   const c = conv.data;
   const grupo = c.tipo === 'grupo';
-  const nombre = grupo ? (c.clientNombre ?? 'Equipo') : (c.contactNombre ?? '—');
+  const nombre = grupo ? (c.groupName ?? c.clientNombre ?? 'Equipo') : (c.contactNombre ?? '—');
   const unreadAgentes = c.unread?.agentes ?? 0;
 
   return (
@@ -265,8 +315,10 @@ function ConversationRow({
               {t('inbox.chatGlobal')}
             </span>
           )}
+          {/* Grupo del contacto; sitio como fallback (en filas de chat grupal el
+              título ya es el grupo, ahí el sitio aporta más). */}
           <span className="text-[8.5px] font-bold tracking-wider bg-tag-blue-bg text-navy px-1.5 py-0.5 rounded">
-            {siteNombre.toUpperCase()}
+            {(!grupo && c.groupName ? c.groupName : siteNombre).toUpperCase()}
           </span>
           <EstadoChip estado={c.estado} idioma={idioma} />
           {c.estado === 'resolved' && c.categoria && (

@@ -390,7 +390,7 @@ export function Chat({
   const estado = activa?.data.estado ?? modo;
   // Título: el NOMBRE de quien atiende (agente asignado o bot), no la marca.
   const headerTitle = grupo
-    ? (activa?.data.clientNombre ?? t('chat.equipoAdministrador'))
+    ? (activa?.data.groupName ?? activa?.data.clientNombre ?? t('chat.equipoAdministrador'))
     : estado === 'bot'
       ? session.botConfig.nombre
       : (activa?.data.asignadoNombre ?? session.widgetConfig.titulo);

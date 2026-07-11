@@ -89,7 +89,7 @@ export const ConversationView = forwardRef<
     hayMasRef.current = hayMas;
   }, [hayMas]);
 
-  const nombre = grupo ? (c.clientNombre ?? 'Equipo') : (c.contactNombre ?? '—');
+  const nombre = grupo ? (c.groupName ?? c.clientNombre ?? 'Equipo') : (c.contactNombre ?? '—');
 
   function cargarAnteriores() {
     const el = bodyRef.current;
@@ -163,7 +163,7 @@ export const ConversationView = forwardRef<
           if (el && body) {
             // Dejar aire entre el inicio de la conversación y el header (no pegado al borde).
             const top = el.getBoundingClientRect().top - body.getBoundingClientRect().top + body.scrollTop;
-            body.scrollTo({ top: Math.max(0, top - 20), behavior: 'smooth' });
+            body.scrollTo({ top: Math.max(0, top - 72), behavior: 'smooth' });
             // Resaltar dónde inicia la conversación (la primera burbuja) para no perderse.
             const target = el.querySelector<HTMLElement>('[data-msgid]') ?? el;
             target.classList.add('ring-2', 'ring-navy');
@@ -621,7 +621,7 @@ export const ConversationView = forwardRef<
 });
 
 /** Convierte URLs del texto en enlaces clicables (resto queda como texto plano). */
-function linkificar(texto: string): React.ReactNode[] {
+export function linkificar(texto: string): React.ReactNode[] {
   const out: React.ReactNode[] = [];
   const re = /(?:https?:\/\/|www\.)[^\s]+/gi;
   let last = 0;

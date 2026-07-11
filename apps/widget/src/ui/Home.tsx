@@ -50,19 +50,24 @@ export function Home({ fb, session, go, directaBot, directaAgente, grupo, activo
   return (
     <div class="ac-home">
       <div class="ac-home-hero">
+        <div class="ac-home-marca">{cfg.titulo}</div>
         <div class="ac-home-saludo">{t('inicio.saludo', { nombre: primerNombre })}</div>
-        {(session.rol || session.clientNombre) && (
-          <div class="ac-home-sub">
-            {[session.rol, session.clientNombre].filter(Boolean).join(' · ')}
+        {session.rol && <span class="ac-home-rol">{session.rol}</span>}
+        <div class={`ac-home-status ${session.enHorario ? 'ac-home-status-on' : 'ac-home-status-off'}`}>
+          <div class="ac-home-status-head">
+            <span class={`ac-dot ${session.enHorario ? 'ac-dot-on' : 'ac-dot-off'}`} />
+            {session.enHorario ? t('inicio.enLinea') : t('inicio.fueraHorario')}
           </div>
-        )}
-        <div class="ac-home-estado">
-          <span class={`ac-dot ${session.enHorario ? 'ac-dot-on' : 'ac-dot-off'}`} />
-          {session.enHorario ? t('inicio.enLinea') : t('inicio.fueraHorario')}
+          <div class="ac-home-status-sub">
+            {session.enHorario ? t('inicio.enLineaSub') : t('inicio.asistente247')}
+          </div>
+          {session.scheduleText && (
+            <div class="ac-home-status-horario" title={t('inicio.horario')}>
+              <span class="ac-icon">schedule</span>
+              {session.scheduleText}
+            </div>
+          )}
         </div>
-        {session.scheduleText && (
-          <div class="ac-home-horario">{t('inicio.horario', { horario: session.scheduleText })}</div>
-        )}
       </div>
 
       <div class="ac-home-acciones">

@@ -2,7 +2,7 @@ rules_version = '2';
 
 // Aditum Chat — aislamiento multitenant.
 // Dos tipos de identidad (custom claims):
-//   contact: { kind: 'contact', siteId, clientId?, contactId }  ← widget
+//   contact: { kind: 'contact', siteId, clientId?, groupId?, contactId }  ← widget
 //   agent:   { kind: 'agent', rol: 'admin' | 'agente' }         ← consola
 // Las escrituras sensibles (tickets, claves, equipo) pasan por Cloud Functions.
 
@@ -15,6 +15,7 @@ service cloud.firestore {
     function isContact() { return signedIn() && request.auth.token.kind == 'contact'; }
     function myContactId() { return request.auth.token.contactId; }
     function myClientId() { return request.auth.token.get('clientId', ''); }
+    function myGroupId() { return request.auth.token.get('groupId', ''); }
 
     // ------------------------------------------------------------------ sitios
     match /sites/{siteId} {
@@ -34,6 +35,17 @@ service cloud.firestore {
       allow update: if isAdmin() ||
         (isAgent() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['tags']));
       allow create, delete: if isAdmin();
+    }
+
+    // ------------------------------------------------------------------- grupos
+    // Organizaciones (administradoras) con su lista de clientes. Las escribe
+    // widgetSession (Admin SDK) con lo que declara el host; desde la consola
+    // los agentes solo pueden tocar las etiquetas.
+    match /groups/{groupId} {
+      allow read: if isAgent() || (isContact() && myGroupId() == groupId);
+      allow update: if isAgent() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['tags']);
+      allow create, delete: if false;
     }
 
     // ---------------------------------------------------------------- contactos
@@ -124,7 +136,8 @@ service cloud.firestore {
           resource.data.get('contactId', '') == myContactId() ||
           (resource.data.publico == true && (
             resource.data.ambito == 'sistema' ||
-            resource.data.get('clientId', '') == myClientId()
+            (myClientId() != '' && resource.data.get('clientId', '') == myClientId()) ||
+            (myGroupId() != '' && resource.data.get('groupId', '') == myGroupId())
           ))
         );
       }
@@ -141,7 +154,8 @@ service cloud.firestore {
           parentTicket().get('contactId', '') == myContactId() ||
           (parentTicket().publico == true && (
             parentTicket().ambito == 'sistema' ||
-            parentTicket().get('clientId', '') == myClientId()
+            (myClientId() != '' && parentTicket().get('clientId', '') == myClientId()) ||
+            (myGroupId() != '' && parentTicket().get('groupId', '') == myGroupId())
           ))
         ));
         allow write: if isAgent();

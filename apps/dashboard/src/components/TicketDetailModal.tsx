@@ -7,7 +7,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { serverTimestamp } from 'firebase/firestore';
 import type {
+  Contact,
   Idioma,
+  Message,
   MessageSender,
   Ticket,
   TicketEventTipo,
@@ -22,12 +24,14 @@ import {
 } from '@aditum-chat/shared';
 import { useAuth } from '@/lib/auth';
 import { useT } from '@/lib/i18n';
+import { linkificar } from './ConversationView';
 import {
   fmtFecha,
   fmtHora,
   iniciales,
   toDate,
   useDoc,
+  useMessages,
   useSites,
   useTeam,
   useTicketHistory,
@@ -60,6 +64,11 @@ const M = {
     editoTicket: 'Editó el ticket',
     editar: 'Editar',
     editada: 'editada',
+    convOrigen: 'Conversación de origen',
+    sinMensajesConv: 'Sin mensajes en esta conversación',
+    grupo: 'Grupo',
+    sinGrupo: 'Sin grupo',
+    grupoHint: 'Si es público, los admins del grupo lo ven en el widget',
   },
   en: {
     slaVencido: 'Resolution SLA breached {tiempo} ago',
@@ -81,6 +90,11 @@ const M = {
     editoTicket: 'Edited the ticket',
     editar: 'Edit',
     editada: 'edited',
+    convOrigen: 'Origin conversation',
+    sinMensajesConv: 'No messages in this conversation',
+    grupo: 'Group',
+    sinGrupo: 'No group',
+    grupoHint: 'If public, group admins see it in the widget',
   },
 } satisfies Record<Idioma, Record<string, string>>;
 
@@ -129,6 +143,8 @@ export function TicketDetailModal({
   const notas = useTicketNotes(id);
   const team = useTeam();
   const sites = useSites();
+  const convOrigenId = (live ?? ticket)?.data.conversationId ?? null;
+  const mensajesOrigen = useMessages(convOrigenId);
 
   const idioma: Idioma = agent?.idioma ?? 'es';
   const m = useMemo(() => makeT(M, idioma), [idioma]);
@@ -139,6 +155,7 @@ export function TicketDetailModal({
   const [devRef, setDevRef] = useState('');
   const [resDraft, setResDraft] = useState('');
   const [notaDraft, setNotaDraft] = useState('');
+  const [verConvOrigen, setVerConvOrigen] = useState(false);
   const [notaEditId, setNotaEditId] = useState<string | null>(null);
   const [notaEditDraft, setNotaEditDraft] = useState('');
   const [busy, setBusy] = useState(false);
@@ -148,7 +165,19 @@ export function TicketDetailModal({
   const [asignadoDraft, setAsignadoDraft] = useState('');
   const [prioridadDraft, setPrioridadDraft] = useState<TicketPriority>('media');
   const [publicoDraft, setPublicoDraft] = useState(false);
+  const [grupoDraft, setGrupoDraft] = useState('');
   const [confirmarGuardar, setConfirmarGuardar] = useState(false);
+  // Solo se puede asignar el grupo del usuario del ticket (más el actual, si difiere).
+  const contactoTicket = useDoc<Contact>(tk?.contactId ? `contacts/${tk.contactId}` : null);
+  const grupoOpciones = useMemo(() => {
+    const opts: { id: string; name: string }[] = [];
+    const c = contactoTicket?.data;
+    if (c?.groupId) opts.push({ id: c.groupId, name: c.groupName ?? c.groupId });
+    if (tk?.groupId && tk.groupId !== c?.groupId) {
+      opts.push({ id: tk.groupId, name: tk.groupName ?? tk.groupId });
+    }
+    return opts;
+  }, [contactoTicket, tk?.groupId, tk?.groupName]);
 
   // Sincroniza el input devRef con el doc en vivo (llega async si solo hay ticketId).
   useEffect(() => {
@@ -164,8 +193,9 @@ export function TicketDetailModal({
     setAsignadoDraft(tk?.asignadoA ?? '');
     setPrioridadDraft(tk?.prioridad ?? 'media');
     setPublicoDraft(tk?.publico ?? false);
+    setGrupoDraft(tk?.groupId ?? '');
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [row?.id, tk?.asunto, tk?.descripcion, tk?.estado, tk?.asignadoA, tk?.prioridad, tk?.publico]);
+  }, [row?.id, tk?.asunto, tk?.descripcion, tk?.estado, tk?.asignadoA, tk?.prioridad, tk?.publico, tk?.groupId]);
 
   if (!id || !tk || !agent) return null;
 
@@ -230,6 +260,18 @@ export function TicketDetailModal({
         eventos.push({
           tipo: 'publico',
           descripcion: publicoDraft ? 'Ticket marcado como público' : 'Ticket marcado como privado',
+        });
+      }
+      if (grupoDraft !== (tk.groupId ?? '')) {
+        const grupo = grupoOpciones.find((g) => g.id === grupoDraft);
+        patch.groupId = grupoDraft || null;
+        patch.groupName = grupo?.name ?? null;
+        // El ámbito acompaña al grupo (sin pisar tickets del sistema).
+        if (grupoDraft && tk.ambito === 'cliente') patch.ambito = 'grupo';
+        if (!grupoDraft && tk.ambito === 'grupo') patch.ambito = 'cliente';
+        eventos.push({
+          tipo: 'edicion',
+          descripcion: grupo ? `Asignado al grupo ${grupo.name}` : 'Se quitó el grupo del ticket',
         });
       }
 
@@ -300,7 +342,8 @@ export function TicketDetailModal({
       estadoDraft !== tk.estado ||
       asignadoDraft !== (tk.asignadoA ?? '') ||
       prioridadDraft !== tk.prioridad ||
-      publicoDraft !== tk.publico);
+      publicoDraft !== tk.publico ||
+      grupoDraft !== (tk.groupId ?? ''));
 
   // ------------------------------------------------------------- render
 
@@ -310,7 +353,7 @@ export function TicketDetailModal({
       onClick={onClose}
     >
       <div
-        className="bg-white rounded-panel shadow-modal w-full max-w-3xl max-h-[90vh] overflow-y-auto"
+        className="bg-white rounded-panel shadow-modal w-full max-w-5xl max-h-[90vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header (sticky al hacer scroll) */}
@@ -388,6 +431,45 @@ export function TicketDetailModal({
                 className="w-full border border-warm-border rounded-lg bg-cream-0 px-3 py-2 text-[12.5px] text-ink-2 leading-relaxed outline-none focus:border-navy focus:bg-white resize-y"
               />
             </div>
+
+            {/* Conversación de origen — vista read-only, colapsable */}
+            {tk.conversationId && (
+              <div className="mb-5 border border-warm-border rounded-lg overflow-hidden">
+                <button
+                  onClick={() => setVerConvOrigen((v) => !v)}
+                  className="w-full flex items-center gap-2 px-3 py-2 bg-cream-0 hover:bg-cream-1 text-left"
+                >
+                  <span className="msr text-[16px] text-navy">forum</span>
+                  <span className="text-[12px] font-bold text-ink-2 flex-1">{m('convOrigen')}</span>
+                  <span className="msr text-[18px] text-warm-gray">
+                    {verConvOrigen ? 'expand_less' : 'expand_more'}
+                  </span>
+                </button>
+                {verConvOrigen &&
+                  (() => {
+                    // Solo mensajes reales: sin notas internas, sistema, CSAT ni bienvenidas.
+                    const visibles = mensajesOrigen.filter(
+                      (mm) =>
+                        !mm.data.interno &&
+                        mm.data.sender.tipo !== 'sistema' &&
+                        mm.data.tipoContenido !== 'sistema' &&
+                        mm.data.tipoContenido !== 'csat',
+                    );
+                    return (
+                      <div className="chat-doodle-bg max-h-72 overflow-y-auto px-4 py-3 flex flex-col gap-2.5 border-t border-cream-3">
+                        {visibles.map((mm) => (
+                          <ConvOrigenBurbuja key={mm.id} m={mm.data} />
+                        ))}
+                        {visibles.length === 0 && (
+                          <div className="text-[12px] text-warm-gray-2 text-center py-2">
+                            {m('sinMensajesConv')}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+              </div>
+            )}
 
             <div className="text-[10.5px] font-bold tracking-wider text-warm-gray-2 mb-3">
               {t('ticket.historial')}
@@ -528,6 +610,23 @@ export function TicketDetailModal({
                 {t('ticket.publico')}
               </button>
             </SidebarCampo>
+
+            {grupoOpciones.length > 0 && (
+              <SidebarCampo label={m('grupo')} hint={m('grupoHint')}>
+                <select
+                  value={grupoDraft}
+                  onChange={(e) => setGrupoDraft(e.target.value)}
+                  className="w-full border border-warm-border rounded-lg bg-white px-2.5 py-2 text-[12.5px] outline-none focus:border-navy cursor-pointer"
+                >
+                  <option value="">{m('sinGrupo')}</option>
+                  {grupoOpciones.map((g) => (
+                    <option key={g.id} value={g.id}>
+                      {g.name}
+                    </option>
+                  ))}
+                </select>
+              </SidebarCampo>
+            )}
 
             <SidebarCampo label={m('devRef')} hint={m('devRefHint')}>
               <input
@@ -682,6 +781,46 @@ export function TicketDetailModal({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/** Burbuja read-only para la conversación de origen — mismo estilo que el chat de consola. */
+function ConvOrigenBurbuja({ m }: { m: Message }) {
+  const own = m.sender.tipo === 'agent';
+  const bot = m.sender.tipo === 'bot';
+  if (m.sender.tipo === 'sistema' || m.tipoContenido === 'sistema' || m.tipoContenido === 'csat') {
+    return (
+      <div className="self-center my-0.5 text-center text-[11px] text-ink-2 bg-cream-2 rounded-lg px-3 py-1.5 max-w-[80%]">
+        {m.texto || '—'}
+      </div>
+    );
+  }
+  return (
+    <div className={`flex gap-2 max-w-[75%] ${own ? 'self-end flex-row-reverse' : 'self-start'}`}>
+      <div
+        className={`h-7 w-7 rounded-full flex-none self-end flex items-center justify-center text-[9px] font-bold text-white ${
+          bot ? 'bg-ai' : own ? 'bg-navy' : 'bg-warm-gray-3'
+        }`}
+      >
+        {bot ? <span className="msr text-[15px]">smart_toy</span> : iniciales(m.sender.nombre)}
+      </div>
+      <div
+        className={`rounded-xl px-3 py-2 shadow-card ${own ? 'bg-[#D9FDD3]' : 'bg-white'}`}
+      >
+        {bot && <div className="text-[10.5px] font-bold text-navy mb-0.5">{m.sender.nombre}</div>}
+        {m.texto ? (
+          <div className="text-[13px] text-[#111B21] whitespace-pre-wrap break-words">
+            {linkificar(m.texto)}
+          </div>
+        ) : (
+          <div className="flex items-center gap-1 text-[12.5px] text-warm-gray italic">
+            <span className="msr text-[15px]">attachment</span>
+            {m.tipoContenido}
+          </div>
+        )}
+        <div className="text-[10px] text-[#667781] text-right mt-0.5">{fmtHora(m.createdAt)}</div>
+      </div>
     </div>
   );
 }

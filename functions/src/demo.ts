@@ -6,33 +6,66 @@ import { encryptPayload } from './lib/crypto.js';
 // SOLO EMULADOR: genera el payload cifrado que en producción crea el server
 // del host (Aditum). Permite probar el widget end-to-end sin backend del host.
 
+const DEMO_GROUP = {
+  groupId: 'adm-horizonte',
+  groupName: 'Administradora Horizonte',
+  groupChatEnabled: true,
+  groupClients: [
+    { id: 'vistas-del-este', name: 'Condominio Vistas del Este' },
+    { id: 'hacienda-real-cariari', name: 'Hacienda Real Cariari' },
+  ],
+};
+
 const DEMO_USERS: Record<string, Omit<EncryptedPayloadClaims, 'iat' | 'exp'>> = {
   juan: {
     userId: 'usr_1001',
-    nombre: 'Juan Rodríguez',
+    name: 'Juan Rodríguez',
     email: 'jrodriguez@vistasdeleste.cr',
-    rol: 'Administrador',
-    condominio: 'Condominio Vistas del Este',
+    role: 'Administrador',
     clientId: 'vistas-del-este',
-    idioma: 'es',
+    clientName: 'Condominio Vistas del Este',
+    clientInfo: {
+      location: 'Curridabat, San José',
+      units: 148,
+      plan: 'Empresarial',
+      customerSince: 2023,
+      modules: ['Cobros', 'Reservas', 'Mant.'],
+    },
+    ...DEMO_GROUP,
+    language: 'es',
   },
   roberto: {
     userId: 'usr_1002',
-    nombre: 'Roberto Jiménez',
+    name: 'Roberto Jiménez',
     email: 'rjimenez@vistasdeleste.cr',
-    rol: 'Administrador',
-    condominio: 'Condominio Vistas del Este',
+    role: 'Administrador',
     clientId: 'vistas-del-este',
-    idioma: 'es',
+    clientName: 'Condominio Vistas del Este',
+    clientInfo: {
+      location: 'Curridabat, San José',
+      units: 148,
+      plan: 'Empresarial',
+      customerSince: 2023,
+      modules: ['Cobros', 'Reservas', 'Mant.'],
+    },
+    ...DEMO_GROUP,
+    language: 'es',
   },
   ana: {
     userId: 'usr_2001',
-    nombre: 'Ana Brenes',
+    name: 'Ana Brenes',
     email: 'ana.brenes@gmail.com',
-    rol: 'Residente (filial B-14)',
-    condominio: 'Torres de Sabana',
+    role: 'Residente (filial B-14)',
     clientId: 'torres-de-sabana',
-    idioma: 'en',
+    clientName: 'Torres de Sabana',
+    clientInfo: {
+      location: 'Sabana, San José',
+      units: 96,
+      plan: 'Empresarial',
+      customerSince: 2024,
+      modules: ['Cobros', 'Reservas'],
+    },
+    language: 'en',
   },
 };
 

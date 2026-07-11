@@ -3,11 +3,11 @@ import type { Ticket, TicketEvent, WidgetSessionResponse } from '@aditum-chat/sh
 import {
   formatTicketNumber,
   makeT,
-  ticketPriorityLabels,
   ticketStatusLabels,
   widgetMessages,
 } from '@aditum-chat/shared';
 import {
+  subscribeGroupTickets,
   subscribeMyTickets,
   subscribeSystemTickets,
   subscribeTicketHistory,
@@ -17,7 +17,7 @@ import {
 } from '../data.js';
 import type { WidgetFirebase } from '../firebase.js';
 
-type Tab = 'mis' | 'sistema';
+type Tab = 'mis' | 'grupo' | 'sistema';
 type SubFiltro = 'todos' | 'abiertos' | 'resueltos';
 
 interface Props {
@@ -25,20 +25,24 @@ interface Props {
   session: WidgetSessionResponse;
   ticketId?: string | null;
   onSelect(ticketId: string | null): void;
+  /** Cierra todo el panel del widget (X del header, igual que en el chat). */
+  onClose?(): void;
 }
 
-export function Tickets({ fb, session, ticketId, onSelect }: Props) {
+export function Tickets({ fb, session, ticketId, onSelect, onClose }: Props) {
   const t = makeT(widgetMessages, session.idioma);
   const [tab, setTab] = useState<Tab>('mis');
   const [filtro, setFiltro] = useState<SubFiltro>('todos');
   const [mios, setMios] = useState<Doc<Ticket>[]>([]);
+  const [grupo, setGrupo] = useState<Doc<Ticket>[]>([]);
   const [sistema, setSistema] = useState<Doc<Ticket>[]>([]);
 
   useEffect(() => subscribeMyTickets(fb, session, setMios), [fb, session]);
+  useEffect(() => subscribeGroupTickets(fb, session, setGrupo), [fb, session]);
   useEffect(() => subscribeSystemTickets(fb, setSistema), [fb]);
 
   const lista = useMemo(() => {
-    const base = tab === 'mis' ? mios : sistema;
+    const base = tab === 'mis' ? mios : tab === 'grupo' ? grupo : sistema;
     return base.filter((tk) =>
       filtro === 'todos'
         ? true
@@ -46,9 +50,9 @@ export function Tickets({ fb, session, ticketId, onSelect }: Props) {
           ? tk.data.estado === 'resuelto'
           : tk.data.estado !== 'resuelto',
     );
-  }, [tab, filtro, mios, sistema]);
+  }, [tab, filtro, mios, grupo, sistema]);
 
-  const seleccionado = [...mios, ...sistema].find((tk) => tk.id === ticketId);
+  const seleccionado = [...mios, ...grupo, ...sistema].find((tk) => tk.id === ticketId);
   if (seleccionado) {
     return (
       <TicketDetail
@@ -56,6 +60,7 @@ export function Tickets({ fb, session, ticketId, onSelect }: Props) {
         session={session}
         ticket={seleccionado}
         onBack={() => onSelect(null)}
+        onClose={onClose}
       />
     );
   }
@@ -66,6 +71,7 @@ export function Tickets({ fb, session, ticketId, onSelect }: Props) {
         {(
           [
             ['mis', t('tickets.mis')],
+            ...(session.groupId ? [['grupo', t('tickets.deMiGrupo')]] : []),
             ['sistema', t('tickets.delSistema')],
           ] as [Tab, string][]
         ).map(([k, label]) => (
@@ -98,9 +104,7 @@ export function Tickets({ fb, session, ticketId, onSelect }: Props) {
             <div class="ac-tk-card-top">
               <span class="ac-mono">{formatTicketNumber(tk.data.numero)}</span>
               {tk.data.ambito === 'sistema' && <span class="ac-icon ac-tk-public">public</span>}
-              <span class={`ac-chip ac-chip-prio-${tk.data.prioridad}`}>
-                {ticketPriorityLabels[session.idioma][tk.data.prioridad]}
-              </span>
+              {tk.data.ambito === 'grupo' && <span class="ac-icon ac-tk-public">groups</span>}
               <span class={`ac-chip ac-chip-${tk.data.estado}`}>
                 {ticketStatusLabels[session.idioma][tk.data.estado]}
               </span>
@@ -109,7 +113,9 @@ export function Tickets({ fb, session, ticketId, onSelect }: Props) {
             <div class="ac-tk-card-meta">
               {tk.data.ambito === 'sistema'
                 ? t('tickets.afectaVarios')
-                : tk.data.estado === 'resuelto'
+                : tk.data.ambito === 'grupo'
+                  ? (tk.data.groupName ?? t('tickets.delGrupo'))
+                  : tk.data.estado === 'resuelto'
                   ? t('tickets.resueltoPor', {
                       nombre: tk.data.asignadoNombre ?? '—',
                       fecha: fecha(tk.data.resueltoAt ?? tk.data.updatedAt, session.idioma),
@@ -123,7 +129,25 @@ export function Tickets({ fb, session, ticketId, onSelect }: Props) {
             </div>
           </button>
         ))}
-        {lista.length === 0 && <div class="ac-vacio">—</div>}
+        {lista.length === 0 && (
+          <div class="ac-tk-vacio">
+            <div class="ac-tk-vacio-ico">
+              <span class="ac-icon">confirmation_number</span>
+            </div>
+            <div class="ac-tk-vacio-tit">{t('tickets.vacioTitulo')}</div>
+            <div class="ac-tk-vacio-sub">
+              {filtro === 'resueltos'
+                ? t('tickets.vacioResueltos')
+                : filtro === 'abiertos'
+                  ? t('tickets.vacioAbiertos')
+                  : tab === 'sistema'
+                    ? t('tickets.vacioSistemaSub')
+                    : tab === 'grupo'
+                      ? t('tickets.vacioGrupoSub')
+                      : t('tickets.vacioMisSub')}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -134,72 +158,148 @@ function TicketDetail({
   session,
   ticket,
   onBack,
+  onClose,
 }: {
   fb: WidgetFirebase;
   session: WidgetSessionResponse;
   ticket: Doc<Ticket>;
   onBack(): void;
+  onClose?(): void;
 }) {
   const t = makeT(widgetMessages, session.idioma);
   const [eventos, setEventos] = useState<Doc<TicketEvent>[]>([]);
   useEffect(() => subscribeTicketHistory(fb, ticket.id, setEventos), [fb, ticket.id]);
+  const d = ticket.data;
+  // Ticket público ajeno (grupo/sistema): no revelar de dónde se originó —
+  // solo descripción y progresión de estados.
+  const esAjeno = d.contactId !== session.contactId;
+  const eventosVisibles = esAjeno
+    ? eventos.filter((e) => e.data.tipo === 'estado' || e.data.tipo === 'resolucion')
+    : eventos;
 
   return (
     <div class="ac-tk-detalle">
-      <button class="ac-tk-volver" onClick={onBack}>
-        <span class="ac-icon">arrow_back</span>
-        {formatTicketNumber(ticket.data.numero)}
-      </button>
-      <div class="ac-tk-d-head">
-        <span class={`ac-chip ac-chip-prio-${ticket.data.prioridad}`}>
-          {ticketPriorityLabels[session.idioma][ticket.data.prioridad]}
-        </span>
-        <span class={`ac-chip ac-chip-${ticket.data.estado}`}>
-          {ticketStatusLabels[session.idioma][ticket.data.estado]}
-        </span>
-      </div>
-      <div class="ac-tk-d-asunto">{ticket.data.asunto}</div>
-
-      <div class="ac-tk-d-datos">
-        <div>
-          <div class="ac-label">{t('tickets.detalle.asignadoA')}</div>
-          <div>{ticket.data.asignadoNombre ?? '—'}</div>
+      {/* Header estilo chat: avatar de ticket + número/estado + cerrar (<) */}
+      <div class="ac-tk-d-topbar">
+        <div class="ac-chat-avatar ac-tk-d-ava">
+          <span class="ac-icon">confirmation_number</span>
         </div>
-        <div>
-          <div class="ac-label">{t('tickets.detalle.creado')}</div>
-          <div>{fecha(ticket.data.createdAt, session.idioma, true)}</div>
+        <div class="ac-tk-d-topbar-txt">
+          <span class="ac-tk-d-topbar-tit">{d.asunto}</span>
+          <span class={`ac-chip ac-chip-${d.estado}`}>
+            {ticketStatusLabels[session.idioma][d.estado]}
+          </span>
         </div>
-        <div>
-          <div class="ac-label">{t('tickets.detalle.origen')}</div>
-          <div>{ticket.data.conversationId ? t('tickets.detalle.origenChat') : '—'}</div>
-        </div>
+        <button class="ac-icon-btn" aria-label="Cerrar" onClick={() => (onClose ? onClose() : onBack())}>
+          <span class="ac-icon">chevron_left</span>
+        </button>
       </div>
 
-      <div class="ac-tk-d-timeline">
-        {eventos.map((e) => (
-          <div key={e.id} class="ac-tl-item">
-            <span class="ac-tl-dot" />
+      <div class="ac-tk-d-body">
+        {/* Número + (sistema) */}
+        <div class="ac-tk-d-hero">
+          <span class="ac-tk-d-num ac-mono">{formatTicketNumber(d.numero)}</span>
+          {d.ambito === 'sistema' && (
+            <span class="ac-chip ac-chip-sistema">
+              <span class="ac-icon" style="font-size:13px">public</span>
+              {t('tickets.delSistema')}
+            </span>
+          )}
+          {d.ambito === 'grupo' && (
+            <span class="ac-chip ac-chip-sistema">
+              <span class="ac-icon" style="font-size:13px">groups</span>
+              {d.groupName ?? t('tickets.delGrupo')}
+            </span>
+          )}
+        </div>
+
+        {/* Descripción */}
+        {d.descripcion && (
+          <div class="ac-tk-d-seccion">
+            <div class="ac-tk-d-seccion-tit">{t('tickets.detalle.descripcion')}</div>
+            <div class="ac-tk-d-desc">{d.descripcion}</div>
+          </div>
+        )}
+
+        {/* Resolución */}
+        {d.resolucion && (
+          <div class="ac-tk-d-resolucion">
+            <span class="ac-icon">task_alt</span>
             <div>
-              <div class="ac-tl-desc">{e.data.descripcion}</div>
-              <div class="ac-tl-meta">{fecha(e.data.createdAt, session.idioma, true)}</div>
+              <div class="ac-tk-d-resolucion-tit">{ticketStatusLabels[session.idioma].resuelto}</div>
+              <div>{d.resolucion.texto}</div>
             </div>
           </div>
-        ))}
-      </div>
+        )}
 
-      {ticket.data.resolucion && (
-        <div class="ac-tk-d-resolucion">
-          <span class="ac-icon">task_alt</span>
-          {ticket.data.resolucion.texto}
+        {/* Actividad (izq) + Datos (der) lado a lado */}
+        <div class="ac-tk-d-cols">
+          {eventosVisibles.length > 0 && (
+            <div class="ac-tk-d-seccion ac-tk-d-card ac-tk-d-col-main">
+              <div class="ac-tk-d-seccion-tit">{t('tickets.detalle.actividad')}</div>
+              <div class="ac-tk-d-timeline">
+                {eventosVisibles.map((e) => (
+                  <div key={e.id} class="ac-tl-item">
+                    <span class="ac-tl-dot">
+                      <span class="ac-icon">{iconoEvento(e.data.tipo)}</span>
+                    </span>
+                    <div class="ac-tl-body">
+                      <div class="ac-tl-desc">{e.data.descripcion}</div>
+                      <div class="ac-tl-meta">{fecha(e.data.createdAt, session.idioma, true)}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div class="ac-tk-d-datos ac-tk-d-card ac-tk-d-col-side">
+            <div class="ac-tk-d-dato">
+              <span class="ac-label">{t('tickets.detalle.asignadoA')}</span>
+              <span class="ac-tk-d-dato-v">{d.asignadoNombre ?? '—'}</span>
+            </div>
+            <div class="ac-tk-d-dato">
+              <span class="ac-label">{t('tickets.detalle.creado')}</span>
+              <span class="ac-tk-d-dato-v">{fecha(d.createdAt, session.idioma, true)}</span>
+            </div>
+            {!esAjeno && (
+              <div class="ac-tk-d-dato">
+                <span class="ac-label">{t('tickets.detalle.origen')}</span>
+                <span class="ac-tk-d-dato-v">
+                  {d.conversationId ? t('tickets.detalle.origenChat') : '—'}
+                </span>
+              </div>
+            )}
+          </div>
         </div>
-      )}
 
-      <div class="ac-tk-d-aviso">
-        <span class="ac-icon">visibility</span>
-        {t('tickets.detalle.soloLectura')}
+        <div class="ac-tk-d-aviso">
+          <span class="ac-icon">lock</span>
+          {t('tickets.detalle.soloLectura')}
+        </div>
       </div>
     </div>
   );
+}
+
+/** Icono por tipo de evento del timeline. */
+function iconoEvento(tipo: string): string {
+  switch (tipo) {
+    case 'creado':
+      return 'confirmation_number';
+    case 'asignado':
+      return 'person';
+    case 'estado':
+      return 'swap_horiz';
+    case 'prioridad':
+      return 'flag';
+    case 'resolucion':
+      return 'task_alt';
+    case 'edicion':
+      return 'edit';
+    default:
+      return 'chat_bubble';
+  }
 }
 
 function fecha(ts: unknown, idioma: 'es' | 'en', conHora = false): string {

@@ -223,6 +223,9 @@ export function App({ settings, onReady, emit }: Props) {
   }
 
   const enChat = view === 'chat' || view === 'grupo';
+  // El detalle de un ticket usa su propio header (estilo chat), así que ocultamos
+  // el header/tabbar genéricos, igual que en el chat.
+  const enTicketDetalle = view === 'tickets' && !!ticketSel;
   // Escritorio: amplio solo cuando hay algo abierto al lado; si se cierra el
   // chat (X) queda únicamente el widget compacto. Móvil: como antes.
   const amplio = esEscritorio ? view !== 'inicio' : enChat || view === 'tickets';
@@ -246,7 +249,6 @@ export function App({ settings, onReady, emit }: Props) {
                         {(state.session.widgetConfig.titulo[0] ?? 'S').toUpperCase()}
                       </span>
                     )}
-                    <span class="ac-header-title">{state.session.widgetConfig.titulo}</span>
                   </span>
                   <button class="ac-icon-btn" aria-label="Cerrar" onClick={cerrarPanel}>
                     <span class="ac-icon">close</span>
@@ -337,6 +339,10 @@ export function App({ settings, onReady, emit }: Props) {
                           setView('inicio');
                         }
                       }}
+                      onClose={() => {
+                        setTicketSel(null);
+                        setView('inicio');
+                      }}
                     />
                   )}
                 </div>
@@ -368,7 +374,7 @@ export function App({ settings, onReady, emit }: Props) {
       )}
       {openPanel && !esEscritorio && (
         <div class={`ac-panel ${amplio ? 'ac-panel-amplio' : ''}`}>
-          {!enChat && (
+          {!enChat && !enTicketDetalle && (
             <div class="ac-header">
               <span class="ac-header-brand">
                 {state.status === 'ready' && state.session.widgetConfig.logoUrl ? (
@@ -378,9 +384,6 @@ export function App({ settings, onReady, emit }: Props) {
                     {(state.status === 'ready' ? state.session.widgetConfig.titulo : 'S')[0]}
                   </span>
                 )}
-                <span class="ac-header-title">
-                  {state.status === 'ready' ? state.session.widgetConfig.titulo : 'Soporte Aditum'}
-                </span>
               </span>
               <button class="ac-icon-btn" aria-label="Cerrar" onClick={cerrarPanel}>
                 <span class="ac-icon">close</span>
@@ -448,12 +451,16 @@ export function App({ settings, onReady, emit }: Props) {
                     session={state.session}
                     ticketId={ticketSel}
                     onSelect={setTicketSel}
+                    onClose={() => {
+                      setTicketSel(null);
+                      setView('inicio');
+                    }}
                   />
                 )}
               </>
             )}
           </div>
-          {!enChat && (
+          {!enChat && !enTicketDetalle && (
             <nav class="ac-tabbar">
               <button
                 class={`ac-tab ${view === 'inicio' ? 'ac-tab-active' : ''}`}

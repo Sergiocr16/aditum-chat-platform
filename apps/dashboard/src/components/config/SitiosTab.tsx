@@ -29,16 +29,27 @@ const M = {
     copiar: 'Copiar',
     copiado: '¡Copiado!',
     payload: 'Payload cifrado',
-    payloadSub: 'CONTENIDO DEL PAYLOAD CIFRADO',
+    payloadSub: 'Cómo generarlo y enviarlo al widget',
+    payloadPasos: [
+      'Tu servidor arma el JSON del usuario y lo cifra con la clave del sitio: AES-256-GCM → base64(iv ‖ ciphertext ‖ tag). iat/exp en epoch seconds, con vigencia máxima de 5 minutos.',
+      'Pasáselo al widget en window.AditumChatSettings: embebido en payload, o mejor con payloadUrl — un endpoint autenticado tuyo que devuelve { payload } fresco. Así nunca vence aunque la página quede abierta.',
+      'El widget lo intercambia por una sesión llamando a widgetSession. El payload nunca se descifra en el navegador.',
+    ],
+    payloadEjemplo: 'Ejemplo de payload (antes de cifrar)',
+    payloadCamposTitulo: 'CAMPOS',
+    snippetComment: 'recomendado: tu endpoint que devuelve { payload } fresco',
     payloadCampos: [
       ['userId', 'ID del usuario en tu sistema'],
-      ['nombre', 'Nombre para mostrar'],
+      ['name', 'Nombre para mostrar'],
       ['email', 'Correo del usuario'],
-      ['rol', 'Rol dentro del condominio'],
-      ['condominio', 'Nombre del condominio'],
-      ['clientId', 'Chat global'],
+      ['role', 'Rol del usuario — "admin" habilita el chat grupal'],
+      ['clientId · clientName', 'Cliente/condominio del usuario'],
+      ['clientInfo', 'Datos del panel: { location, units, plan, customerSince, modules }'],
+      ['groupId · groupName', 'Organización (grupo) a la que pertenece un admin'],
+      ['groupChatEnabled', 'Si el grupo tiene chat grupal contratado'],
+      ['groupClients', 'Unidades que administra el grupo: [{ id, name }]'],
       ['deviceToken', 'Push'],
-      ['idioma', 'es / en'],
+      ['language', 'es / en'],
       ['iat / exp', '5 min'],
     ],
     payloadNota:
@@ -96,16 +107,27 @@ const M = {
     copiar: 'Copy',
     copiado: 'Copied!',
     payload: 'Encrypted payload',
-    payloadSub: 'ENCRYPTED PAYLOAD CONTENTS',
+    payloadSub: 'How to generate it and send it to the widget',
+    payloadPasos: [
+      'Your server builds the user JSON and encrypts it with the site key: AES-256-GCM → base64(iv ‖ ciphertext ‖ tag). iat/exp in epoch seconds, valid for at most 5 minutes.',
+      'Hand it to the widget in window.AditumChatSettings: embedded as payload, or better via payloadUrl — an authenticated endpoint of yours returning a fresh { payload }. That way it never expires while the page stays open.',
+      'The widget exchanges it for a session by calling widgetSession. The payload is never decrypted in the browser.',
+    ],
+    payloadEjemplo: 'Sample payload (before encryption)',
+    payloadCamposTitulo: 'FIELDS',
+    snippetComment: 'recommended: your endpoint returning a fresh { payload }',
     payloadCampos: [
       ['userId', 'User ID in your system'],
-      ['nombre', 'Display name'],
+      ['name', 'Display name'],
       ['email', 'User email'],
-      ['rol', 'Role within the condo'],
-      ['condominio', 'Condo name'],
-      ['clientId', 'Global chat'],
+      ['role', 'User role — "admin" enables the group chat'],
+      ['clientId · clientName', "The user's client/condo"],
+      ['clientInfo', 'Context panel data: { location, units, plan, customerSince, modules }'],
+      ['groupId · groupName', 'Organization (group) an admin belongs to'],
+      ['groupChatEnabled', 'Whether the group has group chat'],
+      ['groupClients', 'Units the group manages: [{ id, name }]'],
       ['deviceToken', 'Push'],
-      ['idioma', 'es / en'],
+      ['language', 'es / en'],
       ['iat / exp', '5 min'],
     ],
     payloadNota:
@@ -185,9 +207,40 @@ export function SitiosTab() {
   const siteId = selId ?? 'app-aditum';
 
   const snippet = `<script>
-  window.AditumChatSettings = { siteId: '${siteId}', payload: 'PAYLOAD_CIFRADO_GENERADO_EN_TU_SERVIDOR' };
+  window.AditumChatSettings = {
+    siteId: '${siteId}',
+    payload: 'PAYLOAD_CIFRADO_GENERADO_EN_TU_SERVIDOR',
+    payloadUrl: '/api/aditum-chat/payload', // ${m.snippetComment}
+  };
 </script>
 <script src="https://chat.aditumcr.com/widget.js" async></script>`;
+
+  const payloadEjemplo = `{
+  "userId": "usr_123",
+  "name": "Juan Rodríguez",
+  "email": "juan@condominio.cr",
+  "role": "Administrador",
+  "clientId": "vistas-del-este",
+  "clientName": "Condominio Vistas del Este",
+  "clientInfo": {
+    "location": "Curridabat, San José",
+    "units": 148,
+    "plan": "Empresarial",
+    "customerSince": 2023,
+    "modules": ["Cobros", "Reservas", "Mant."]
+  },
+  "groupId": "adm-horizonte",
+  "groupName": "Administradora Horizonte",
+  "groupChatEnabled": true,
+  "groupClients": [
+    { "id": "vistas-del-este", "name": "Condominio Vistas del Este" },
+    { "id": "hacienda-real-cariari", "name": "Hacienda Real Cariari" }
+  ],
+  "deviceToken": "FCM_TOKEN_OPCIONAL",
+  "language": "es",
+  "iat": 1752264000,
+  "exp": 1752264300
+}`;
 
   function copiar(texto: string, key: string) {
     navigator.clipboard.writeText(texto).then(() => {
@@ -349,16 +402,53 @@ export function SitiosTab() {
         </div>
       </Card>
 
-      {/* Payload cifrado */}
+      {/* Payload cifrado: cómo se genera, ejemplo y campos */}
       <Card icon="lock" title={m.payload} subtitle={m.payloadSub}>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-2">
-          {m.payloadCampos.map(([campo, desc]) => (
-            <div key={campo} className="flex items-baseline gap-1.5 text-[12px]">
-              <span className="font-mono font-semibold text-ink">{campo}</span>
-              <span className="text-[10.5px] text-warm-gray-2">· {desc}</span>
-            </div>
+        <ol className="flex flex-col gap-2.5">
+          {m.payloadPasos.map((paso, i) => (
+            <li key={i} className="flex gap-2.5 text-[12px] text-ink-2 leading-relaxed">
+              <span className="flex-none h-5 w-5 rounded-full bg-tag-blue-bg text-navy text-[11px] font-bold flex items-center justify-center mt-0.5">
+                {i + 1}
+              </span>
+              <span>{paso}</span>
+            </li>
           ))}
+        </ol>
+
+        <div className="mt-4">
+          <div className="text-[10px] font-bold tracking-wider text-warm-gray-2 mb-1.5">
+            {m.payloadEjemplo.toUpperCase()}
+          </div>
+          <div className="relative">
+            <pre className="bg-navy-deep text-white rounded-lg p-4 text-[11.5px] font-mono leading-relaxed overflow-x-auto whitespace-pre max-h-[320px] overflow-y-auto">
+              {payloadEjemplo}
+            </pre>
+            <button
+              onClick={() => copiar(payloadEjemplo, 'payload-ejemplo')}
+              className="absolute top-2.5 right-2.5 flex items-center gap-1 bg-white/10 hover:bg-white/20 text-white text-[11px] font-semibold px-2.5 py-1.5 rounded-lg"
+            >
+              <span className="msr text-[14px]">
+                {copiado === 'payload-ejemplo' ? 'check' : 'content_copy'}
+              </span>
+              {copiado === 'payload-ejemplo' ? m.copiado : m.copiar}
+            </button>
+          </div>
         </div>
+
+        <div className="mt-4">
+          <div className="text-[10px] font-bold tracking-wider text-warm-gray-2 mb-1.5">
+            {m.payloadCamposTitulo}
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-2">
+            {m.payloadCampos.map(([campo, desc]) => (
+              <div key={campo} className="flex items-baseline gap-1.5 text-[12px]">
+                <span className="font-mono font-semibold text-ink">{campo}</span>
+                <span className="text-[10.5px] text-warm-gray-2">· {desc}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
         <div className="mt-4 flex items-start gap-2 bg-info-bg rounded-lg px-3 py-2.5 text-[11.5px] text-ink-2">
           <span className="msr text-[15px] text-navy mt-0.5">shield</span>
           {m.payloadNota}

@@ -207,14 +207,29 @@ embeds it:
   window.AditumChatSettings = {
     siteId: 'app-aditum',
     payload: 'ENCRYPTED_PAYLOAD_GENERATED_ON_YOUR_SERVER',
+    // Recommended for SPAs: an authenticated host endpoint returning a fresh
+    // { payload }. The embedded payload expires after 5 minutes; with this URL
+    // the widget fetches a new one at session time (embedded stays as fallback).
+    payloadUrl: '/api/aditum-chat/payload',
   };
 </script>
 <script src="https://chat.aditumcr.com/widget.js" async></script>
 ```
 
-Payload claims: `userId, nombre, email?, rol?, condominio?, clientId?, deviceToken?,
-idioma? ('es'|'en'), iat, exp`. `idioma` sets the widget language; `clientId` enables the
-client's group chat; `rol` of "admin" adds the user to that group.
+Payload claims: `userId, name, email?, role?, clientId?, clientName?, clientInfo?, groupId?,
+groupName?, groupChatEnabled?, groupClients?, deviceToken?, language? ('es'|'en'), iat, exp`.
+
+- `clientId`/`clientName` — the user's client/condo (tenancy for direct chats and tickets).
+- `clientInfo` — optional context-panel data shown to agents next to the chat:
+  `{ location?, units?, plan?, customerSince?, modules? }`. Upserted into `clients/{clientId}`
+  on every session (only the provided fields, last-write-wins).
+- `groupId`/`groupName` — the organization an admin belongs to (e.g. a management company). The
+  group — not the admin — owns the list of managed units, sent as
+  `groupClients: [{ id, name }]` (max 300; upserted to `groups/{groupId}` on every session,
+  last-write-wins).
+- `groupChatEnabled` — the host declares whether the group has the group chat feature; combined
+  with a `role` containing "admin", it provisions the group conversation and shows the tab in the
+  widget. The site-level `botonChatEquipo` toggle remains as a platform kill-switch.
 
 ### Node (reference)
 
@@ -231,9 +246,20 @@ function encryptPayload(keyHex, claims) {
 
 const now = Math.floor(Date.now() / 1000);
 const payload = encryptPayload(SITE_KEY_HEX, {
-  userId: 'usr_123', nombre: 'Juan Rodríguez', email: 'juan@x.com',
-  rol: 'Administrador', condominio: 'Condominio Vistas del Este',
-  clientId: 'vistas-del-este', idioma: 'es', iat: now, exp: now + 300,
+  userId: 'usr_123', name: 'Juan Rodríguez', email: 'juan@x.com',
+  role: 'Administrador',
+  clientId: 'vistas-del-este', clientName: 'Condominio Vistas del Este',
+  clientInfo: {
+    location: 'Curridabat, San José', units: 148, plan: 'Empresarial',
+    customerSince: 2023, modules: ['Cobros', 'Reservas', 'Mant.'],
+  },
+  groupId: 'adm-horizonte', groupName: 'Administradora Horizonte',
+  groupChatEnabled: true,
+  groupClients: [
+    { id: 'vistas-del-este', name: 'Condominio Vistas del Este' },
+    { id: 'hacienda-real-cariari', name: 'Hacienda Real Cariari' },
+  ],
+  language: 'es', iat: now, exp: now + 300,
 });
 ```
 
@@ -279,7 +305,7 @@ push when a user writes (to the assigned agent, or all site agents if unassigned
 ## Conversation model (segmented history)
 
 A **chat** (the continuous thread) is unique per **(contact, subcanal)** for directas and per
-**(client)** for the group chat — the inbox never shows a duplicate chat. Inside it lives a
+**(group)** for the group chat — the inbox never shows a duplicate chat. Inside it lives a
 **sequence of conversation docs (segments)**:
 
 - Resolving a conversation (`estado: 'resolved'`) closes that segment; it stays resolved and shows

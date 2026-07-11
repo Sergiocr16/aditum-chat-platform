@@ -18,8 +18,9 @@ import { isWithinSchedule, resolveSiteConfig, scheduleText } from './lib/config.
 /**
  * POST /widgetSession  { siteId, payload }
  * Descifra el payload del host con la clave del sitio (current, luego previous
- * si sigue en período de gracia), hace upsert del contacto y del cliente,
- * garantiza el chat de grupo del clientId y devuelve un custom token.
+ * si sigue en período de gracia), hace upsert del contacto, del cliente y del
+ * grupo (organización), garantiza el chat grupal del groupId cuando el host lo
+ * habilita y devuelve un custom token.
  */
 export const widgetSession = onRequest({ cors: true, region: 'us-central1' }, async (req, res) => {
   try {
@@ -43,7 +44,7 @@ export const widgetSession = onRequest({ cors: true, region: 'us-central1' }, as
     const claims = await decryptWithSiteKeys(siteId, payload);
     validateClaims(claims);
 
-    const idioma: Idioma = claims.idioma === 'en' ? 'en' : 'es';
+    const idioma: Idioma = claims.language === 'en' ? 'en' : 'es';
     const contactId = contactIdFor(siteId, claims.userId);
 
     // Upsert del contacto (directorio automático).
@@ -53,9 +54,11 @@ export const widgetSession = onRequest({ cors: true, region: 'us-central1' }, as
       externalId: claims.userId,
       siteId,
       clientId: claims.clientId,
-      nombre: claims.nombre,
+      groupId: claims.groupId,
+      groupName: claims.groupName,
+      nombre: claims.name,
       email: claims.email,
-      rol: claims.rol,
+      rol: claims.role,
       idioma,
       metadata: claims.metadata,
       lastActivity: FieldValue.serverTimestamp(),
@@ -75,33 +78,49 @@ export const widgetSession = onRequest({ cors: true, region: 'us-central1' }, as
       });
     }
 
-    // Upsert mínimo del cliente/condominio.
+    // Upsert del cliente/condominio: nombre + metadatos del panel de contexto
+    // (solo los campos que el host declara — last-write-wins, preserva el resto).
     if (claims.clientId) {
-      await db.doc(`clients/${claims.clientId}`).set(
-        {
-          nombre: claims.condominio ?? claims.clientId,
-          chatGlobalActivo: true,
-          createdAt: FieldValue.serverTimestamp(),
-        },
-        { mergeFields: ['nombre'] },
-      );
+      const info = claims.clientInfo ?? {};
+      const clientData: Record<string, unknown> = {
+        nombre: claims.clientName ?? claims.clientId,
+      };
+      if (info.location !== undefined) clientData.ubicacion = info.location;
+      if (info.units !== undefined) clientData.filiales = info.units;
+      if (info.plan !== undefined) clientData.plan = info.plan;
+      if (info.customerSince !== undefined) clientData.clienteDesde = info.customerSince;
+      if (info.modules !== undefined) clientData.modulos = info.modules;
+      await db.doc(`clients/${claims.clientId}`).set(clientData, { merge: true });
+    }
+
+    // Upsert del grupo (organización): nombre, flag de chat y lista de unidades
+    // que administra. Last-write-wins con lo que declara el host en cada sesión.
+    if (claims.groupId) {
+      await upsertGroup(siteId, claims);
     }
 
     const config = await resolveSiteConfig(site);
 
-    // Chat global por clientId: solo si el toggle del sitio está activo y el
-    // contacto es del equipo administrador.
+    // Chat grupal por groupId: el host dicta si el grupo lo tiene contratado
+    // (groupChatEnabled); botonChatEquipo queda como kill-switch del sitio y
+    // solo aplica a admins.
     let grupoConversationId: string | undefined;
-    if (claims.clientId && config.widget.botonChatEquipo && esAdministrador(claims)) {
-      grupoConversationId = await ensureGroupConversation(siteId, claims.clientId, contactId, claims);
+    if (
+      claims.groupId &&
+      claims.groupChatEnabled === true &&
+      config.widget.botonChatEquipo &&
+      esAdministrador(claims)
+    ) {
+      grupoConversationId = await ensureGroupConversation(siteId, claims.groupId, contactId, claims);
     }
 
     const tokenClaims: Record<string, unknown> = {
       kind: 'contact',
       siteId,
       contactId,
-    } satisfies Omit<ContactClaims, 'clientId'>;
+    } satisfies Omit<ContactClaims, 'clientId' | 'groupId'>;
     if (claims.clientId) tokenClaims.clientId = claims.clientId;
+    if (claims.groupId) tokenClaims.groupId = claims.groupId;
     const token = await auth.createCustomToken(contactId, tokenClaims);
 
     const response: WidgetSessionResponse = {
@@ -109,9 +128,11 @@ export const widgetSession = onRequest({ cors: true, region: 'us-central1' }, as
       contactId,
       siteId,
       clientId: claims.clientId,
-      nombre: claims.nombre,
-      rol: claims.rol,
-      clientNombre: claims.condominio,
+      nombre: claims.name,
+      rol: claims.role,
+      clientNombre: claims.clientName,
+      groupId: claims.groupId,
+      groupName: claims.groupName,
       idioma,
       widgetConfig: config.widget,
       botConfig: {
@@ -152,39 +173,57 @@ async function decryptWithSiteKeys(siteId: string, payload: string): Promise<Enc
 }
 
 function esAdministrador(claims: EncryptedPayloadClaims): boolean {
-  return (claims.rol ?? '').toLowerCase().includes('admin');
+  return (claims.role ?? '').toLowerCase().includes('admin');
+}
+
+/** Upsert de groups/{groupId} preservando createdAt. */
+async function upsertGroup(siteId: string, claims: EncryptedPayloadClaims): Promise<void> {
+  const ref = db.doc(`groups/${claims.groupId}`);
+  const snap = await ref.get();
+  const data: Record<string, unknown> = {
+    siteId,
+    name: claims.groupName ?? claims.groupId,
+    chatEnabled: claims.groupChatEnabled === true,
+    updatedAt: FieldValue.serverTimestamp(),
+  };
+  if (claims.groupClients) data.clients = claims.groupClients;
+  if (snap.exists) {
+    await ref.set(data, { merge: true });
+  } else {
+    await ref.set({ clients: [], ...data, createdAt: FieldValue.serverTimestamp() });
+  }
 }
 
 /**
  * El chat grupal se segmenta como las directas: varias conversaciones por
- * cliente, la activa = la más reciente no resuelta. Esta función NO crea
+ * grupo, la activa = la más reciente no resuelta. Esta función NO crea
  * segmentos nuevos vacíos (eso ocurre al escribir); solo garantiza el canal la
  * primera vez y agrega a este admin como participante de TODOS los segmentos
  * (para que pueda leer el historial), devolviendo el más reciente.
  */
 async function ensureGroupConversation(
   siteId: string,
-  clientId: string,
+  groupId: string,
   contactId: string,
   claims: EncryptedPayloadClaims,
 ): Promise<string> {
-  const info = { nombre: claims.nombre, tipo: 'user', rol: claims.rol ?? '' };
+  const info = { nombre: claims.name, tipo: 'user', rol: claims.role ?? '' };
   const snap = await db
     .collection('conversations')
     .where('tipo', '==', 'grupo')
-    .where('clientId', '==', clientId)
+    .where('groupId', '==', groupId)
     .orderBy('updatedAt', 'desc')
     .limit(20)
     .get();
 
   if (snap.empty) {
     // Primera vez: crea el segmento base con id determinístico.
-    const convId = groupConversationIdFor(siteId, clientId);
+    const convId = groupConversationIdFor(siteId, groupId);
     await db.doc(`conversations/${convId}`).set({
       tipo: 'grupo',
       siteId,
-      clientId,
-      clientNombre: claims.condominio ?? clientId,
+      groupId,
+      groupName: claims.groupName ?? groupId,
       participantes: [contactId],
       participantesInfo: { [contactId]: info },
       estado: 'open',

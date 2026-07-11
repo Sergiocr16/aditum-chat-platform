@@ -108,6 +108,21 @@ async function seedClients() {
   }
 }
 
+async function seedGroups() {
+  // Organización (grupo) con varios admins que administra varios condominios.
+  await db.doc('groups/adm-horizonte').set({
+    siteId: 'app-aditum',
+    name: 'Administradora Horizonte',
+    chatEnabled: true,
+    clients: [
+      { id: 'vistas-del-este', name: 'Condominio Vistas del Este' },
+      { id: 'hacienda-real-cariari', name: 'Hacienda Real Cariari' },
+    ],
+    createdAt: now(),
+    updatedAt: now(),
+  });
+}
+
 async function ensureAuthUser(uid, email, password, displayName, claims) {
   try {
     await auth.getUser(uid);
@@ -142,16 +157,19 @@ async function seedTeam() {
 }
 
 async function seedContacts() {
+  // Los admins de Vistas del Este y Cariari pertenecen a la Administradora Horizonte.
+  const grupoHorizonte = { groupId: 'adm-horizonte', groupName: 'Administradora Horizonte' };
   const contacts = [
-    ['app-aditum_usr_1001', 'usr_1001', 'app-aditum', 'vistas-del-este', 'Juan Rodríguez', 'jrodriguez@vistasdeleste.cr', 'Administrador', 'es'],
-    ['app-aditum_usr_1002', 'usr_1002', 'app-aditum', 'vistas-del-este', 'Roberto Jiménez', 'rjimenez@vistasdeleste.cr', 'Administrador', 'es'],
-    ['app-aditum_usr_1003', 'usr_1003', 'app-aditum', 'vistas-del-este', 'Silvia Mora', 'smora@vistasdeleste.cr', 'Administradora', 'es'],
-    ['app-aditum_usr_3001', 'usr_3001', 'app-aditum', 'hacienda-real-cariari', 'Carlos Vega', 'cvega@cariari.cr', 'Administrador', 'es'],
-    ['portal-residentes_usr_2001', 'usr_2001', 'portal-residentes', 'torres-de-sabana', 'Ana Brenes', 'ana.brenes@gmail.com', 'Residente (filial B-14)', 'en'],
+    ['app-aditum_usr_1001', 'usr_1001', 'app-aditum', 'vistas-del-este', 'Juan Rodríguez', 'jrodriguez@vistasdeleste.cr', 'Administrador', 'es', grupoHorizonte],
+    ['app-aditum_usr_1002', 'usr_1002', 'app-aditum', 'vistas-del-este', 'Roberto Jiménez', 'rjimenez@vistasdeleste.cr', 'Administrador', 'es', grupoHorizonte],
+    ['app-aditum_usr_1003', 'usr_1003', 'app-aditum', 'vistas-del-este', 'Silvia Mora', 'smora@vistasdeleste.cr', 'Administradora', 'es', grupoHorizonte],
+    ['app-aditum_usr_3001', 'usr_3001', 'app-aditum', 'hacienda-real-cariari', 'Carlos Vega', 'cvega@cariari.cr', 'Administrador', 'es', grupoHorizonte],
+    ['portal-residentes_usr_2001', 'usr_2001', 'portal-residentes', 'torres-de-sabana', 'Ana Brenes', 'ana.brenes@gmail.com', 'Residente (filial B-14)', 'en', null],
   ];
-  for (const [id, externalId, siteId, clientId, nombre, email, rol, idioma] of contacts) {
+  for (const [id, externalId, siteId, clientId, nombre, email, rol, idioma, grupo] of contacts) {
     await db.doc(`contacts/${id}`).set({
       externalId, siteId, clientId, nombre, email, rol, idioma,
+      ...(grupo ?? {}),
       deviceTokens: [],
       conversacionesCount: 3,
       ticketsCount: 5,
@@ -190,6 +208,8 @@ async function seedConversations() {
     siteId: 'app-aditum',
     clientId: 'vistas-del-este',
     clientNombre: 'Condominio Vistas del Este',
+    groupId: 'adm-horizonte',
+    groupName: 'Administradora Horizonte',
     contactId: 'app-aditum_usr_1001',
     contactNombre: 'Juan Rodríguez',
     estado: 'resolved',
@@ -244,6 +264,8 @@ async function seedConversations() {
     siteId: 'app-aditum',
     clientId: 'vistas-del-este',
     clientNombre: 'Condominio Vistas del Este',
+    groupId: 'adm-horizonte',
+    groupName: 'Administradora Horizonte',
     contactId: 'app-aditum_usr_1001',
     contactNombre: 'Juan Rodríguez',
     estado: 'open',
@@ -272,13 +294,13 @@ async function seedConversations() {
     await conv.collection('messages').doc(`m${String(i).padStart(3, '0')}`).set(m);
   }
 
-  // Chat global de Vistas del Este (diseño 1s).
-  const grupo = db.doc('conversations/grupo_app-aditum_vistas-del-este');
+  // Chat grupal de la Administradora Horizonte (diseño 1s).
+  const grupo = db.doc('conversations/grupo_app-aditum_adm-horizonte');
   await grupo.set({
     tipo: 'grupo',
     siteId: 'app-aditum',
-    clientId: 'vistas-del-este',
-    clientNombre: 'Vistas del Este · Equipo administrador',
+    groupId: 'adm-horizonte',
+    groupName: 'Administradora Horizonte',
     participantes: ['app-aditum_usr_1001', 'app-aditum_usr_1002', 'app-aditum_usr_1003', 'agente-laura'],
     participantesInfo: {
       'app-aditum_usr_1001': { nombre: 'Juan Rodríguez', tipo: 'user', rol: 'Administrador' },
@@ -362,7 +384,31 @@ async function seedTickets() {
     createdAt: hoursAgo(1.2),
   });
 
-  await db.doc('counters/tickets').set({ next: 43 });
+  // Ticket del grupo (aparece en "Mi grupo" del widget para los admins de Horizonte).
+  await db.doc('tickets/tk-0043').set({
+    numero: 43,
+    asunto: 'Homologar reglamento de amenidades en los condominios del grupo',
+    descripcion: 'Los administradores de Horizonte piden unificar las reglas de reserva de amenidades en todos sus condominios.',
+    estado: 'abierto',
+    prioridad: 'media',
+    ambito: 'grupo',
+    publico: true,
+    siteId: 'app-aditum',
+    groupId: 'adm-horizonte',
+    groupName: 'Administradora Horizonte',
+    contactId: 'app-aditum_usr_1002',
+    contactNombre: 'Roberto Jiménez',
+    asignadoA: 'agente-laura',
+    asignadoNombre: 'Laura Campos',
+    conversationId: 'grupo_app-aditum_adm-horizonte',
+    devRef: null,
+    sla: { estado: 'en_sla', dueAt: hoursAgo(-8), pausas: [] },
+    resolucion: null,
+    createdAt: hoursAgo(6),
+    updatedAt: hoursAgo(2),
+  });
+
+  await db.doc('counters/tickets').set({ next: 44 });
 }
 
 async function seedSettings() {
@@ -439,6 +485,7 @@ async function seedSettings() {
 console.log('Sembrando datos de desarrollo…');
 await seedSites();
 await seedClients();
+await seedGroups();
 await seedTeam();
 await seedContacts();
 await seedTags();

@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import type { Client, Ticket } from '@aditum-chat/shared';
+import type { Client, Group, Ticket } from '@aditum-chat/shared';
 import { categoryLabel, ticketStatusLabels } from '@aditum-chat/shared';
 import { useAuth } from '@/lib/auth';
 import { useT } from '@/lib/i18n';
@@ -19,6 +19,7 @@ import {
 import type { Conversation } from '@aditum-chat/shared';
 import { toggleContactTag, useTags } from '@/lib/data-tags';
 import { ConvertTicketModal } from './ConvertTicketModal';
+import { GroupClientsList } from './GroupClientsList';
 import { EtiquetasBlock } from './TagAssign';
 import { TicketDetailModal } from './TicketDetailModal';
 
@@ -42,6 +43,7 @@ export function ContextPanel({
   const tickets = useContactTickets(contactId);
   const anteriores = useResolvedConversations(contactId);
   const client = useDoc<Client>(contact?.data.clientId ? `clients/${contact.data.clientId}` : null);
+  const group = useDoc<Group>(contact?.data.groupId ? `groups/${contact.data.groupId}` : null);
   const siteTags = useTags(contact?.data.siteId ?? null);
   const idioma = agent?.idioma ?? 'es';
   const [ticketSel, setTicketSel] = useState<Row<Ticket> | null>(null);
@@ -99,8 +101,25 @@ export function ContextPanel({
         </div>
       </div>
 
-      {/* Cliente / condominio */}
-      {client && (
+      {/* CLIENTE = el grupo (la organización que tiene todo). Muestra solo la
+          cantidad de condominios que administra; la lista se despliega. */}
+      {(c.groupId || group) && (
+        <Section title={t('ctx.cliente')}>
+          <div className="flex items-center gap-2">
+            <span className="msr text-[17px] text-warm-gray-2 flex-none">groups</span>
+            <span className="text-[12.5px] font-semibold truncate">
+              {group?.data.name ?? c.groupName ?? c.groupId}
+            </span>
+          </div>
+          <GroupClientsList
+            clients={group?.data.clients ?? []}
+            label={t('ctx.groupClientsCount', { n: group?.data.clients?.length ?? 0 })}
+          />
+        </Section>
+      )}
+
+      {/* Condominio del contacto (solo cuando no pertenece a un grupo). */}
+      {client && !c.groupId && (
         <Section title={t('ctx.cliente')}>
           <div className="flex items-center gap-2">
             <span className="msr text-[17px] text-warm-gray-2 flex-none">apartment</span>

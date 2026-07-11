@@ -207,7 +207,7 @@ export default function TicketsPage() {
                     </span>
                   </td>
                   <td className="px-4 py-3 text-[12.5px] text-ink-2 whitespace-nowrap">
-                    {tk.data.clientNombre ?? '—'}
+                    {tk.data.clientNombre ?? tk.data.groupName ?? '—'}
                   </td>
                   <td className="px-4 py-3">
                     <SitioChip nombre={siteNombre[tk.data.siteId] ?? tk.data.siteId} />

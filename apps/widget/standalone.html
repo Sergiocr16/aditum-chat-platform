@@ -103,7 +103,9 @@
           (env.payloadUrl ? ' — ¿está corriendo host-sim.mjs en :4186?' : ''));
         const { siteId, payload } = await res.json();
 
-        window.AditumChatSettings = { siteId, payload, apiUrl: env.functions };
+        // payloadUrl: el widget pide un payload FRESCO al iniciar sesión — el
+        // embebido vence a los 5 min si la página queda abierta.
+        window.AditumChatSettings = { siteId, payload, payloadUrl: url, apiUrl: env.functions };
         const s = document.createElement('script');
         s.src = env.widgetJs + '?v=' + Date.now(); // cache-buster
         s.onerror = () => setEstado('No se pudo cargar widget.js desde ' + env.widgetJs, 'err');

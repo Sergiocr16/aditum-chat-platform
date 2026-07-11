@@ -135,7 +135,7 @@ export async function ensureGroupConversation(
   );
   const grupos = (await getDocs(q)).docs.filter((d) => {
     const x = d.data() as Conversation;
-    return !session.clientId || x.clientId === session.clientId;
+    return !session.groupId || x.groupId === session.groupId;
   });
   const activo = grupos.find((d) => (d.data() as Conversation).estado !== 'resolved');
   if (activo) return activo.id;
@@ -145,8 +145,8 @@ export async function ensureGroupConversation(
   await setDoc(ref, {
     tipo: 'grupo',
     siteId: session.siteId,
-    clientId: base?.clientId ?? session.clientId,
-    clientNombre: base?.clientNombre ?? session.clientNombre ?? session.clientId ?? '',
+    groupId: base?.groupId ?? session.groupId,
+    groupName: base?.groupName ?? session.groupName ?? session.groupId ?? '',
     participantes: base?.participantes ?? [session.contactId],
     participantesInfo: base?.participantesInfo ?? {
       [session.contactId]: { nombre: session.nombre, tipo: 'user', rol: session.rol ?? '' },
@@ -275,6 +275,11 @@ export async function ensureDirectConversation(
     updatedAt: serverTimestamp(),
   };
   if (session.clientId) conv.clientId = session.clientId;
+  if (session.clientNombre) conv.clientNombre = session.clientNombre;
+  if (session.groupId) {
+    conv.groupId = session.groupId;
+    conv.groupName = session.groupName ?? session.groupId;
+  }
   await setDoc(ref, conv);
   return ref.id;
 }
@@ -390,6 +395,25 @@ export function subscribeSystemTickets(
     where('ambito', '==', 'sistema'),
     orderBy('updatedAt', 'desc'),
     limit(20),
+  );
+  return onSnapshot(q, (snap) => {
+    cb(snap.docs.map((d) => ({ id: d.id, data: d.data() as Ticket })));
+  });
+}
+
+/** Tickets públicos del grupo (organización) del admin. */
+export function subscribeGroupTickets(
+  fb: WidgetFirebase,
+  session: WidgetSessionResponse,
+  cb: (tickets: Doc<Ticket>[]) => void,
+): Unsubscribe {
+  if (!session.groupId) return () => {};
+  const q = query(
+    collection(fb.db, 'tickets'),
+    where('publico', '==', true),
+    where('groupId', '==', session.groupId),
+    orderBy('updatedAt', 'desc'),
+    limit(50),
   );
   return onSnapshot(q, (snap) => {
     cb(snap.docs.map((d) => ({ id: d.id, data: d.data() as Ticket })));

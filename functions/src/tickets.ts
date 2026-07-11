@@ -1,11 +1,13 @@
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
-import type { MessageSender, Ticket, TicketPriority } from '@aditum-chat/shared';
+import type { MessageSender, Ticket, TicketAmbito, TicketPriority } from '@aditum-chat/shared';
 import { db, FieldValue } from './lib/admin.js';
 
 export interface CrearTicketParams {
   siteId: string;
   clientId?: string;
   clientNombre?: string;
+  groupId?: string;
+  groupName?: string;
   contactId?: string;
   contactNombre?: string;
   conversationId?: string | null;
@@ -13,7 +15,7 @@ export interface CrearTicketParams {
   descripcion: string;
   prioridad: TicketPriority;
   publico: boolean;
-  ambito: 'cliente' | 'sistema';
+  ambito: TicketAmbito;
   asignadoA?: string | null;
   asignadoNombre?: string | null;
   creadoPor: MessageSender;
@@ -50,6 +52,8 @@ export async function crearTicketInterno(
     };
     if (params.clientId) doc.clientId = params.clientId;
     if (params.clientNombre) doc.clientNombre = params.clientNombre;
+    if (params.groupId) doc.groupId = params.groupId;
+    if (params.groupName) doc.groupName = params.groupName;
     if (params.contactId) doc.contactId = params.contactId;
     if (params.contactNombre) doc.contactNombre = params.contactNombre;
     tx.set(ticketRef, doc);
@@ -88,6 +92,8 @@ interface CreateTicketInput {
   siteId: string;
   clientId?: string;
   clientNombre?: string;
+  groupId?: string;
+  groupName?: string;
   contactId?: string;
   contactNombre?: string;
   conversationId?: string;
@@ -95,7 +101,7 @@ interface CreateTicketInput {
   descripcion: string;
   prioridad: TicketPriority;
   publico: boolean;
-  ambito: 'cliente' | 'sistema';
+  ambito: TicketAmbito;
   asignadoA?: string | null;
   asignadoNombre?: string | null;
   /** Si viene, adjunta la conversación a un ticket existente en vez de crear. */

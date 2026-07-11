@@ -81,7 +81,7 @@ export function EtiquetasTab() {
   };
 
   return (
-    <div className="max-w-[720px] flex flex-col gap-4">
+    <div className="flex flex-col gap-4">
       {/* Selector de sitio */}
       <div className="flex items-center gap-2 flex-wrap">
         <span className="text-[12px] font-semibold text-warm-gray">{m.sitio}</span>

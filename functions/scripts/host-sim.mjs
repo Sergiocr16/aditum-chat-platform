@@ -13,10 +13,22 @@ const PROJECT = 'aditum-chat-1a5cd';
 const SITE_ID = 'app-aditum';
 const PORT = 4186;
 
+const GROUP = {
+  groupId: 'adm-horizonte',
+  groupName: 'Administradora Horizonte',
+  groupChatEnabled: true,
+  groupClients: [
+    { id: 'vistas-del-este', name: 'Condominio Vistas del Este' },
+    { id: 'hacienda-real-cariari', name: 'Hacienda Real Cariari' },
+  ],
+};
+
+const VISTAS_INFO = { location: 'Curridabat, San José', units: 148, plan: 'Empresarial', customerSince: 2023, modules: ['Cobros', 'Reservas', 'Mant.'] };
+
 const USERS = {
-  juan: { userId: 'usr_1001', nombre: 'Juan Rodríguez', email: 'jrodriguez@vistasdeleste.cr', rol: 'Administrador', condominio: 'Condominio Vistas del Este', clientId: 'vistas-del-este', idioma: 'es' },
-  roberto: { userId: 'usr_1002', nombre: 'Roberto Jiménez', email: 'rjimenez@vistasdeleste.cr', rol: 'Administrador', condominio: 'Condominio Vistas del Este', clientId: 'vistas-del-este', idioma: 'es' },
-  ana: { userId: 'usr_2001', nombre: 'Ana Brenes', email: 'ana.brenes@gmail.com', rol: 'Residente (filial B-14)', condominio: 'Torres de Sabana', clientId: 'torres-de-sabana', idioma: 'en' },
+  juan: { userId: 'usr_1001', name: 'Juan Rodríguez', email: 'jrodriguez@vistasdeleste.cr', role: 'Administrador', clientId: 'vistas-del-este', clientName: 'Condominio Vistas del Este', clientInfo: VISTAS_INFO, ...GROUP, language: 'es' },
+  roberto: { userId: 'usr_1002', name: 'Roberto Jiménez', email: 'rjimenez@vistasdeleste.cr', role: 'Administrador', clientId: 'vistas-del-este', clientName: 'Condominio Vistas del Este', clientInfo: VISTAS_INFO, ...GROUP, language: 'es' },
+  ana: { userId: 'usr_2001', name: 'Ana Brenes', email: 'ana.brenes@gmail.com', role: 'Residente (filial B-14)', clientId: 'torres-de-sabana', clientName: 'Torres de Sabana', clientInfo: { location: 'Sabana, San José', units: 96, plan: 'Empresarial', customerSince: 2024, modules: ['Cobros', 'Reservas'] }, language: 'en' },
 };
 
 initializeApp({ projectId: PROJECT, credential: applicationDefault() });

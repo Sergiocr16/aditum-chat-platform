@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import type { Client, Conversation, Ticket } from '@aditum-chat/shared';
+import type { Client, Conversation, Group, Ticket } from '@aditum-chat/shared';
 import { categoryLabel, ticketStatusLabels } from '@aditum-chat/shared';
 import { useAuth } from '@/lib/auth';
 import { useT } from '@/lib/i18n';
@@ -14,14 +14,15 @@ import {
   useResolvedGroupConversations,
   type Row,
 } from '@/lib/data';
-import { toggleClientTag, useTags } from '@/lib/data-tags';
+import { toggleClientTag, toggleGroupTag, useTags } from '@/lib/data-tags';
 import { ConvertTicketModal } from './ConvertTicketModal';
+import { GroupClientsList } from './GroupClientsList';
 import { EtiquetasBlock } from './TagAssign';
 import { TicketDetailModal } from './TicketDetailModal';
 
 /**
  * Panel de contexto para conversaciones de EQUIPO (grupo). En vez de un residente
- * muestra el condominio: participantes, etiquetas del cliente y sus tickets.
+ * muestra la organización: condominios que administra, participantes y tickets.
  */
 export function GroupContextPanel({
   conv,
@@ -37,10 +38,11 @@ export function GroupContextPanel({
   const { agent } = useAuth();
   const t = useT();
   const c = conv.data;
+  const group = useDoc<Group>(c.groupId ? `groups/${c.groupId}` : null);
   const client = useDoc<Client>(c.clientId ? `clients/${c.clientId}` : null);
   const siteTags = useTags(c.siteId);
   const tickets = useClientTickets(c.clientId ?? null);
-  const anteriores = useResolvedGroupConversations(c.clientId ?? null);
+  const anteriores = useResolvedGroupConversations(c.groupId ?? null);
   const idioma = agent?.idioma ?? 'es';
   const [ticketSel, setTicketSel] = useState<Row<Ticket> | null>(null);
   const [convConvertir, setConvConvertir] = useState<Row<Conversation> | null>(null);
@@ -55,6 +57,7 @@ export function GroupContextPanel({
   }, [tickets]);
 
   const asignadas = new Set(client?.data.tags ?? []);
+  const groupTags = new Set(group?.data.tags ?? []);
   const participantes = Object.entries(c.participantesInfo ?? {});
   const clienteMeta = client
     ? [
@@ -79,7 +82,7 @@ export function GroupContextPanel({
         </div>
         <div className="min-w-0 flex-1">
           <div className="text-[14px] font-bold leading-tight truncate">
-            {c.clientNombre ?? t('ctx.equipo')}
+            {c.groupName ?? c.clientNombre ?? t('ctx.equipo')}
           </div>
           <div className="text-[11.5px] text-warm-gray truncate mt-0.5">{t('ctx.equipo')}</div>
           <div className="flex gap-1.5 mt-2 flex-wrap">
@@ -90,7 +93,32 @@ export function GroupContextPanel({
         </div>
       </div>
 
-      {/* Cliente / condominio */}
+      {/* Condominios que administra el grupo: conteo + lista desplegable. */}
+      {(group?.data.clients?.length ?? 0) > 0 && (
+        <Section title={t('ctx.groupClients')} count={group!.data.clients.length}>
+          <GroupClientsList
+            clients={group!.data.clients}
+            label={t('ctx.groupClientsCount', { n: group!.data.clients.length })}
+          />
+        </Section>
+      )}
+
+      {/* Etiquetas del grupo */}
+      {c.groupId && (
+        <Section title={t('ctx.etiquetas')} count={groupTags.size || undefined}>
+          <EtiquetasBlock
+            siteTags={siteTags}
+            asignados={groupTags}
+            onToggle={(id, add) => {
+              if (c.groupId) toggleGroupTag(c.groupId, id, add);
+            }}
+            addLabel={t('ctx.agregarEtiqueta')}
+            emptyLabel={t('ctx.sinEtiquetasSitio')}
+          />
+        </Section>
+      )}
+
+      {/* Cliente / condominio (conversaciones legacy clavadas a un cliente) */}
       {client && clienteMeta && (
         <Section title={t('ctx.cliente')}>
           <div className="flex items-center gap-2">
@@ -101,18 +129,20 @@ export function GroupContextPanel({
         </Section>
       )}
 
-      {/* Etiquetas del condominio */}
-      <Section title={t('ctx.etiquetas')} count={asignadas.size || undefined}>
-        <EtiquetasBlock
-          siteTags={siteTags}
-          asignados={asignadas}
-          onToggle={(id, add) => {
-            if (c.clientId) toggleClientTag(c.clientId, id, add);
-          }}
-          addLabel={t('ctx.agregarEtiqueta')}
-          emptyLabel={t('ctx.sinEtiquetasSitio')}
-        />
-      </Section>
+      {/* Etiquetas del condominio (solo si la conversación tiene cliente) */}
+      {c.clientId && (
+        <Section title={t('ctx.etiquetas')} count={asignadas.size || undefined}>
+          <EtiquetasBlock
+            siteTags={siteTags}
+            asignados={asignadas}
+            onToggle={(id, add) => {
+              if (c.clientId) toggleClientTag(c.clientId, id, add);
+            }}
+            addLabel={t('ctx.agregarEtiqueta')}
+            emptyLabel={t('ctx.sinEtiquetasSitio')}
+          />
+        </Section>
+      )}
 
       {/* Tickets del condominio — clic abre el detalle */}
       {tickets.length > 0 && (

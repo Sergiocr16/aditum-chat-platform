@@ -14,7 +14,7 @@ export function contactIdFor(siteId: string, externalId: string): string {
   return `${siteId}_${externalId}`;
 }
 
-/** Id determinístico de la conversación de grupo de un cliente en un sitio. */
-export function groupConversationIdFor(siteId: string, clientId: string): string {
-  return `grupo_${siteId}_${clientId}`;
+/** Id determinístico del segmento base del chat grupal de un grupo en un sitio. */
+export function groupConversationIdFor(siteId: string, groupId: string): string {
+  return `grupo_${siteId}_${groupId}`;
 }
