@@ -175,7 +175,13 @@ export default function InboxPage() {
         className={`${sel ? 'flex' : 'hidden md:flex'} flex-1 min-w-0 flex-col bg-cream-1`}
       >
         {sel ? (
-          <ConversationView ref={convViewRef} key={sel.id} conv={sel} onBack={() => setSelId(null)} />
+          <ConversationView
+            ref={convViewRef}
+            key={sel.id}
+            conv={sel}
+            onBack={() => setSelId(null)}
+            onOpenConversation={setSelId}
+          />
         ) : (
           <InboxVacio convs={convs} t={t} />
         )}

@@ -64,14 +64,22 @@ Ports: Auth `9101`, Functions `5201`, Firestore `8181`, RTDB `9102`, Storage `91
 - **Node version split:** everyday work on Node 20 (`.nvmrc`); `functions` targets Node **22**.
 - **React StrictMode** double-invokes effects in dev — expect transient states in the console.
 - **Secrets** live in `functions/.secret.local` (gitignored): `ANTHROPIC_API_KEY`,
-  `VOYAGE_API_KEY` (optional), `CONFIG_KEK`, `BOT_MODEL`. Never commit them.
-- All privileged writes (tickets, keys, team, KB chunks, metrics) go through Cloud Functions with
-  the Admin SDK — client SDK writes are constrained by `firestore.rules`.
+  `VOYAGE_API_KEY` (optional), `CONFIG_KEK`. Never commit them. Bot models are **fixed in code**
+  (`bot.ts`): `claude-haiku-4-5` (widget bot + testBot), `claude-sonnet-5` (aiAssist).
+- All privileged writes (tickets, keys, team, KB chunks, metrics, bot feedback stamping/handoff)
+  go through Cloud Functions with the Admin SDK — client SDK writes are constrained by
+  `firestore.rules`.
 - **Segmented conversation model.** A "chat" is unique per (contact, `subcanal` bot|agente) and per
-  (client) for groups, but holds **multiple conversation docs (segments)**; the active one is the
-  most recent with estado in `[bot,open,pending]`. Writing after a conversation is resolved opens a
-  **new** conversation — never reopen, never duplicate. The console stitches segments with
+  (group) for the group chat, but holds **multiple conversation docs (segments)**; the active one
+  is the most recent with estado in `[bot,open,pending]`. Writing after a conversation is resolved
+  opens a **new** conversation — never reopen, never duplicate. The console stitches segments with
   `useContactThread`/`useGroupThread`; the widget with `subscribeMy(Group)Conversations`.
+- **Bot feedback closes the cycle.** Each bot reply asks "¿te sirvió?" (👍/👎, collection
+  `bot_feedback`, one vote per message). 👍 resolves the bot conversation (`resueltaPor: 'bot'`);
+  👎 + "sí, un agente" resolves it AND hands off to the agent conversation via `handoffAAgente`
+  (context system message + `escaladoA`/`escaladoAt`). The widget jumps on a **growing
+  `escaladoAt`**, baselined on the first loaded snapshot — don't "fix" that baseline to mount time
+  or historical escalations will redirect users. The bot channel never shows the star CSAT survey.
 - **Auto replies** live server-side (`functions/welcome.ts`): `welcomeOnConversation` (bot greeting)
   and `agentAutoReply` (agent channel, after the first user message, with an after-hours variant),
   both idempotent and marked `bienvenida:true` so SLA/push skip them.

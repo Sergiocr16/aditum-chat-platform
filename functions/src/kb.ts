@@ -137,31 +137,45 @@ export async function searchKb(_anthropicKey: string, siteId: string, query: str
     .join('\n---\n');
 }
 
-/** Storage trigger: indexa PDFs subidos a kb/. */
+/**
+ * Storage trigger: indexa archivos subidos a kb/ — PDF (pdf-parse) y texto
+ * plano (.txt/.md). Mantiene el nombre exportado kbIngestPdf para no renombrar
+ * la function desplegada.
+ */
 export const kbIngestPdf = onObjectFinalized(
   { region: 'us-central1', memory: '1GiB', timeoutSeconds: 300 },
   async (event) => {
     const filePath = event.data.name;
-    if (!filePath?.startsWith('kb/') || !filePath.endsWith('.pdf')) return;
+    const match = filePath?.match(/^kb\/(.+)\.(pdf|txt|md)$/i);
+    if (!match) return;
+    const docId = match[1];
+    const ext = match[2].toLowerCase();
 
-    // kb/{docId}.pdf → doc kb/{docId} debe existir (lo crea la consola al subir).
-    const docId = filePath.slice(3, -4);
+    // kb/{docId}.{ext} → doc kb/{docId} debe existir (lo crea la consola al subir).
     const ref = db.doc(`kb/${docId}`);
     const snap = await ref.get();
     if (!snap.exists) {
-      logger.warn('PDF sin doc kb correspondiente', { filePath });
+      logger.warn('Archivo sin doc kb correspondiente', { filePath });
       return;
     }
     await ref.update({ estado: 'sincronizando', updatedAt: AdminFieldValue.serverTimestamp() });
     try {
-      const [buffer] = await storage.bucket(event.data.bucket).file(filePath).download();
-      const pdfParse = (await import('pdf-parse')).default;
-      const parsed = await pdfParse(buffer);
-      const chunks = await indexDoc(docId, (snap.data() as KbDoc).nombre, parsed.text);
+      const [buffer] = await storage.bucket(event.data.bucket).file(filePath!).download();
+      let texto: string;
+      let paginas: number | undefined;
+      if (ext === 'pdf') {
+        const pdfParse = (await import('pdf-parse')).default;
+        const parsed = await pdfParse(buffer);
+        texto = parsed.text;
+        paginas = parsed.numpages;
+      } else {
+        texto = buffer.toString('utf8');
+      }
+      const chunks = await indexDoc(docId, (snap.data() as KbDoc).nombre, texto);
       await ref.update({
         estado: 'indexado',
-        paginas: parsed.numpages,
         chunks,
+        ...(paginas !== undefined ? { paginas } : {}),
         updatedAt: AdminFieldValue.serverTimestamp(),
       });
     } catch (err) {

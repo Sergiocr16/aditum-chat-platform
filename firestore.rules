@@ -202,6 +202,24 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // ------------------------------------------------------- feedback del bot
+    // Voto "¿te sirvió?" por respuesta del bot. docId = `${convId}_${msgId}`
+    // (un voto por mensaje). El trigger onBotFeedbackWrite estampa el voto en
+    // el mensaje y ejecuta el escalamiento cuando escalate pasa a true.
+    match /bot_feedback/{id} {
+      allow read: if isAgent() || (isContact() && resource.data.contactId == myContactId());
+      allow create: if isContact()
+        && request.resource.data.contactId == myContactId()
+        && request.resource.data.helpful is bool;
+      // Única mutación permitida: aceptar la oferta de agente tras un voto negativo.
+      allow update: if isContact()
+        && resource.data.contactId == myContactId()
+        && resource.data.helpful == false
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['escalate'])
+        && request.resource.data.escalate == true;
+      allow delete: if false;
+    }
+
     // ------------------------------------------------------------------ métricas
     match /metrics_daily/{doc} {
       allow read: if isAgent();

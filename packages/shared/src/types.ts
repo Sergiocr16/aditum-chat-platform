@@ -21,7 +21,7 @@ export type MessageContent = 'texto' | 'imagen' | 'video' | 'archivo' | 'sistema
 export type TeamRole = 'admin' | 'agente';
 export type Presencia = 'en_linea' | 'ausente' | 'desconectado';
 
-export type KbDocTipo = 'pdf' | 'url';
+export type KbDocTipo = 'pdf' | 'text' | 'url';
 export type KbDocEstado = 'indexado' | 'sincronizando' | 'error';
 
 // ---------------------------------------------------------------------------
@@ -257,6 +257,11 @@ export interface Conversation {
   subcanal?: 'bot' | 'agente';
   /** Si el bot escaló: id de la conversación de agente a la que se pasó el contexto. */
   escaladoA?: string | null;
+  /**
+   * Timestamp del ÚLTIMO escalamiento. El widget salta al canal agente cuando
+   * este valor crece (re-escalar a la misma conversación no cambia escaladoA).
+   */
+  escaladoAt?: unknown;
   asignadoA?: string | null;
   asignadoNombre?: string | null;
   /** Foto del agente asignado (para el header del chat en el widget). */
@@ -302,6 +307,13 @@ export interface Message {
   replyTo?: { messageId: string; texto: string; senderNombre: string } | null;
   /** Chip de referencia a ticket (ej. "quedó el ticket #TK-0042"). */
   ticketRef?: { ticketId: string; numero: number } | null;
+  /**
+   * Voto del contacto sobre una respuesta del bot ("¿te sirvió?").
+   * Lo estampa el trigger onBotFeedbackWrite (Admin SDK).
+   */
+  feedback?: 'helpful' | 'not_helpful';
+  /** En el mensaje de contexto del canal agente: id de la conversación bot de origen. */
+  botConvRef?: string;
   /** Nota interna de agente — nunca visible en el widget. */
   interno?: boolean;
   /** Mensaje de bienvenida automático (primer mensaje). No dispara SLA ni push. */
@@ -476,6 +488,22 @@ export interface CsatRating {
   createdAt: unknown;
 }
 
+/**
+ * bot_feedback/{`${conversationId}_${messageId}`} — voto "¿te sirvió?" sobre
+ * una respuesta del bot. docId determinístico = un voto por mensaje.
+ * Inmutable salvo la transición escalate: ausente → true (aceptó la oferta
+ * de hablar con un agente tras un voto negativo).
+ */
+export interface BotFeedback {
+  conversationId: string;
+  messageId: string;
+  contactId: string;
+  siteId: string;
+  helpful: boolean;
+  escalate?: boolean;
+  createdAt: unknown;
+}
+
 /** metrics/daily/{yyyy-mm-dd} */
 export interface DailyMetrics {
   fecha: string;
@@ -489,6 +517,9 @@ export interface DailyMetrics {
   slaVencidos: number;
   csatSum: number;
   csatCount: number;
+  /** Votos "¿te sirvió?" sobre respuestas del bot (onBotFeedbackWrite). */
+  botHelpfulCount?: number;
+  botNotHelpfulCount?: number;
   porAgente?: Record<string, { resueltas: number; slaCumplidos: number; slaTotal: number }>;
 }
 

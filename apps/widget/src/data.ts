@@ -483,6 +483,77 @@ export async function submitCsat(
   });
 }
 
+// ---------------------------------------------------------------------------
+// Feedback de utilidad del bot ("¿te sirvió esta respuesta?")
+// ---------------------------------------------------------------------------
+
+/** Deterministic doc id: one vote per bot message. */
+export function botFeedbackId(convId: string, messageId: string): string {
+  return `${convId}_${messageId}`;
+}
+
+/**
+ * Records the helpful/not-helpful vote for a bot reply. The doc id is
+ * deterministic, so a second vote is rejected by the rules (create-only) —
+ * callers should treat that error as "already voted".
+ */
+export async function submitBotFeedback(
+  fb: WidgetFirebase,
+  session: WidgetSessionResponse,
+  convId: string,
+  messageId: string,
+  helpful: boolean,
+): Promise<void> {
+  await setDoc(doc(fb.db, 'bot_feedback', botFeedbackId(convId, messageId)), {
+    conversationId: convId,
+    messageId,
+    contactId: session.contactId,
+    siteId: session.siteId,
+    helpful,
+    createdAt: serverTimestamp(),
+  });
+}
+
+/**
+ * Accepts the "talk to an agent" offer after a negative vote. The
+ * onBotFeedbackWrite trigger performs the handoff and bumps escaladoAt, which
+ * makes the widget jump to the agent channel.
+ */
+export async function acceptAgentOffer(
+  fb: WidgetFirebase,
+  convId: string,
+  messageId: string,
+): Promise<void> {
+  await updateDoc(doc(fb.db, 'bot_feedback', botFeedbackId(convId, messageId)), {
+    escalate: true,
+  });
+}
+
+/**
+ * Votes already cast by this contact (Map botFeedbackId → helpful). Persists
+ * across reloads without depending on the stamping trigger.
+ */
+export function subscribeMyBotFeedback(
+  fb: WidgetFirebase,
+  session: WidgetSessionResponse,
+  cb: (votes: Map<string, boolean>) => void,
+): Unsubscribe {
+  const q = query(
+    collection(fb.db, 'bot_feedback'),
+    where('contactId', '==', session.contactId),
+    limit(300),
+  );
+  return onSnapshot(
+    q,
+    (snap) => {
+      const votes = new Map<string, boolean>();
+      snap.docs.forEach((d) => votes.set(d.id, Boolean(d.data().helpful)));
+      cb(votes);
+    },
+    () => cb(new Map()),
+  );
+}
+
 export async function sendAttachment(
   fb: WidgetFirebase,
   session: WidgetSessionResponse,

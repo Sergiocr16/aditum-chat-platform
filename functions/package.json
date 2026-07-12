@@ -10,7 +10,8 @@
     "build": "npm run typecheck && node esbuild.mjs",
     "typecheck": "tsc --noEmit",
     "dev": "node esbuild.mjs --watch",
-    "seed": "node scripts/seed.mjs"
+    "seed": "node scripts/seed.mjs",
+    "clean": "node scripts/clean.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.110.0",

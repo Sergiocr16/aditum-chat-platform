@@ -129,10 +129,11 @@ npx firebase emulators:start --project demo-aditum-chat \
   --only auth,firestore,functions,storage,database
 ```
 
-**2. Seed demo data** (sites + dev keys, clients, agents, conversations, tickets)
+**2. Seed demo data** (sites + dev keys, clients, groups, agents, conversations, tickets)
 
 ```sh
-pnpm --filter @aditum-chat/functions seed
+pnpm --filter @aditum-chat/functions seed    # load full demo data
+pnpm --filter @aditum-chat/functions clean   # wipe demo CONTENT, keep sites/keys/agents/settings
 ```
 
 **3. Widget + demo host page**
@@ -188,8 +189,10 @@ No `.env` files are committed. Production Firebase **web** config is baked in as
 ANTHROPIC_API_KEY=sk-ant-...
 VOYAGE_API_KEY=pa-...          # optional: without it the KB falls back to keyword search
 CONFIG_KEK=<hex-64>            # AES-256-GCM KEK; generate with: openssl rand -hex 32
-BOT_MODEL=claude-sonnet-5      # optional override
 ```
+
+Models are fixed in code (`functions/src/bot.ts`): `claude-haiku-4-5` for the widget bot and
+"Probar el bot", `claude-sonnet-5` for the agent AI assist — no env override.
 
 In production: `firebase functions:secrets:set ANTHROPIC_API_KEY` (and `VOYAGE_API_KEY`,
 `CONFIG_KEK`).
@@ -354,25 +357,71 @@ from the widget. All privileged writes go through Cloud Functions with the Admin
 
 ## The Claude bot
 
-- Model: `claude-sonnet-5` (override with `BOT_MODEL`), via `@anthropic-ai/sdk`, key
-  `ANTHROPIC_API_KEY`.
+- Models are **fixed in code** (`functions/src/bot.ts`): `claude-haiku-4-5` for the widget bot and
+  "Probar el bot" (cheapest functional tier), `claude-sonnet-5` for `aiAssist` (low volume,
+  writing quality matters). Via `@anthropic-ai/sdk`, key `ANTHROPIC_API_KEY`.
+- **Prompt caching**: the system prompt is split into a stable block (identity + instructions +
+  tone, marked `cache_control: ephemeral`) and a variable block (user context, open tickets, KB
+  context) — the repeated part bills at ~10% under sustained traffic (`buildSystemBlocks`).
 - `botReply` fires on new `user` messages in `directa` conversations still in `estado: 'bot'`. It
   gathers context (contact, open tickets, and **RAG context from the KB**), builds a bilingual
   (es/en) system prompt, and runs an agentic **tool loop (up to 3 turns)**:
   - `escalar_a_agente(motivo)` — hands off to a human agent sub-channel.
   - `crear_ticket(asunto, descripcion, prioridad)` — when auto-ticket creation is enabled.
   - Auto-escalates after N failed attempts.
-- `testBot` (console "Probar el bot") and `aiAssist` (draft a reply / ticket description) are
+- Replies may use **light markdown** (`**bold**`, `-`/`1.` lists, inline `code`) — the widget and
+  console render it safely (node-based mini-markdown, no raw HTML); headings/tables are not
+  interpreted.
+- `testBot` ("Probar el bot" in `/bot`) is a **replica of the widget chat**: bot header + greeting,
+  WhatsApp-style bubbles, **multi-turn history** and **image attachments** the model analyzes via
+  vision (JPG/PNG/GIF/WebP ≤ 4 MB). `aiAssist` drafts replies / ticket descriptions. Both are
   agent-only callables.
+- **Knowledge base** (`/bot`): accepts **PDF, TXT and MD** — file picker or **drag & drop** (multi
+  file), with a search box over the document list. `kbIngestPdf` (storage trigger) parses PDFs with
+  `pdf-parse` and ingests text files as UTF-8; URLs re-sync daily.
 - **Embeddings** use **Voyage AI** (`voyage-3.5-lite`, 768-dim) with a keyword-search fallback
   when `VOYAGE_API_KEY` is unset; semantic search uses Firestore `findNearest` (COSINE).
 
 ---
 
+## Bot answer feedback ("was this helpful?") & escalation
+
+Every bot reply in the widget shows **"¿Te sirvió esta respuesta? 👍 Sí / 👎 No"**. The vote
+closes the bot cycle:
+
+- **👍 helpful** → the bot conversation is **resolved** (`resueltaPor: 'bot'`) + a thank-you. The
+  next question opens a fresh segment. No star survey in the bot channel (the vote already
+  captured satisfaction).
+- **👎 not helpful** → inline offer **"¿Querés hablar con un agente?"**:
+  - **Yes** → the bot conversation is resolved and the contact's **agent conversation** is
+    created/reused with a system context message ("Escalado desde el bot · motivo · consulta",
+    linked back via `botConvRef`); the widget jumps to the agent channel automatically. One active
+    inbox row per contact.
+  - **No, thanks** → the conversation stays open to keep asking.
+
+Mechanics: votes live in **`bot_feedback/{convId}_{messageId}`** (deterministic id = one vote per
+reply; create-only, with a narrow `escalate: true` update allowed only after a negative vote). The
+`onBotFeedbackWrite` trigger stamps `feedback` on the message, aggregates
+`botHelpfulCount/botNotHelpfulCount` into `metrics_daily`, and performs the handoff (same
+`handoffAAgente` the bot tool uses). The widget jump is driven by **`escaladoAt`** (a growing
+timestamp — re-escalations to the same agent conversation still trigger it; baseline is taken from
+the first loaded snapshot so historical escalations never redirect).
+
+Console: bot bubbles show a **"Le sirvió" / "No le sirvió"** chip; escalation messages show
+**"Ver conversación del bot"** (opens the bot thread); the contact's history panel lists bot
+cycles with a **BOT** chip, differentiated from agent conversations; Reportes has the
+**"Respuestas útiles del bot"** KPI (% helpful + vote count, admin-only). Escalated bot
+resolutions count neither `resueltasBot` nor `resueltasAgente` (the agent conversation counts
+when it resolves).
+
+---
+
 ## Automatic replies (welcome / after-hours)
 
-Configured per site in **Configuración → Widget → "Respuestas automáticas"**, applied by Cloud
-Functions (`functions/src/welcome.ts`):
+The **bot's initial greeting** (`widget.mensajeAI`) is edited in **/bot → "Saludo inicial"**; the
+**agent-channel** auto-replies (in/after hours) live in **Configuración → Widget → "Respuestas
+automáticas"**. Both are per-site overrides applied by Cloud Functions
+(`functions/src/welcome.ts`):
 
 - `welcomeOnConversation` — on a new **bot** conversation, posts the greeting (`widget.mensajeAI`,
   fallback `bot.saludo`) as the first message. Idempotent (`_bienvenida`, timestamped at the

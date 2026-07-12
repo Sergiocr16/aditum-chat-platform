@@ -23,11 +23,12 @@ service firebase.storage {
          request.resource.contentType.matches('text/.*'));
     }
 
-    // PDFs de la base de conocimiento: kb/{docId}.pdf — solo admins suben.
+    // Archivos de la base de conocimiento: kb/{docId}.(pdf|txt|md) — solo admins suben.
     match /kb/{file} {
       allow read: if isAgent();
       allow write: if isAdmin() &&
-        request.resource.contentType == 'application/pdf' &&
+        (request.resource.contentType == 'application/pdf' ||
+         request.resource.contentType.matches('text/.*')) &&
         request.resource.size < 50 * 1024 * 1024;
     }
 

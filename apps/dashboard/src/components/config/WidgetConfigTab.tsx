@@ -82,9 +82,7 @@ const M = {
     iconoQuitar: 'Usar default',
     iconoHint: 'PNG/JPG/SVG · cuadrado · reemplaza el icono por defecto',
     bienvenida: 'Respuestas automáticas',
-    bienvenidaSub: 'Saludo del bot y respuestas automáticas del canal de agente',
-    bienvenidaAI: 'Bot · saludo inicial',
-    bienvenidaAIHint: 'Se muestra al abrir. Vacío = saludo por defecto del bot',
+    bienvenidaSub: 'Respuestas automáticas del canal de agente',
     bienvenidaAgente: 'Agente · en horario',
     bienvenidaAgenteHint: 'Se envía después del primer mensaje del usuario',
     bienvenidaFuera: 'Agente · fuera de horario',
@@ -140,14 +138,12 @@ const M = {
     iconoQuitar: 'Use default',
     iconoHint: 'PNG/JPG/SVG · square · replaces the default icon',
     bienvenida: 'Automatic replies',
-    bienvenidaSub: 'Bot greeting and automatic replies for the agent channel',
-    bienvenidaAI: 'Bot · initial greeting',
-    bienvenidaAIHint: 'Shown on open. Empty = the bot default greeting',
+    bienvenidaSub: 'Automatic replies for the agent channel',
     bienvenidaAgente: 'Agent · within hours',
-    bienvenidaAgenteHint: 'Sent after the user’s first message',
+    bienvenidaAgenteHint: "Sent after the user's first message",
     bienvenidaFuera: 'Agent · after hours',
     bienvenidaFueraHint: 'Automatic reply when they write outside business hours',
-    bienvenidaNombre: 'You can use {nombre} for the resident’s name',
+    bienvenidaNombre: "You can use {nombre} for the resident's name",
     horario: 'Business hours',
     horarioSub: 'Timezone: America/Costa_Rica',
     textoAuto: 'The text the user sees is generated from the configured hours:',
@@ -541,16 +537,6 @@ export function WidgetConfigTab() {
 
           <Card icon="waving_hand" title={m.bienvenida} subtitle={m.bienvenidaSub}>
             <div className="flex flex-col gap-3">
-              <Campo label={m.bienvenidaAI} tag={her('mensajeAI')}>
-                <textarea
-                  rows={2}
-                  value={eff.mensajeAI ?? ''}
-                  onChange={(e) => setW('mensajeAI', e.target.value)}
-                  placeholder={m.bienvenidaAIHint}
-                  className={`${inputCls} resize-none`}
-                />
-                <span className="text-[10.5px] text-warm-gray-2">{m.bienvenidaAIHint}</span>
-              </Campo>
               <Campo label={m.bienvenidaAgente} tag={her('mensajeAgente')}>
                 <textarea
                   rows={2}

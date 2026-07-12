@@ -142,12 +142,24 @@ export function ConvHistorialRow({
           className="flex-1 min-w-0 text-left px-2 py-2 outline-none"
         >
           <div className="flex items-center gap-1.5">
-            <span className="msr text-[15px] text-warm-gray-3 group-hover:text-navy flex-none">
-              forum
-            </span>
-            <span className="text-[9px] font-bold tracking-wide bg-cream-2 text-warm-gray px-1.5 py-0.5 rounded-full truncate">
-              {categoryLabel(cv.data.categoria, idioma).toUpperCase() || '—'}
-            </span>
+            {/* Las conversaciones del canal bot se diferencian de las de agente. */}
+            {cv.data.subcanal === 'bot' ? (
+              <>
+                <span className="msr text-[15px] text-ai flex-none">smart_toy</span>
+                <span className="text-[9px] font-bold tracking-wide bg-ai-bg text-ai px-1.5 py-0.5 rounded-full flex-none">
+                  BOT
+                </span>
+              </>
+            ) : (
+              <>
+                <span className="msr text-[15px] text-warm-gray-3 group-hover:text-navy flex-none">
+                  forum
+                </span>
+                <span className="text-[9px] font-bold tracking-wide bg-cream-2 text-warm-gray px-1.5 py-0.5 rounded-full truncate">
+                  {categoryLabel(cv.data.categoria, idioma).toUpperCase() || '—'}
+                </span>
+              </>
+            )}
             <EstrellasCsat rating={cv.data.csatRating} />
             {tickets.length > 0 && (
               <span

@@ -1,7 +1,8 @@
 node_modules/
 .next/
 dist/
-lib/
+# Build output de functions (un `lib/` genérico ignoraba también apps/dashboard/src/lib)
+functions/lib/
 .turbo/
 .env
 .env.local

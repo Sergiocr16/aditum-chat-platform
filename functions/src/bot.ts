@@ -21,7 +21,11 @@ import { crearTicketInterno } from './tickets.js';
 const anthropicApiKey = defineSecret('ANTHROPIC_API_KEY');
 
 // El plan aprobado fija claude-sonnet-5 para el bot (velocidad/costo de primera línea).
-const BOT_MODEL = process.env.BOT_MODEL ?? 'claude-sonnet-5';
+// Bot del widget y "Probar el bot": Haiku, el modelo más barato funcional.
+// Fijo en código, sin override por entorno.
+const BOT_MODEL = 'claude-haiku-4-5';
+// Asistencia IA para agentes (bajo volumen): prioriza calidad de redacción.
+const AI_ASSIST_MODEL = 'claude-sonnet-5';
 
 const TOOLS: Anthropic.Tool[] = [
   {
@@ -65,40 +69,47 @@ interface BotContext {
   kbContext: string;
 }
 
-function buildSystemPrompt(ctx: BotContext): string {
+/**
+ * System prompt en dos bloques: el ESTABLE (igual para todas las conversaciones
+ * del sitio en un idioma) lleva cache_control — con prompt caching la parte
+ * repetida se cobra a ~10% del precio. Lo VARIABLE (usuario, tickets, contexto
+ * de la KB por pregunta) va después del breakpoint para no invalidar el cache.
+ */
+function buildSystemBlocks(ctx: BotContext): Anthropic.TextBlockParam[] {
   const idioma: Idioma = ctx.conv.idioma === 'en' ? 'en' : 'es';
-  const partes: string[] = [];
+  const estables: string[] = [];
 
-  partes.push(
+  estables.push(
     idioma === 'es'
       ? `Sos "${ctx.bot.nombre}", el asistente de soporte de Aditum (software de administración de condominios en Costa Rica). Respondés en el chat embebido de la app.`
       : `You are "${ctx.bot.nombre}", the support assistant for Aditum (condominium management software in Costa Rica). You reply inside the embedded app chat.`,
   );
-  if (ctx.bot.instrucciones?.trim()) partes.push(ctx.bot.instrucciones.trim());
+  if (ctx.bot.instrucciones?.trim()) estables.push(ctx.bot.instrucciones.trim());
 
-  partes.push(
+  estables.push(
     idioma === 'es'
       ? ctx.bot.tono === 'usted'
         ? 'Tratá al usuario de "usted" (formal).'
         : 'Tratá al usuario de "vos" (cercano, español de Costa Rica).'
       : 'Reply in English.',
   );
-  partes.push(
+  estables.push(
     idioma === 'es'
-      ? 'Sé breve y práctico: respuestas de 1 a 4 oraciones, sin markdown pesado. Si no podés resolver algo o el usuario pide hablar con una persona, usá la herramienta escalar_a_agente.'
-      : 'Be brief and practical: 1-4 sentence replies, no heavy markdown. If you cannot resolve something or the user asks for a person, use the escalar_a_agente tool.',
+      ? 'Sé breve y práctico: respuestas de 1 a 4 oraciones. Formato permitido: **negritas**, listas con "-" o "1.", y `código`; NO uses encabezados (#), tablas ni bloques de código. Si no podés resolver algo o el usuario pide hablar con una persona, usá la herramienta escalar_a_agente.'
+      : 'Be brief and practical: 1-4 sentence replies. Allowed formatting: **bold**, "-" or "1." lists, and `code`; do NOT use headings (#), tables or code blocks. If you cannot resolve something or the user asks for a person, use the escalar_a_agente tool.',
   );
 
+  const variables: string[] = [];
   if (ctx.contact) {
     const c = ctx.contact;
-    partes.push(
+    variables.push(
       `Contexto del usuario: ${c.nombre}${c.rol ? ` (${c.rol})` : ''}${
         ctx.conv.clientNombre ? ` · ${ctx.conv.clientNombre}` : ''
       }.`,
     );
   }
   if (ctx.openTickets.length > 0) {
-    partes.push(
+    variables.push(
       'Tickets abiertos del usuario: ' +
         ctx.openTickets
           .map((t) => `${formatTicketNumber(t.numero)} "${t.asunto}" (${t.estado})`)
@@ -106,9 +117,14 @@ function buildSystemPrompt(ctx: BotContext): string {
     );
   }
   if (ctx.kbContext) {
-    partes.push(`Información de la base de conocimiento relevante:\n${ctx.kbContext}`);
+    variables.push(`Información de la base de conocimiento relevante:\n${ctx.kbContext}`);
   }
-  return partes.join('\n\n');
+
+  const blocks: Anthropic.TextBlockParam[] = [
+    { type: 'text', text: estables.join('\n\n'), cache_control: { type: 'ephemeral' } },
+  ];
+  if (variables.length > 0) blocks.push({ type: 'text', text: variables.join('\n\n') });
+  return blocks;
 }
 
 function historyToMessages(msgs: Message[]): Anthropic.MessageParam[] {
@@ -147,7 +163,7 @@ async function runBot(
     const response = await client.messages.create({
       model: BOT_MODEL,
       max_tokens: 1024,
-      system: buildSystemPrompt(ctx),
+      system: buildSystemBlocks(ctx),
       tools: TOOLS,
       messages,
     });
@@ -297,6 +313,7 @@ export const botReply = onDocumentCreated(
           : 'El bot no pudo resolver la consulta');
       const agenteConvId = await handoffAAgente(conv, convId, msg.texto, motivo);
       update.escaladoA = agenteConvId;
+      update.escaladoAt = FieldValue.serverTimestamp();
       update.botIntentos = 0;
     }
     await convRef.update(update);
@@ -318,8 +335,9 @@ export const botReply = onDocumentCreated(
 /**
  * Busca (o crea) la conversación del canal 'agente' del contacto y le deja el
  * contexto del escalamiento: motivo del bot + la última consulta del usuario.
+ * También la usa onBotFeedbackWrite ("no me sirvió → hablar con un agente").
  */
-async function handoffAAgente(
+export async function handoffAAgente(
   conv: Conversation,
   botConvId: string,
   ultimaConsulta: string,
@@ -382,18 +400,36 @@ async function handoffAAgente(
   return ref.id;
 }
 
-/** Callable para la pantalla "Probar el bot" (1i). Solo agentes. */
+/** Media types de imagen que acepta la API de Anthropic para visión. */
+const TEST_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'] as const;
+type TestImageType = (typeof TEST_IMAGE_TYPES)[number];
+
+/**
+ * Callable para la pantalla "Probar el bot" (1i). Solo agentes.
+ * Réplica de la conversación del widget: multi-turno (historial) y con
+ * adjuntos de imagen que el modelo analiza vía visión.
+ */
 export const testBot = onCall(
   { secrets: [anthropicApiKey], region: 'us-central1', timeoutSeconds: 60 },
   async (req) => {
     if (req.auth?.token.kind !== 'agent') {
       throw new HttpsError('permission-denied', 'Solo agentes.');
     }
-    const { siteId, pregunta, botConfigOverride } = req.data as {
+    const { siteId, pregunta, botConfigOverride, historial, imagen } = req.data as {
       siteId: string;
       pregunta: string;
       botConfigOverride?: Partial<BotConfig>;
+      /** Turnos previos de la conversación de prueba (sin errores). */
+      historial?: { rol: 'user' | 'bot'; texto: string }[];
+      /** Imagen adjunta del turno actual, base64 sin prefijo data:. */
+      imagen?: { data: string; mimeType: string };
     };
+    if (!pregunta?.trim() && !imagen) {
+      throw new HttpsError('invalid-argument', 'Mandá una pregunta o una imagen.');
+    }
+    if (imagen && !TEST_IMAGE_TYPES.includes(imagen.mimeType as TestImageType)) {
+      throw new HttpsError('invalid-argument', 'Formato de imagen no soportado (JPG/PNG/GIF/WebP).');
+    }
     const siteSnap = await db.doc(`sites/${siteId}`).get();
     const config = await resolveSiteConfig((siteSnap.data() as Site) ?? null);
     const bot = { ...config.bot, ...botConfigOverride };
@@ -408,11 +444,37 @@ export const testBot = onCall(
       openTickets: [],
       kbContext,
     };
+
+    const turnoActual: Anthropic.MessageParam = imagen
+      ? {
+          role: 'user',
+          content: [
+            {
+              type: 'image',
+              source: {
+                type: 'base64',
+                media_type: imagen.mimeType as TestImageType,
+                data: imagen.data,
+              },
+            },
+            ...(pregunta?.trim() ? [{ type: 'text' as const, text: pregunta }] : []),
+          ],
+        }
+      : { role: 'user', content: pregunta };
+
     const response = await client.messages.create({
       model: BOT_MODEL,
       max_tokens: 1024,
-      system: buildSystemPrompt(ctx),
-      messages: [{ role: 'user', content: pregunta }],
+      system: buildSystemBlocks(ctx),
+      messages: [
+        ...(historial ?? []).slice(-12).map(
+          (h): Anthropic.MessageParam => ({
+            role: h.rol === 'bot' ? 'assistant' : 'user',
+            content: h.texto || '…',
+          }),
+        ),
+        turnoActual,
+      ],
     });
     const texto = response.content
       .filter((b): b is Anthropic.TextBlock => b.type === 'text')
@@ -451,7 +513,7 @@ export const aiAssist = onCall(
 
     const client = new Anthropic({ apiKey: anthropicApiKey.value() });
     const response = await client.messages.create({
-      model: BOT_MODEL,
+      model: AI_ASSIST_MODEL,
       max_tokens: 512,
       messages: [{ role: 'user', content: prompt }],
     });

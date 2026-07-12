@@ -23,14 +23,17 @@ demo/           Host-simulator page. scripts/verify-*.mjs headless checks.
   shadow root so host styles never leak in/out. `@font-face` doesn't work inside Shadow DOM, so
   fonts (Material Symbols Rounded, Instrument Sans) are injected into the host `<head>` instead.
 - **Host handshake:** the host encrypts the user identity (AES-256-GCM, 5-min payload) and sets
-  `window.AditumChatSettings = { siteId, payload }`. `widgetSession` (a Cloud Function) decrypts
+  `window.AditumChatSettings = { siteId, payload, payloadUrl? }` (with `payloadUrl` the widget
+  fetches a FRESH payload at session time — the embedded one expires in 5 min). `widgetSession` (a Cloud Function) decrypts
   it, upserts the contact/client, and mints a Firebase custom token. See `README.md` for the
   payload format and Node/Java snippets.
 - **Continuous thread (two layers, segmented):** `subscribeMyConversations` (last ~20 directas) or
   `subscribeMyGroupConversations` (grupos via `participantes array-contains`) + `subscribeLatestMessages`
   + `fetchOlderMessages` (paginated) render all of a contact's segments as one thread. Two
   sub-channels per contact (`bot` / `agente`) via `ensureDirectConversation` / `convSubcanal`; the
-  group via `ensureGroupConversation`; `escalateToAgent` flips state to `open`. The chat is unique
+  group via `ensureGroupConversation`. Escalation is server-driven: the widget jumps to the agent
+  channel when the bot conversation's `escaladoAt` grows (baseline = first loaded snapshot). The
+  chat is unique
   per (contact, subcanal) / (client, group) but **segmented** — `ensure*Conversation` reuses the
   active segment and opens a NEW one when the last is resolved (never reopens, never duplicates).
 - **Other data.ts APIs:** `sendMessage` (with `replyTo`), `editMessage` (stores `textoAnterior` for

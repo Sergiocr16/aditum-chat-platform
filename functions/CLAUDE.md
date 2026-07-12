@@ -14,7 +14,7 @@ pnpm --filter @aditum-chat/functions seed       # node scripts/seed.mjs (emulato
 
 Functions run inside the emulator suite (see root `CLAUDE.md` for the start command/ports).
 Secrets in `functions/.secret.local` (gitignored): `ANTHROPIC_API_KEY`, `VOYAGE_API_KEY`
-(optional), `CONFIG_KEK`, `BOT_MODEL`.
+(optional), `CONFIG_KEK`. Bot models are fixed in code (`bot.ts`).
 
 ## Exports (`src/index.ts`)
 
@@ -37,10 +37,14 @@ AES/crypto helpers.
 
 - **All privileged writes go through here** with the Admin SDK — the client SDKs are locked down by
   `firestore.rules`. When a feature needs a write the rules forbid, add/extend a function.
-- **The bot** (`bot.ts`): model `claude-sonnet-5` (override `BOT_MODEL`), `max_tokens` 512–1024.
-  `botReply` fires on `user` messages in `directa` + `estado:'bot'` conversations; it runs an
-  agentic **tool loop (≤3 turns)** with `escalar_a_agente` and `crear_ticket`, grounded on KB RAG
-  context, and auto-escalates after N failed attempts.
+- **The bot** (`bot.ts`): `claude-haiku-4-5` for `botReply`/`testBot`, `claude-sonnet-5` for
+  `aiAssist` (fixed in code), `max_tokens` 512–1024, prompt caching via `buildSystemBlocks`
+  (stable system block with `cache_control`). `botReply` fires on `user` messages in `directa` +
+  `estado:'bot'` conversations; it runs an agentic **tool loop (≤3 turns)** with
+  `escalar_a_agente` and `crear_ticket`, grounded on KB RAG context, and auto-escalates after N
+  failed attempts. `onBotFeedbackWrite` (`botFeedback.ts`) processes the 👍/👎 votes: stamps
+  `Message.feedback`, aggregates metrics, resolves the bot conversation and reuses
+  `handoffAAgente` when the user asks for an agent.
 - **Auto replies** (`welcome.ts`): `welcomeOnConversation` and `agentAutoReply` post idempotent
   messages (`_bienvenida` / `_autorespuesta`) using per-site config (`widget.mensajeAI` /
   `mensajeAgente` / `mensajeFueraHorario`, fallback `bot.saludo`). They set `bienvenida: true` so

@@ -3,6 +3,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import type { Conversation, Message, WidgetSessionResponse } from '@aditum-chat/shared';
 import { categoryLabel, formatTicketNumber, makeT, widgetMessages } from '@aditum-chat/shared';
 import {
+  acceptAgentOffer,
+  botFeedbackId,
   convSubcanal,
   editMessage,
   ensureDirectConversation,
@@ -13,8 +15,10 @@ import {
   sendAttachment,
   sendMessage,
   setTyping,
+  submitBotFeedback,
   submitCsat,
   subscribeLatestMessages,
+  subscribeMyBotFeedback,
   subscribeMyConversations,
   subscribeMyCsat,
   subscribeMyGroupConversations,
@@ -59,6 +63,56 @@ function linkificar(texto: string): (string | VNode)[] {
     last = m.index + m[0].length;
   }
   if (last < texto.length) out.push(texto.slice(last));
+  return out;
+}
+
+/**
+ * Mini-markdown seguro para los mensajes (el bot responde con este formato):
+ * **negrita**, *cursiva*, `código` y listas (- / 1.). Construye VNodes — nunca
+ * HTML crudo — y linkifica las URLs de los tramos de texto plano.
+ */
+function renderInline(texto: string): (string | VNode)[] {
+  const out: (string | VNode)[] = [];
+  const re = /(`[^`\n]+`)|(\*\*[^*\n][^*]*?\*\*)|(\*[^*\s][^*\n]*?\*)/g;
+  let last = 0;
+  let k = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(texto))) {
+    if (m.index > last) out.push(...linkificar(texto.slice(last, m.index)));
+    if (m[1]) out.push(<code key={`c${k++}`}>{m[1].slice(1, -1)}</code>);
+    else if (m[2]) out.push(<b key={`b${k++}`}>{renderInline(m[2].slice(2, -2))}</b>);
+    else out.push(<i key={`i${k++}`}>{renderInline(m[3].slice(1, -1))}</i>);
+    last = m.index + m[0].length;
+  }
+  if (last < texto.length) out.push(...linkificar(texto.slice(last)));
+  return out;
+}
+
+function renderMarkdown(texto: string): (string | VNode)[] {
+  const lines = texto.split('\n');
+  const out: (string | VNode)[] = [];
+  let i = 0;
+  let k = 0;
+  const BULLET = /^\s*[-*•]\s+(.*)$/;
+  const ORDERED = /^\s*\d+[.)]\s+(.*)$/;
+  while (i < lines.length) {
+    const esBullet = BULLET.test(lines[i]);
+    const esOrdered = !esBullet && ORDERED.test(lines[i]);
+    if (esBullet || esOrdered) {
+      const re = esBullet ? BULLET : ORDERED;
+      const items: string[] = [];
+      while (i < lines.length && re.test(lines[i])) {
+        items.push(re.exec(lines[i])![1]);
+        i++;
+      }
+      const li = items.map((it, j) => <li key={j}>{renderInline(it)}</li>);
+      out.push(esOrdered ? <ol key={`l${k++}`}>{li}</ol> : <ul key={`l${k++}`}>{li}</ul>);
+      continue;
+    }
+    out.push(...renderInline(lines[i]));
+    if (i < lines.length - 1) out.push('\n');
+    i++;
+  }
   return out;
 }
 
@@ -269,21 +323,34 @@ export function Chat({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filas.length, unreadAlAbrir]);
 
-  // Si el bot escala (aparece escaladoA en la conversación), pasar al chat de agente.
-  const escaladoVisto = useRef<string | null | undefined>(undefined);
+  // Si el bot escala, pasar al chat de agente. La señal principal es escaladoAt
+  // (timestamp que SIEMPRE crece al escalar — re-escalar a la misma conversación
+  // no cambia escaladoA); fallback a escaladoA para datos sin el campo nuevo.
+  const escaladoVisto = useRef<number | undefined>(undefined);
+  const escaladoIdVisto = useRef<string | null | undefined>(undefined);
   useEffect(() => {
-    if (grupo || modo !== 'bot') return;
-    const actual = activa?.data.escaladoA ?? null;
+    // La línea base se fija recién con el PRIMER snapshot cargado: si se fijara
+    // antes (baseline 0/null), el escaladoAt histórico de una conversación ya
+    // resuelta parecería un escalamiento nuevo y redirigiría al canal agente
+    // cada vez que el usuario vuelve a "Preguntas del sistema".
+    if (grupo || modo !== 'bot' || !convsCargadas) return;
+    const actualAt = toDate(activa?.data.escaladoAt)?.getTime() ?? 0;
+    const actualId = activa?.data.escaladoA ?? null;
     if (escaladoVisto.current === undefined) {
-      escaladoVisto.current = actual; // línea base al montar: no saltar por escalados viejos
+      // Línea base al montar: no saltar por escalados viejos.
+      escaladoVisto.current = actualAt;
+      escaladoIdVisto.current = actualId;
       return;
     }
-    if (actual && actual !== escaladoVisto.current) {
-      escaladoVisto.current = actual;
+    const saltarPorAt = actualAt > escaladoVisto.current;
+    const saltarPorId = !actualAt && actualId && actualId !== escaladoIdVisto.current;
+    if (saltarPorAt || saltarPorId) {
+      escaladoVisto.current = actualAt;
+      escaladoIdVisto.current = actualId;
       onIrAgente?.();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [grupo, modo, activa?.data.escaladoA]);
+  }, [grupo, modo, convsCargadas, activa?.data.escaladoAt, activa?.data.escaladoA]);
 
   // --- Estado de UI del chat.
   const [draft, setDraft] = useState('');
@@ -310,6 +377,65 @@ export function Chat({
     },
     [fb, session],
   );
+  // --- Feedback de utilidad del bot ("¿te sirvió esta respuesta?").
+  // Votos persistidos (bot_feedback) + optimistas (clic inmediato); key = botFeedbackId.
+  const [misVotos, setMisVotos] = useState<Map<string, boolean>>(new Map());
+  const [votosOptimistas, setVotosOptimistas] = useState<Map<string, boolean>>(new Map());
+  // Oferta "¿querés hablar con un agente?" abierta tras un 👎 (docId del voto).
+  const [ofertaAbierta, setOfertaAbierta] = useState<string | null>(null);
+  const [ofertaPendiente, setOfertaPendiente] = useState(false);
+  const ofertaTimer = useRef<number | null>(null);
+  useEffect(() => {
+    if (grupo || modo !== 'bot') return;
+    return subscribeMyBotFeedback(fb, session, setMisVotos);
+  }, [fb, session, grupo, modo]);
+  useEffect(
+    () => () => {
+      if (ofertaTimer.current) window.clearTimeout(ofertaTimer.current);
+    },
+    [],
+  );
+  const voteOf = useCallback(
+    (fila: Fila): boolean | undefined => {
+      const id = botFeedbackId(fila.convId, fila.msg.id);
+      const optimista = votosOptimistas.get(id);
+      if (optimista !== undefined) return optimista;
+      const persistido = misVotos.get(id);
+      if (persistido !== undefined) return persistido;
+      const stamped = fila.msg.data.feedback;
+      return stamped === undefined ? undefined : stamped === 'helpful';
+    },
+    [votosOptimistas, misVotos],
+  );
+  const voteFeedback = useCallback(
+    (fila: Fila, helpful: boolean) => {
+      if (voteOf(fila) !== undefined) return; // ya votado (doble clic)
+      const id = botFeedbackId(fila.convId, fila.msg.id);
+      setVotosOptimistas((v) => new Map(v).set(id, helpful));
+      if (!helpful) setOfertaAbierta(id);
+      // permission-denied = ya existía el voto; el estado real llega por suscripción.
+      void submitBotFeedback(fb, session, fila.convId, fila.msg.id, helpful).catch(() => {});
+    },
+    [fb, session, voteOf],
+  );
+  const acceptOffer = useCallback(
+    (fila: Fila) => {
+      setOfertaPendiente(true);
+      void acceptAgentOffer(fb, fila.convId, fila.msg.id).catch(() => {});
+      // Respaldo: si el trigger no marcó escaladoAt en ~10s, navegar igual.
+      ofertaTimer.current = window.setTimeout(() => {
+        setOfertaAbierta(null);
+        setOfertaPendiente(false);
+        onIrAgente?.();
+      }, 10000);
+    },
+    [fb, onIrAgente],
+  );
+  const declineOffer = useCallback(() => {
+    setOfertaAbierta(null);
+    setOfertaPendiente(false);
+  }, []);
+
   const bodyRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -669,7 +795,7 @@ export function Chat({
                       </button>
                     )}
                     <Adjuntos m={m.data} />
-                    {m.data.texto && <div class="ac-msg-texto">{linkificar(m.data.texto)}</div>}
+                    {m.data.texto && <div class="ac-msg-texto">{renderMarkdown(m.data.texto)}</div>}
                     {m.data.ticketRef &&
                       (onIrTicket ? (
                         <button
@@ -772,12 +898,41 @@ export function Chat({
                   </div>
                 </div>
               )}
+              {/* Feedback "¿te sirvió?" bajo cada respuesta del bot (solo canal bot). */}
+              {esBotCanal &&
+                m.data.sender.tipo === 'bot' &&
+                m.data.tipoContenido === 'texto' &&
+                !m.data.bienvenida && (
+                  <>
+                    <BotFeedbackRow
+                      pregunta={t('bot.feedbackPregunta')}
+                      si={t('bot.feedbackSi')}
+                      no={t('bot.feedbackNo')}
+                      gracias={t('bot.feedbackGracias')}
+                      voto={voteOf(fila)}
+                      interactivo={esActiva && !resuelta}
+                      onVote={(helpful) => voteFeedback(fila, helpful)}
+                    />
+                    {ofertaAbierta === botFeedbackId(fila.convId, m.id) && (
+                      <AgentOfferCard
+                        pregunta={t('bot.ofertaAgente')}
+                        si={t('bot.ofertaSi')}
+                        no={t('bot.ofertaNo')}
+                        pasando={t('bot.ofertaPasando')}
+                        pendiente={ofertaPendiente}
+                        onAccept={() => acceptOffer(fila)}
+                        onDecline={declineOffer}
+                      />
+                    )}
+                  </>
+                )}
               {marcaResueltaDespues && (
                 <>
                   {separadorResuelta}
-                  {/* La encuesta CSAT es solo para conversaciones directas, nunca
-                      en el chat global de grupo. */}
-                  {!grupo && esActiva && mostrarCsat && (
+                  {/* La encuesta CSAT es solo para el canal de agente: nunca en el
+                      chat de grupo ni en el canal bot (ahí el feedback 👍/👎 ya
+                      capturó la satisfacción). */}
+                  {!grupo && !esBotCanal && esActiva && mostrarCsat && (
                     <CsatCard
                       texto={t('csat.pregunta')}
                       enviado={csatEnviados.has(fila.convId) || !!ratingDe(fila.convId)}
@@ -801,7 +956,7 @@ export function Chat({
               <span class="ac-icon">{esBotCanal ? 'smart_toy' : 'support_agent'}</span>
             </div>
             <div class="ac-burbuja">
-              <div class="ac-msg-texto">{linkificar(bienvenida)}</div>
+              <div class="ac-msg-texto">{renderMarkdown(bienvenida)}</div>
             </div>
           </div>
         )}
@@ -941,6 +1096,84 @@ function Reacciones({
           {emoji} {ids.length > 1 ? ids.length : ''}
         </button>
       ))}
+    </div>
+  );
+}
+
+/** Fila "¿Te sirvió esta respuesta? 👍 Sí / 👎 No" bajo una respuesta del bot. */
+function BotFeedbackRow({
+  pregunta,
+  si,
+  no,
+  gracias,
+  voto,
+  interactivo,
+  onVote,
+}: {
+  pregunta: string;
+  si: string;
+  no: string;
+  gracias: string;
+  voto: boolean | undefined;
+  interactivo: boolean;
+  onVote(helpful: boolean): void;
+}) {
+  if (voto !== undefined) {
+    return (
+      <div class="ac-feedback ac-feedback-enviado">
+        <span class="ac-icon">{voto ? 'thumb_up' : 'thumb_down'}</span>
+        {gracias}
+      </div>
+    );
+  }
+  if (!interactivo) return null;
+  return (
+    <div class="ac-feedback">
+      <span class="ac-feedback-pregunta">{pregunta}</span>
+      <button type="button" class="ac-feedback-btn" onClick={() => onVote(true)}>
+        <span class="ac-icon">thumb_up</span>
+        {si}
+      </button>
+      <button type="button" class="ac-feedback-btn" onClick={() => onVote(false)}>
+        <span class="ac-icon">thumb_down</span>
+        {no}
+      </button>
+    </div>
+  );
+}
+
+/** Oferta "¿Querés hablar con un agente?" tras un voto negativo. */
+function AgentOfferCard({
+  pregunta,
+  si,
+  no,
+  pasando,
+  pendiente,
+  onAccept,
+  onDecline,
+}: {
+  pregunta: string;
+  si: string;
+  no: string;
+  pasando: string;
+  pendiente: boolean;
+  onAccept(): void;
+  onDecline(): void;
+}) {
+  return (
+    <div class="ac-oferta">
+      <div class="ac-oferta-pregunta">{pendiente ? pasando : pregunta}</div>
+      {!pendiente && (
+        <div class="ac-oferta-botones">
+          <button type="button" class="ac-oferta-btn ac-oferta-btn-si" onClick={onAccept}>
+            <span class="ac-icon">support_agent</span>
+            {si}
+          </button>
+          <button type="button" class="ac-oferta-btn" onClick={onDecline}>
+            {no}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

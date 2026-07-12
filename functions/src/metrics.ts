@@ -41,14 +41,18 @@ export const metricsOnResolve = onDocumentUpdated(
     if (antes.estado === 'resolved' || despues.estado !== 'resolved') return;
     if (despues.tipo !== 'directa') return;
 
-    // ¿La resolvió el bot (nunca hubo agente asignado) o un agente?
-    const porBot = !despues.asignadoA && antes.estado === 'bot';
+    // ¿La resolvió el bot (nunca hubo agente asignado) o un agente? Una conversación
+    // bot ESCALADA (escaladoA) no cuenta para ninguno: el ciclo sigue en la
+    // conversación de agente, que contará cuando se resuelva.
+    const eraBot = antes.estado === 'bot';
+    const escalada = eraBot && Boolean(despues.escaladoA);
+    const porBot = !despues.asignadoA && eraBot && !escalada;
     const { ref, fecha } = dailyRef();
     await ref.set(
       {
         fecha,
         resueltasBot: FieldValue.increment(porBot ? 1 : 0),
-        resueltasAgente: FieldValue.increment(porBot ? 0 : 1),
+        resueltasAgente: FieldValue.increment(porBot || escalada ? 0 : 1),
         ...(despues.asignadoA
           ? { [`porAgente.${despues.asignadoA}.resueltas`]: FieldValue.increment(1) }
           : {}),
@@ -56,7 +60,9 @@ export const metricsOnResolve = onDocumentUpdated(
       { merge: true },
     );
 
-    // Encuesta CSAT en el chat (el widget la renderiza con estrellas).
+    // Encuesta CSAT en el chat (el widget la renderiza con estrellas). El canal
+    // bot no la lleva: el feedback "¿te sirvió?" ya captura la satisfacción.
+    if (despues.subcanal === 'bot') return;
     const idioma = despues.idioma === 'en' ? 'en' : 'es';
     const msgs = await event.data!.after.ref
       .collection('messages')

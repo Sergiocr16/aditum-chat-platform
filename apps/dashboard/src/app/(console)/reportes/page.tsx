@@ -26,10 +26,13 @@ const M = {
     kpiBot: 'Resueltas por el bot',
     kpiCsat: 'CSAT',
     valoraciones: 'valoraciones',
+    kpiBotUtil: 'Respuestas útiles del bot',
+    votos: 'votos',
     tendenciaPr: '2 min mejor que el período anterior',
     tendenciaSla: '+1.4 pts vs período anterior',
     tendenciaBot: '+5 pts desde que se amplió la base de conocimiento',
     tendenciaCsat: 'estable vs período anterior',
+    tendenciaBotUtil: 'feedback "¿te sirvió?" del widget',
     chartTitulo: 'Tiempo de primera respuesta por semana',
     serieAgentes: 'Agentes',
     serieBot: 'Bot',
@@ -58,10 +61,13 @@ const M = {
     kpiBot: 'Resolved by the bot',
     kpiCsat: 'CSAT',
     valoraciones: 'ratings',
+    kpiBotUtil: 'Helpful bot answers',
+    votos: 'votes',
     tendenciaPr: '2 min better than previous period',
     tendenciaSla: '+1.4 pts vs previous period',
     tendenciaBot: '+5 pts since the knowledge base grew',
     tendenciaCsat: 'stable vs previous period',
+    tendenciaBotUtil: '"was this helpful?" widget feedback',
     chartTitulo: 'First response time by week',
     serieAgentes: 'Agents',
     serieBot: 'Bot',
@@ -119,6 +125,8 @@ export default function ReportesPage() {
     let agente = 0;
     let csatSum = 0;
     let csatCount = 0;
+    let botHelpful = 0;
+    let botNotHelpful = 0;
     const porAgente: Record<string, { slaCumplidos: number; slaTotal: number }> = {};
 
     for (const d of docs) {
@@ -129,6 +137,8 @@ export default function ReportesPage() {
       agente += d.data.resueltasAgente ?? 0;
       csatSum += d.data.csatSum ?? 0;
       csatCount += d.data.csatCount ?? 0;
+      botHelpful += d.data.botHelpfulCount ?? 0;
+      botNotHelpful += d.data.botNotHelpfulCount ?? 0;
       for (const [uid, a] of Object.entries(d.data.porAgente ?? {})) {
         const acc = (porAgente[uid] ??= { slaCumplidos: 0, slaTotal: 0 });
         acc.slaCumplidos += a.slaCumplidos;
@@ -154,6 +164,9 @@ export default function ReportesPage() {
       botPct: bot + agente > 0 ? (bot / (bot + agente)) * 100 : null,
       csat: csatCount > 0 ? csatSum / csatCount : null,
       csatCount,
+      botUtilPct:
+        botHelpful + botNotHelpful > 0 ? (botHelpful / (botHelpful + botNotHelpful)) * 100 : null,
+      botVotes: botHelpful + botNotHelpful,
       porAgente,
       serieAgentes,
     };
@@ -190,6 +203,8 @@ export default function ReportesPage() {
   const kpiBot = agg?.botPct != null ? Math.round(agg.botPct) : 41;
   const kpiCsat = agg?.csat != null ? agg.csat.toFixed(1) : '4.6';
   const kpiCsatCount = agg?.csatCount || 318;
+  const kpiBotUtil = agg?.botUtilPct != null ? Math.round(agg.botUtilPct) : 87;
+  const kpiBotVotes = agg?.botVotes || 124;
   const serieAgentes =
     agg && agg.serieAgentes.every((v): v is number => v !== null)
       ? agg.serieAgentes
@@ -261,6 +276,12 @@ export default function ReportesPage() {
             valor={`${kpiCsat} ★`}
             label={`${m.kpiCsat} (${kpiCsatCount} ${m.valoraciones})`}
             tendencia={m.tendenciaCsat}
+          />
+          <KpiCard
+            valor={`${kpiBotUtil}%`}
+            label={`${m.kpiBotUtil} (${kpiBotVotes} ${m.votos})`}
+            tendencia={m.tendenciaBotUtil}
+            positiva
           />
         </div>
 

@@ -6,6 +6,7 @@ export { widgetSession } from './widgetSession.js';
 export { demoPayload } from './demo.js';
 export { createTicket } from './tickets.js';
 export { botReply, testBot, aiAssist } from './bot.js';
+export { onBotFeedbackWrite } from './botFeedback.js';
 export { kbIngestPdf, kbSyncHelpCenter, kbSyncNow } from './kb.js';
 export { manageTeam, rotateSiteKey } from './team.js';
 export { ticketSlaInit, firstResponseTracker, slaEngine } from './sla.js';

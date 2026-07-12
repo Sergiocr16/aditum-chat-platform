@@ -38,8 +38,13 @@ const EMOJIS = ['👍', '❤️', '😂', '😮', '🙏'];
 
 export const ConversationView = forwardRef<
   ConversationViewHandle,
-  { conv: Row<Conversation>; onBack?: () => void }
->(function ConversationView({ conv, onBack }, ref) {
+  {
+    conv: Row<Conversation>;
+    onBack?: () => void;
+    /** Abre otra conversación en el inbox (ej. "Ver conversación del bot"). */
+    onOpenConversation?: (convId: string) => void;
+  }
+>(function ConversationView({ conv, onBack, onOpenConversation }, ref) {
   const { agent } = useAuth();
   const t = useT();
   const team = useTeam();
@@ -456,6 +461,11 @@ export const ConversationView = forwardRef<
                   onIrMensaje={irAMensaje}
                   onResponder={responderA}
                   onEditar={() => editarMensaje(f.convId, f.msg.id, md.texto)}
+                  onVerConvBot={
+                    md.botConvRef && onOpenConversation
+                      ? () => onOpenConversation(md.botConvRef!)
+                      : undefined
+                  }
                 />,
               );
             }
@@ -652,6 +662,75 @@ export function linkificar(texto: string): React.ReactNode[] {
   return out;
 }
 
+/**
+ * Mini-markdown seguro para los cuerpos de mensaje (el bot responde con este
+ * formato): **negrita**, *cursiva*, `código` y listas (- / 1.). Construye nodos
+ * React — nunca HTML crudo — y linkifica las URLs del texto plano.
+ */
+function renderInline(texto: string): React.ReactNode[] {
+  const out: React.ReactNode[] = [];
+  const re = /(`[^`\n]+`)|(\*\*[^*\n][^*]*?\*\*)|(\*[^*\s][^*\n]*?\*)/g;
+  let last = 0;
+  let k = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(texto))) {
+    if (m.index > last) out.push(...linkificar(texto.slice(last, m.index)));
+    if (m[1]) {
+      out.push(
+        <code key={`c${k++}`} className="bg-black/[.07] rounded px-1 font-mono text-[0.9em]">
+          {m[1].slice(1, -1)}
+        </code>,
+      );
+    } else if (m[2]) {
+      out.push(<b key={`b${k++}`}>{renderInline(m[2].slice(2, -2))}</b>);
+    } else {
+      out.push(<i key={`i${k++}`}>{renderInline(m[3].slice(1, -1))}</i>);
+    }
+    last = m.index + m[0].length;
+  }
+  if (last < texto.length) out.push(...linkificar(texto.slice(last)));
+  return out;
+}
+
+export function renderMarkdown(texto: string): React.ReactNode[] {
+  const lines = texto.split('\n');
+  const out: React.ReactNode[] = [];
+  let i = 0;
+  let k = 0;
+  const BULLET = /^\s*[-*•]\s+(.*)$/;
+  const ORDERED = /^\s*\d+[.)]\s+(.*)$/;
+  while (i < lines.length) {
+    const esBullet = BULLET.test(lines[i]);
+    const esOrdered = !esBullet && ORDERED.test(lines[i]);
+    if (esBullet || esOrdered) {
+      const re = esBullet ? BULLET : ORDERED;
+      const items: string[] = [];
+      while (i < lines.length && re.test(lines[i])) {
+        items.push(re.exec(lines[i])![1]);
+        i++;
+      }
+      const li = items.map((it, j) => <li key={j}>{renderInline(it)}</li>);
+      const cls = 'my-1 pl-5 whitespace-normal flex flex-col gap-0.5';
+      out.push(
+        esOrdered ? (
+          <ol key={`l${k++}`} className={`list-decimal ${cls}`}>
+            {li}
+          </ol>
+        ) : (
+          <ul key={`l${k++}`} className={`list-disc ${cls}`}>
+            {li}
+          </ul>
+        ),
+      );
+      continue;
+    }
+    out.push(...renderInline(lines[i]));
+    if (i < lines.length - 1) out.push('\n');
+    i++;
+  }
+  return out;
+}
+
 function Burbuja({
   m,
   msgId,
@@ -665,6 +744,7 @@ function Burbuja({
   onIrMensaje,
   onResponder,
   onEditar,
+  onVerConvBot,
 }: {
   m: Message;
   msgId?: string;
@@ -678,7 +758,10 @@ function Burbuja({
   onIrMensaje?(messageId: string): void;
   onResponder?(r: { messageId: string; texto: string; senderNombre: string }): void;
   onEditar?(): void;
+  /** Mensajes de sistema con botConvRef: abre la conversación del bot de origen. */
+  onVerConvBot?(): void;
 }) {
+  const t = useT();
   const own = m.sender.tipo === 'agent';
   const bot = m.sender.tipo === 'bot';
   const sistema = m.sender.tipo === 'sistema';
@@ -706,6 +789,16 @@ function Burbuja({
           {m.texto}
         </span>
         {chipTicket}
+        {m.botConvRef && onVerConvBot && (
+          <button
+            type="button"
+            onClick={onVerConvBot}
+            className="inline-flex items-center gap-1 rounded-md bg-ai-bg px-2 py-1 text-[11px] font-bold text-ai transition hover:brightness-95"
+          >
+            <span className="msr text-[13px]">smart_toy</span>
+            {t('inbox.verConvBot')}
+          </button>
+        )}
       </div>
     );
   }
@@ -821,10 +914,25 @@ function Burbuja({
         <Adjuntos adjuntos={m.adjuntos} />
         {m.texto && (
           <div className="text-[13px] text-[#111B21] whitespace-pre-wrap break-words">
-            {linkificar(m.texto)}
+            {renderMarkdown(m.texto)}
           </div>
         )}
         {chipTicket && <div className="mt-1">{chipTicket}</div>}
+        {/* Voto "¿te sirvió?" que recibió esta respuesta del bot. */}
+        {bot && m.feedback && (
+          <div className="mt-1">
+            <span
+              className={`inline-flex items-center gap-1 text-[10.5px] font-bold rounded-full px-2 py-0.5 ${
+                m.feedback === 'helpful' ? 'bg-ok-bg text-ok-dark' : 'bg-danger-bg text-danger'
+              }`}
+            >
+              <span className="msr text-[12px]">
+                {m.feedback === 'helpful' ? 'thumb_up' : 'thumb_down'}
+              </span>
+              {m.feedback === 'helpful' ? t('inbox.feedbackUtil') : t('inbox.feedbackNoUtil')}
+            </span>
+          </div>
+        )}
         {reacciones.length > 0 && (
           <div className="flex flex-wrap gap-1 mt-1">
             {reacciones.map(([emoji, ids]) => {

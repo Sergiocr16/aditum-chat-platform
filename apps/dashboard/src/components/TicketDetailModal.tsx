@@ -24,7 +24,7 @@ import {
 } from '@aditum-chat/shared';
 import { useAuth } from '@/lib/auth';
 import { useT } from '@/lib/i18n';
-import { linkificar } from './ConversationView';
+import { renderMarkdown } from './ConversationView';
 import {
   fmtFecha,
   fmtHora,
@@ -811,7 +811,7 @@ function ConvOrigenBurbuja({ m }: { m: Message }) {
         {bot && <div className="text-[10.5px] font-bold text-navy mb-0.5">{m.sender.nombre}</div>}
         {m.texto ? (
           <div className="text-[13px] text-[#111B21] whitespace-pre-wrap break-words">
-            {linkificar(m.texto)}
+            {renderMarkdown(m.texto)}
           </div>
         ) : (
           <div className="flex items-center gap-1 text-[12.5px] text-warm-gray italic">
