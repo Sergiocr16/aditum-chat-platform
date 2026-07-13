@@ -1,9 +1,9 @@
 'use client';
 
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { httpsCallable } from 'firebase/functions';
 import type { Attachment, Conversation, Idioma, Message } from '@aditum-chat/shared';
-import { categoryLabel, formatTicketNumber } from '@aditum-chat/shared';
+import { categoryLabel, EMOJI_CATEGORIES, formatTicketNumber } from '@aditum-chat/shared';
 import { fns } from '@/lib/firebase';
 import { useAuth } from '@/lib/auth';
 import { useT } from '@/lib/i18n';
@@ -25,6 +25,7 @@ import {
   type ThreadRow,
 } from '@/lib/data';
 import { ConvertTicketModal } from './ConvertTicketModal';
+import { useMediaQuery } from './ResizeHandle';
 import { ResolveModal } from './ResolveModal';
 import { TicketDetailModal } from './TicketDetailModal';
 
@@ -35,6 +36,13 @@ export interface ConversationViewHandle {
 }
 
 const EMOJIS = ['👍', '❤️', '😂', '😮', '🙏'];
+// Storage rules cap attachments at 25 MB; reject earlier for better UX.
+const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 export const ConversationView = forwardRef<
   ConversationViewHandle,
@@ -43,10 +51,13 @@ export const ConversationView = forwardRef<
     onBack?: () => void;
     /** Abre otra conversación en el inbox (ej. "Ver conversación del bot"). */
     onOpenConversation?: (convId: string) => void;
+    /** Opens the context panel as a mobile drawer (button only shows below lg). */
+    onOpenContext?: () => void;
   }
->(function ConversationView({ conv, onBack, onOpenConversation }, ref) {
+>(function ConversationView({ conv, onBack, onOpenConversation, onOpenContext }, ref) {
   const { agent } = useAuth();
   const t = useT();
+  const esSm = useMediaQuery('(min-width: 640px)');
   const team = useTeam();
   const idioma = agent?.idioma ?? 'es';
   const c = conv.data;
@@ -82,6 +93,32 @@ export const ConversationView = forwardRef<
   const [menuMsg, setMenuMsg] = useState<string | null>(null);
   const [editando, setEditando] = useState<{ convId: string; msgId: string; texto: string } | null>(
     null,
+  );
+  // WhatsApp-style emoji picker in the composer.
+  const [showEmoji, setShowEmoji] = useState(false);
+
+  // WhatsApp-style staged attachment: pick → preview + caption → send as one message.
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [attachError, setAttachError] = useState<string | null>(null);
+  const attachErrorTimer = useRef<number | null>(null);
+  const pendingFileUrl = useMemo(
+    () =>
+      pendingFile && pendingFile.type.startsWith('image/')
+        ? URL.createObjectURL(pendingFile)
+        : null,
+    [pendingFile],
+  );
+  useEffect(
+    () => () => {
+      if (pendingFileUrl) URL.revokeObjectURL(pendingFileUrl);
+    },
+    [pendingFileUrl],
+  );
+  useEffect(
+    () => () => {
+      if (attachErrorTimer.current) window.clearTimeout(attachErrorTimer.current);
+    },
+    [],
   );
 
   const fileRef = useRef<HTMLInputElement>(null);
@@ -282,10 +319,12 @@ export const ConversationView = forwardRef<
   }
 
   async function enviar() {
+    setShowEmoji(false);
     const texto = draft.trim();
-    if (!texto || !agent) return;
+    if (!agent) return;
     // Modo edición: actualiza el mensaje (guarda la versión anterior).
     if (editando) {
+      if (!texto) return;
       if (texto !== editando.texto) {
         await agentEditMessage(editando.convId, editando.msgId, texto, editando.texto);
       }
@@ -293,6 +332,26 @@ export const ConversationView = forwardRef<
       setDraft('');
       return;
     }
+    if (pendingFile && tab === 'responder') {
+      // Attachment + caption go out together as a single message.
+      if (subiendo) return;
+      setSubiendo(true);
+      anclarAlFondo();
+      try {
+        const nombreChat = agent.perfil?.nombreChat ?? agent.perfil?.nombre ?? 'Soporte';
+        const target = await convDestino();
+        if (!target) return;
+        await agentSendAttachment(target, agent.uid, nombreChat, pendingFile, texto);
+        setDraft('');
+        setPendingFile(null);
+        setReplyTo(null);
+        if (!grupo) await tomarSiBot(target.id);
+      } finally {
+        setSubiendo(false);
+      }
+      return;
+    }
+    if (!texto) return;
     setDraft('');
     const cita = tab === 'responder' ? replyTo : null;
     setReplyTo(null);
@@ -304,21 +363,35 @@ export const ConversationView = forwardRef<
     if (!grupo && tab === 'responder') await tomarSiBot(target.id);
   }
 
-  async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
+  /** Inserts an emoji at the caret position, keeping focus in the textarea. */
+  function insertEmoji(emoji: string) {
+    const el = inputRef.current;
+    const focused = el && document.activeElement === el;
+    const start = focused ? (el.selectionStart ?? draft.length) : draft.length;
+    const end = focused ? (el.selectionEnd ?? draft.length) : draft.length;
+    setDraft(draft.slice(0, start) + emoji + draft.slice(end));
+    el?.focus();
+    requestAnimationFrame(() => {
+      if (!el) return;
+      const pos = start + emoji.length;
+      el.setSelectionRange(pos, pos);
+    });
+  }
+
+  function onFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = '';
-    if (!file || !agent || subiendo) return;
-    setSubiendo(true);
-    anclarAlFondo();
-    try {
-      const nombreChat = agent.perfil?.nombreChat ?? agent.perfil?.nombre ?? 'Soporte';
-      const target = await convDestino();
-      if (!target) return;
-      await agentSendAttachment(target, agent.uid, nombreChat, file);
-      if (!grupo) await tomarSiBot(target.id);
-    } finally {
-      setSubiendo(false);
+    if (!file) return;
+    if (file.size > MAX_ATTACHMENT_BYTES) {
+      setAttachError(idioma === 'es' ? 'El archivo supera los 25 MB' : 'File exceeds 25 MB');
+      if (attachErrorTimer.current) window.clearTimeout(attachErrorTimer.current);
+      attachErrorTimer.current = window.setTimeout(() => setAttachError(null), 4000);
+      return;
     }
+    setAttachError(null);
+    // Stage it (replacing any previous pick); it is sent from enviar() with the caption.
+    setPendingFile(file);
+    inputRef.current?.focus();
   }
 
   async function asignar(uid: string, nombreAgente: string, foto?: string) {
@@ -397,6 +470,15 @@ export const ConversationView = forwardRef<
             className="h-8 w-8 rounded-lg flex items-center justify-center border border-warm-border text-warm-gray hover:border-ok hover:text-ok"
           >
             <span className="msr text-[18px]">check_circle</span>
+          </button>
+        )}
+        {onOpenContext && (
+          <button
+            onClick={onOpenContext}
+            title="Información"
+            className="lg:hidden h-8 w-8 rounded-lg flex items-center justify-center border border-warm-border text-warm-gray hover:border-navy hover:text-navy flex-none"
+          >
+            <span className="msr text-[18px]">info</span>
           </button>
         )}
       </header>
@@ -564,11 +646,78 @@ export const ConversationView = forwardRef<
             </button>
           </div>
         )}
+        {pendingFile && tab === 'responder' && !editando && (
+          <div className="flex items-center gap-2.5 mb-2 rounded-lg bg-cream-1 border border-warm-border px-2.5 py-2">
+            {pendingFileUrl ? (
+              <img
+                src={pendingFileUrl}
+                alt=""
+                className="h-10 w-10 rounded-lg object-cover flex-none border border-warm-border"
+              />
+            ) : (
+              <span className="msr text-[20px] text-navy flex-none h-10 w-10 rounded-lg bg-white border border-warm-border flex items-center justify-center">
+                {pendingFile.type.startsWith('video/') ? 'movie' : 'description'}
+              </span>
+            )}
+            <div className="flex-1 min-w-0">
+              <div className="text-[11.5px] font-semibold text-ink truncate">
+                {pendingFile.name}
+              </div>
+              <div className="text-[10.5px] text-warm-gray">{formatBytes(pendingFile.size)}</div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setPendingFile(null)}
+              disabled={subiendo}
+              className="flex-none text-warm-gray hover:text-ink disabled:opacity-40"
+              aria-label="Quitar adjunto"
+            >
+              <span className="msr text-[16px]">close</span>
+            </button>
+          </div>
+        )}
+        {attachError && <div className="text-[11px] text-danger mb-1.5">{attachError}</div>}
+        {showEmoji && (
+          <div className="h-52 overflow-y-auto mb-2 rounded-xl border border-warm-border bg-white px-2.5 pb-2.5 pt-1">
+            {EMOJI_CATEGORIES.map((cat) => (
+              <div key={cat.label.es}>
+                <div className="text-[10px] font-bold tracking-wide uppercase text-warm-gray-2 mt-2 mb-1 px-0.5">
+                  {cat.label[idioma]}
+                </div>
+                <div className="grid grid-cols-10">
+                  {cat.emojis.map((emoji) => (
+                    <button
+                      key={emoji}
+                      type="button"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => insertEmoji(emoji)}
+                      className="text-[20px] leading-none py-1 rounded-lg hover:bg-cream-1 transition-colors"
+                    >
+                      {emoji}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
         <div
           className={`flex items-end gap-2 rounded-xl border p-2 ${
             tab === 'nota' ? 'bg-gold-bg border-gold' : 'bg-cream-0 border-warm-border'
           }`}
         >
+          <button
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => setShowEmoji((v) => !v)}
+            title="Emoji"
+            aria-label="Emoji"
+            className={`flex-none self-end p-1.5 transition-colors ${
+              showEmoji ? 'text-navy' : 'text-warm-gray hover:text-navy'
+            }`}
+          >
+            <span className="msr text-[20px]">{showEmoji ? 'keyboard' : 'mood'}</span>
+          </button>
           {tab === 'responder' && (
             <>
               <button
@@ -579,15 +728,13 @@ export const ConversationView = forwardRef<
                 aria-label={t('inbox.adjuntar')}
                 className="flex-none self-end p-1.5 text-warm-gray hover:text-navy disabled:opacity-40 transition-colors"
               >
-                <span className={`msr text-[20px] ${subiendo ? 'animate-spin' : ''}`}>
-                  {subiendo ? 'progress_activity' : 'attach_file'}
-                </span>
+                <span className="msr text-[20px]">attach_file</span>
               </button>
               <input
                 ref={fileRef}
                 type="file"
                 hidden
-                accept="image/*,video/*,.pdf,.doc,.docx,.txt"
+                accept="image/*,video/*,.pdf,.doc,.docx,.txt,.xlsx,.xls,.csv"
                 onChange={onFile}
               />
             </>
@@ -604,18 +751,34 @@ export const ConversationView = forwardRef<
               }
             }}
             placeholder={
-              tab === 'nota'
-                ? t('inbox.placeholderNota')
-                : t('inbox.placeholderRespuesta', { nombre: nombre.split(' ')[0] })
+              pendingFile && tab === 'responder' && !editando
+                ? idioma === 'es'
+                  ? 'Agregá un comentario…'
+                  : 'Add a caption…'
+                : tab === 'nota'
+                  ? t('inbox.placeholderNota')
+                  : esSm
+                    ? t('inbox.placeholderRespuesta', { nombre: nombre.split(' ')[0] })
+                    : t('inbox.placeholderRespuestaCorta')
             }
             className="flex-1 bg-transparent resize-none outline-none text-[13px] px-1.5 py-1"
           />
           <button
             onClick={enviar}
-            disabled={!draft.trim()}
+            disabled={
+              (!draft.trim() && !(pendingFile && tab === 'responder' && !editando)) || subiendo
+            }
             className="bg-navy text-white text-[12px] font-semibold px-4 py-2 rounded-lg disabled:opacity-40 hover:bg-navy-light"
           >
-            {editando ? 'Guardar' : t('inbox.enviar')}
+            {subiendo ? (
+              <span className="msr text-[14px] animate-spin inline-block align-middle">
+                progress_activity
+              </span>
+            ) : editando ? (
+              'Guardar'
+            ) : (
+              t('inbox.enviar')
+            )}
           </button>
         </div>
         <div className="text-[10.5px] text-warm-gray-2 mt-1.5">{t('inbox.hintEnter')}</div>

@@ -79,6 +79,7 @@
 .ac-panel {
   width: 380px;
   height: min(730px, calc(100vh - 110px));
+  height: min(730px, calc(100dvh - 110px));
   background: #fff;
   border-radius: 14px;
   box-shadow: 0 24px 60px rgba(10,29,49,.35);
@@ -91,30 +92,11 @@
   width: calc(100vw - 48px);
   /* 110px = burbuja (56) + separación (12) + márgenes inferior/superior */
   height: calc(100vh - 110px);
+  height: calc(100dvh - 110px);
 }
-@media (max-width: 440px) { .ac-panel { width: calc(100vw - 24px); } }
-
-/* ---------- Móvil (teléfono): panel a pantalla completa tipo app nativa ---------- */
-/* Se usa `.ac-root .ac-panel` (especificidad 0,2,0) para ganarle a la regla
-   `.ac-panel { position: relative }` del aviso in-panel, que va más abajo. */
-@media (max-width: 480px) {
-  .ac-root .ac-panel,
-  .ac-root .ac-panel-amplio {
-    position: fixed;
-    inset: 0;
-    width: 100vw;
-    height: 100vh;
-    height: 100dvh;
-    max-height: none;
-    border-radius: 0;
-  }
-  /* Respeta el notch / barra inferior del teléfono. */
-  .ac-root .ac-header { padding-top: calc(14px + env(safe-area-inset-top)); }
-  .ac-root .ac-composer,
-  .ac-root .ac-tabbar { padding-bottom: calc(10px + env(safe-area-inset-bottom)); }
-  /* Con el panel abierto la burbuja estorba a pantalla completa: se oculta. */
-  .ac-abierto .ac-bubble { display: none; }
-}
+/* Phone layout (fullscreen panel, safe areas, keyboard inset) lives in the
+   `@media (max-width: 640px)` block at the END of this file: it must come after
+   the `.ac-panel-amplio …` rules to win every equal-specificity cascade fight. */
 
 .ac-header {
   background: var(--ac-primary); color: #fff;
@@ -283,6 +265,19 @@
 }
 .ac-chat-htxt { flex: 1; min-width: 0; }
 .ac-chat-htitle { font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Chip "AI" junto al nombre del bot: deja claro que atiende una IA. */
+.ac-chip-ai {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.22);
+  color: #fff;
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  vertical-align: 2px;
+}
 .ac-chat-hsub { font-size: 11.5px; opacity: .85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ac-chat-lock { font-size: 16px; opacity: .8; }
 
@@ -593,6 +588,9 @@
   box-shadow: 0 8px 24px rgba(10,29,49,.18);
   min-width: 150px; padding: 6px; display: flex; flex-direction: column; gap: 2px;
 }
+/* Incoming bubbles sit at the left edge: open their menu rightward so it
+   never clips off-screen on narrow viewports. */
+.ac-msg-other .ac-msg-menu { right: auto; left: 0; }
 .ac-msg-menu-emojis { display: flex; gap: 2px; padding-bottom: 4px; border-bottom: 1px solid var(--ac-cream2); }
 .ac-msg-menu-emojis button {
   background: none; border: none; font-size: 17px; cursor: pointer;
@@ -636,6 +634,55 @@
   display: flex; align-items: center; padding: 8px 2px;
 }
 .ac-comp-btn:hover { color: var(--ac-primary); }
+
+/* Staged attachment (WhatsApp-style): preview strip above the composer. */
+.ac-attach-preview {
+  display: flex; align-items: center; gap: 10px;
+  background: #fff; border-top: 1px solid var(--ac-border);
+  padding: 8px 12px;
+}
+.ac-attach-thumb {
+  width: 40px; height: 40px; border-radius: 8px; object-fit: cover;
+  border: 1px solid var(--ac-border); flex-shrink: 0;
+}
+.ac-attach-file-icon {
+  width: 40px; height: 40px; border-radius: 8px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--ac-cream2); color: var(--ac-primary); font-size: 20px;
+}
+.ac-attach-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.ac-attach-name {
+  font-size: 12px; font-weight: 600; color: var(--ac-ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ac-attach-size { font-size: 11px; color: var(--ac-gray); }
+.ac-attach-error {
+  background: var(--ac-red-bg, #FDECEA); color: var(--ac-red); font-size: 11.5px;
+  padding: 6px 12px; border-top: 1px solid var(--ac-border);
+}
+.ac-spin { animation: ac-rotate 1s linear infinite; }
+@keyframes ac-rotate { to { transform: rotate(360deg); } }
+
+/* WhatsApp-style emoji picker above the composer. */
+.ac-emoji-panel {
+  height: 216px; overflow-y: auto;
+  background: #fff; border-top: 1px solid var(--ac-border);
+  padding: 8px 10px 10px;
+}
+.ac-emoji-cat {
+  font-size: 10.5px; font-weight: 700; letter-spacing: .4px;
+  color: var(--ac-gray2); text-transform: uppercase;
+  margin: 8px 2px 4px;
+}
+.ac-emoji-grid { display: grid; grid-template-columns: repeat(8, 1fr); }
+.ac-emoji-btn {
+  background: none; border: none; cursor: pointer;
+  font-size: 21px; line-height: 1;
+  padding: 5px 0; border-radius: 8px;
+  transition: background .1s ease;
+}
+.ac-emoji-btn:hover { background: var(--ac-cream2); }
+.ac-comp-btn-activo { color: var(--ac-primary); }
 
 /* ---------- Typing ---------- */
 .ac-typing { display: flex; gap: 4px; padding: 12px 14px; }
@@ -996,4 +1043,51 @@
   height: 34px; width: auto; max-width: 160px; flex: none;
   object-fit: contain;
   background: transparent;
+}
+
+/* ---------- Phone layout (≤640px): fullscreen panel, app-like ---------- */
+/* Kept at the end of the file on purpose: several rules below tie with the
+   `.ac-panel-amplio …` desktop-scale rules on specificity (0,2,0 / 0,3,0),
+   so source order is what makes these win. `.ac-root .ac-panel` also needs
+   (0,2,0) to beat the in-panel aviso rule `.ac-panel { position: relative }`. */
+@media (max-width: 640px) {
+  .ac-root .ac-panel,
+  .ac-root .ac-panel-amplio {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    max-height: none;
+    border-radius: 0;
+    height: 100vh;
+    /* --ac-kb = on-screen keyboard height (visualViewport, set from App). */
+    height: calc(100dvh - var(--ac-kb, 0px));
+  }
+  /* Respect the phone notch / bottom bar (needs viewport-fit=cover on the host). */
+  .ac-root .ac-header { padding-top: calc(14px + env(safe-area-inset-top)); }
+  .ac-root .ac-chat-header { padding-top: calc(10px + env(safe-area-inset-top)); }
+  .ac-root .ac-tk-d-topbar { padding-top: calc(14px + env(safe-area-inset-top)); }
+  .ac-root .ac-composer,
+  .ac-root .ac-tabbar { padding-bottom: calc(10px + env(safe-area-inset-bottom)); }
+  /* The launcher bubble is in the way when the panel is fullscreen: hide it. */
+  .ac-abierto .ac-bubble { display: none; }
+
+  /* Chat at phone scale: wider bubbles, tighter gutters than the wide view. */
+  .ac-root .ac-panel-amplio .ac-msg { max-width: 85%; }
+  .ac-root .ac-panel-amplio .ac-chat-body { padding: 14px 12px; }
+  .ac-root .ac-panel-amplio .ac-chat-header { padding: 10px 12px calc(10px + 0px); padding-top: calc(10px + env(safe-area-inset-top)); }
+  .ac-root .ac-panel-amplio .ac-composer { padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); }
+  .ac-root .ac-panel-amplio .ac-composer-ctx { padding-left: 12px; padding-right: 12px; }
+  .ac-root .ac-panel-amplio .ac-feedback,
+  .ac-root .ac-panel-amplio .ac-oferta { margin-left: 0; }
+
+  /* Tickets at phone scale: single column, no fixed 320px track. */
+  .ac-root .ac-panel-amplio .ac-tk-lista { grid-template-columns: minmax(0, 1fr); padding: 12px 12px 20px; }
+  .ac-root .ac-panel-amplio .ac-tk-filtros { padding: 10px 12px 2px; }
+  .ac-root .ac-panel-amplio .ac-tk-tabs { padding: 0 8px; }
+  .ac-root .ac-panel-amplio .ac-tk-tab { flex: 1; padding: 12px 6px; }
+  .ac-root .ac-panel-amplio .ac-tk-d-body { padding: 16px; }
+  .ac-root .ac-panel-amplio .ac-tk-d-topbar { padding-left: 16px; padding-right: 16px; }
+
+  /* In-panel notice: clear the safe area too. */
+  .ac-aviso { bottom: calc(76px + env(safe-area-inset-bottom)); }
 }

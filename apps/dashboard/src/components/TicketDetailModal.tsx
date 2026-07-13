@@ -349,11 +349,11 @@ export function TicketDetailModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-navy-deep/50 flex items-center justify-center p-6"
+      className="fixed inset-0 z-50 bg-navy-deep/50 flex items-center justify-center p-3 sm:p-6"
       onClick={onClose}
     >
       <div
-        className="bg-white rounded-panel shadow-modal w-full max-w-5xl max-h-[90vh] overflow-y-auto"
+        className="bg-white rounded-panel shadow-modal w-full max-w-5xl max-h-[90dvh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header (sticky al hacer scroll) */}
@@ -416,7 +416,7 @@ export function TicketDetailModal({
         )}
 
         {/* Cuerpo: historial + sidebar */}
-        <div className="grid grid-cols-[1fr_240px] gap-6 p-6">
+        <div className="grid grid-cols-1 md:grid-cols-[1fr_240px] gap-6 p-4 sm:p-6">
           {/* Columna izquierda — descripción + historial */}
           <div className="min-w-0">
             {/* Descripción editable */}

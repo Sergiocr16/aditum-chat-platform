@@ -1,7 +1,13 @@
 import type { VNode } from 'preact';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { Conversation, Message, WidgetSessionResponse } from '@aditum-chat/shared';
-import { categoryLabel, formatTicketNumber, makeT, widgetMessages } from '@aditum-chat/shared';
+import {
+  categoryLabel,
+  EMOJI_CATEGORIES,
+  formatTicketNumber,
+  makeT,
+  widgetMessages,
+} from '@aditum-chat/shared';
 import {
   acceptAgentOffer,
   botFeedbackId,
@@ -32,6 +38,13 @@ import type { WidgetFirebase } from '../firebase.js';
 
 const EMOJIS = ['👍', '❤️', '😂', '😮', '🙏'];
 const PAGE = 30;
+// Storage rules cap attachments at 25 MB; reject earlier for better UX.
+const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 /** Convierte URLs del texto en enlaces clicables (resto queda como texto plano). */
 function linkificar(texto: string): (string | VNode)[] {
@@ -436,6 +449,50 @@ export function Chat({
     setOfertaPendiente(false);
   }, []);
 
+  // --- Indicador "el bot está pensando": se activa localmente al enviar en el
+  // canal bot y se apaga cuando llega la respuesta (o a los 45s de respaldo).
+  const [esperandoBot, setEsperandoBot] = useState(false);
+  const esperandoBotTimer = useRef<number | null>(null);
+  const marcarEsperandoBot = useCallback(() => {
+    setEsperandoBot(true);
+    if (esperandoBotTimer.current) window.clearTimeout(esperandoBotTimer.current);
+    esperandoBotTimer.current = window.setTimeout(() => setEsperandoBot(false), 45000);
+  }, []);
+  useEffect(
+    () => () => {
+      if (esperandoBotTimer.current) window.clearTimeout(esperandoBotTimer.current);
+    },
+    [],
+  );
+
+  // --- WhatsApp-style emoji picker in the composer.
+  const [showEmoji, setShowEmoji] = useState(false);
+
+  // --- WhatsApp-style staged attachment: pick → preview + caption → send as one message.
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [attachError, setAttachError] = useState<string | null>(null);
+  const attachErrorTimer = useRef<number | null>(null);
+  const pendingFileUrl = useMemo(
+    () =>
+      pendingFile && pendingFile.type.startsWith('image/')
+        ? URL.createObjectURL(pendingFile)
+        : null,
+    [pendingFile],
+  );
+  useEffect(
+    () => () => {
+      if (pendingFileUrl) URL.revokeObjectURL(pendingFileUrl);
+    },
+    [pendingFileUrl],
+  );
+  useEffect(
+    () => () => {
+      if (attachErrorTimer.current) window.clearTimeout(attachErrorTimer.current);
+    },
+    [],
+  );
+
   const bodyRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -463,13 +520,24 @@ export function Chat({
       // Se prependió una página: mantener el punto de lectura.
       el.scrollTop += el.scrollHeight - ajusteScroll.current;
       ajusteScroll.current = null;
-    } else if (prevUltimoId.current !== ultimoId || typingNames.length > 0) {
+    } else if (prevUltimoId.current !== ultimoId || typingNames.length > 0 || esperandoBot) {
       el.scrollTo({ top: el.scrollHeight });
       if (activa?.id) markRead(fb, session, activa.id);
     }
     prevUltimoId.current = ultimoId;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filas.length, typingNames.length]);
+  }, [filas.length, typingNames.length, esperandoBot]);
+
+  // Apagar el "pensando" cuando llega cualquier mensaje que no sea del usuario
+  // (respuesta del bot, o sistema si escaló).
+  useEffect(() => {
+    if (!esperandoBot) return;
+    const last = filas[filas.length - 1];
+    if (last && last.msg.data.sender.tipo !== 'user') {
+      setEsperandoBot(false);
+      if (esperandoBotTimer.current) window.clearTimeout(esperandoBotTimer.current);
+    }
+  }, [filas, esperandoBot]);
 
   // Auto-relleno del historial: si el contenido no llena el viewport y hay más
   // (conversaciones/segmentos anteriores), cargar páginas hacia atrás. El usuario
@@ -521,7 +589,9 @@ export function Chat({
       ? session.botConfig.nombre
       : (activa?.data.asignadoNombre ?? session.widgetConfig.titulo);
   const headerSub =
-    typingNames.length > 0
+    esperandoBot && estado === 'bot'
+      ? `${session.botConfig.nombre} ${t('chat.escribiendo')}`
+      : typingNames.length > 0
       ? `${typingNames.join(', ')} ${t('chat.escribiendo')}`
       : grupo
         ? participantesResumen(activa)
@@ -562,14 +632,43 @@ export function Chat({
   }
 
   async function submit() {
+    setShowEmoji(false);
     const texto = draft.trim();
-    if (!texto) return;
-    setDraft('');
     if (editando) {
+      if (!texto) return;
+      setDraft('');
       await editMessage(fb, editando.convId, editando.msg.id, texto, editando.msg.data.texto);
       setEditando(null);
       return;
     }
+    if (pendingFile) {
+      // Attachment + caption go out together as a single message.
+      if (uploading) return;
+      setUploading(true);
+      try {
+        const convId = await convParaEscribir();
+        setTyping(fb, session, convId, false);
+        await sendAttachment(
+          fb,
+          session,
+          convId,
+          session.nombre,
+          pendingFile,
+          grupo ? activa?.data.participantes : undefined,
+          texto,
+        );
+        setDraft('');
+        setPendingFile(null);
+        setReplyTo(null);
+        // Solo si el bot sigue atendiendo (si un agente tomó el chat, no responde el bot).
+        if (esBotCanal && estado === 'bot') marcarEsperandoBot();
+      } finally {
+        setUploading(false);
+      }
+      return;
+    }
+    if (!texto) return;
+    setDraft('');
     const convId = await convParaEscribir();
     setTyping(fb, session, convId, false);
     await sendMessage(
@@ -582,21 +681,42 @@ export function Chat({
       grupo ? activa?.data.participantes : undefined,
     );
     setReplyTo(null);
+    // El bot va a procesar este mensaje: mostrar el "escribiendo…" de una.
+    // Solo si el bot sigue atendiendo (si un agente tomó el chat, no responde el bot).
+    if (esBotCanal && estado === 'bot') marcarEsperandoBot();
   }
 
-  async function onFile(e: Event) {
+  /** Inserts an emoji at the caret position, keeping focus in the textarea. */
+  function insertEmoji(emoji: string) {
+    const el = inputRef.current;
+    const focused = el && (el.getRootNode() as ShadowRoot | Document).activeElement === el;
+    const start = focused ? (el.selectionStart ?? draft.length) : draft.length;
+    const end = focused ? (el.selectionEnd ?? draft.length) : draft.length;
+    onInputDraft(draft.slice(0, start) + emoji + draft.slice(end));
+    el?.focus();
+    requestAnimationFrame(() => {
+      if (!el) return;
+      const pos = start + emoji.length;
+      el.setSelectionRange(pos, pos);
+    });
+  }
+
+  function onFile(e: Event) {
     const file = (e.target as HTMLInputElement).files?.[0];
-    if (!file) return;
     (e.target as HTMLInputElement).value = '';
-    const convId = await convParaEscribir();
-    await sendAttachment(
-      fb,
-      session,
-      convId,
-      session.nombre,
-      file,
-      grupo ? activa?.data.participantes : undefined,
-    );
+    if (!file) return;
+    if (file.size > MAX_ATTACHMENT_BYTES) {
+      setAttachError(
+        session.idioma === 'es' ? 'El archivo supera los 25 MB' : 'File exceeds 25 MB',
+      );
+      if (attachErrorTimer.current) window.clearTimeout(attachErrorTimer.current);
+      attachErrorTimer.current = window.setTimeout(() => setAttachError(null), 4000);
+      return;
+    }
+    setAttachError(null);
+    // Stage it (replacing any previous pick); it is sent from submit() with the caption.
+    setPendingFile(file);
+    inputRef.current?.focus();
   }
 
   async function onChipAgente() {
@@ -620,7 +740,11 @@ export function Chat({
           {grupo ? (
             <span class="ac-icon">groups</span>
           ) : estado === 'bot' ? (
-            <span class="ac-icon">smart_toy</span>
+            session.botConfig.avatarUrl ? (
+              <img class="ac-avatar-img" src={session.botConfig.avatarUrl} alt="" />
+            ) : (
+              <span class="ac-icon">smart_toy</span>
+            )
           ) : activa?.data.asignadoFoto ? (
             <img class="ac-avatar-img" src={activa.data.asignadoFoto} alt="" />
           ) : activa?.data.asignadoNombre ? (
@@ -630,7 +754,10 @@ export function Chat({
           )}
         </div>
         <div class="ac-chat-htxt">
-          <div class="ac-chat-htitle">{headerTitle}</div>
+          <div class="ac-chat-htitle">
+            {headerTitle}
+            {!grupo && estado === 'bot' && <span class="ac-chip-ai">AI</span>}
+          </div>
           <div class="ac-chat-hsub">{headerSub}</div>
         </div>
         {grupo && activa?.id && (
@@ -752,7 +879,11 @@ export function Chat({
                   {!own && (
                     <div class="ac-msg-avatar" data-tipo={m.data.sender.tipo}>
                       {m.data.sender.tipo === 'bot' ? (
-                        <span class="ac-icon">smart_toy</span>
+                        session.botConfig.avatarUrl ? (
+                          <img class="ac-avatar-img" src={session.botConfig.avatarUrl} alt="" />
+                        ) : (
+                          <span class="ac-icon">smart_toy</span>
+                        )
                       ) : (
                         iniciales(m.data.sender.nombre)
                       )}
@@ -961,8 +1092,17 @@ export function Chat({
           </div>
         )}
 
-        {typingNames.length > 0 && (
+        {(typingNames.length > 0 || esperandoBot) && (
           <div class="ac-msg ac-msg-other">
+            {esperandoBot && (
+              <div class="ac-msg-avatar" data-tipo="bot">
+                {session.botConfig.avatarUrl ? (
+                  <img class="ac-avatar-img" src={session.botConfig.avatarUrl} alt="" />
+                ) : (
+                  <span class="ac-icon">smart_toy</span>
+                )}
+              </div>
+            )}
             <div class="ac-burbuja ac-typing">
               <span />
               <span />
@@ -1025,16 +1165,83 @@ export function Chat({
         </div>
       )}
 
+      {pendingFile && !editando && (
+        <div class="ac-attach-preview">
+          {pendingFileUrl ? (
+            <img class="ac-attach-thumb" src={pendingFileUrl} alt="" />
+          ) : (
+            <span class="ac-attach-file-icon ac-icon">
+              {pendingFile.type.startsWith('video/') ? 'movie' : 'description'}
+            </span>
+          )}
+          <div class="ac-attach-meta">
+            <span class="ac-attach-name">{pendingFile.name}</span>
+            <span class="ac-attach-size">{formatBytes(pendingFile.size)}</span>
+          </div>
+          <button
+            class="ac-icon-btn-dark"
+            aria-label={session.idioma === 'es' ? 'Quitar adjunto' : 'Remove attachment'}
+            onClick={() => setPendingFile(null)}
+            disabled={uploading}
+          >
+            <span class="ac-icon">close</span>
+          </button>
+        </div>
+      )}
+      {attachError && <div class="ac-attach-error">{attachError}</div>}
+
+      {showEmoji && (
+        <div class="ac-emoji-panel">
+          {EMOJI_CATEGORIES.map((cat) => (
+            <div key={cat.label.es}>
+              <div class="ac-emoji-cat">{cat.label[session.idioma]}</div>
+              <div class="ac-emoji-grid">
+                {cat.emojis.map((emoji) => (
+                  <button
+                    key={emoji}
+                    type="button"
+                    class="ac-emoji-btn"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => insertEmoji(emoji)}
+                  >
+                    {emoji}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div class="ac-composer">
-        <input type="file" ref={fileRef} hidden onChange={onFile} accept="image/*,video/*,.pdf,.doc,.docx,.txt" />
-        <button class="ac-comp-btn" aria-label="Adjuntar" onClick={() => fileRef.current?.click()}>
-          <span class="ac-icon">attach_file</span>
+        <input type="file" ref={fileRef} hidden onChange={onFile} accept="image/*,video/*,.pdf,.doc,.docx,.txt,.xlsx,.xls,.csv" />
+        <button
+          class={`ac-comp-btn${showEmoji ? ' ac-comp-btn-activo' : ''}`}
+          aria-label="Emoji"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => setShowEmoji((v) => !v)}
+        >
+          <span class="ac-icon">{showEmoji ? 'keyboard' : 'mood'}</span>
         </button>
+        {/* En el canal bot el clip es configurable por sitio (botConfig.adjuntos). */}
+        {!(esBotCanal && session.botConfig.adjuntos === false) && (
+          <button class="ac-comp-btn" aria-label="Adjuntar" onClick={() => fileRef.current?.click()}>
+            <span class="ac-icon">attach_file</span>
+          </button>
+        )}
         <textarea
           ref={inputRef}
           class="ac-input"
           rows={1}
-          placeholder={grupo ? t('chat.placeholderGrupo') : t('chat.placeholder')}
+          placeholder={
+            pendingFile && !editando
+              ? session.idioma === 'es'
+                ? 'Agregá un comentario…'
+                : 'Add a caption…'
+              : grupo
+                ? t('chat.placeholderGrupo')
+                : t('chat.placeholder')
+          }
           value={draft}
           onInput={(e) => onInputDraft((e.target as HTMLTextAreaElement).value)}
           onKeyDown={(e) => {
@@ -1044,8 +1251,15 @@ export function Chat({
             }
           }}
         />
-        <button class="ac-send" aria-label="Enviar" onClick={submit} disabled={!draft.trim()}>
-          <span class="ac-icon">{editando ? 'check' : 'send'}</span>
+        <button
+          class="ac-send"
+          aria-label="Enviar"
+          onClick={submit}
+          disabled={(!draft.trim() && !(pendingFile && !editando)) || uploading}
+        >
+          <span class={`ac-icon${uploading ? ' ac-spin' : ''}`}>
+            {uploading ? 'progress_activity' : editando ? 'check' : 'send'}
+          </span>
         </button>
       </div>
     </div>

@@ -4,6 +4,7 @@ import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { defineSecret } from 'firebase-functions/params';
 import { logger } from 'firebase-functions/v2';
 import type {
+  Attachment,
   BotConfig,
   Contact,
   Conversation,
@@ -13,7 +14,7 @@ import type {
   Ticket,
 } from '@aditum-chat/shared';
 import { formatTicketNumber } from '@aditum-chat/shared';
-import { db, FieldValue } from './lib/admin.js';
+import { db, FieldValue, storage } from './lib/admin.js';
 import { isWithinSchedule, resolveSiteConfig } from './lib/config.js';
 import { searchKb } from './kb.js';
 import { crearTicketInterno } from './tickets.js';
@@ -98,6 +99,11 @@ function buildSystemBlocks(ctx: BotContext): Anthropic.TextBlockParam[] {
       ? 'Sé breve y práctico: respuestas de 1 a 4 oraciones. Formato permitido: **negritas**, listas con "-" o "1.", y `código`; NO uses encabezados (#), tablas ni bloques de código. Si no podés resolver algo o el usuario pide hablar con una persona, usá la herramienta escalar_a_agente.'
       : 'Be brief and practical: 1-4 sentence replies. Allowed formatting: **bold**, "-" or "1." lists, and `code`; do NOT use headings (#), tables or code blocks. If you cannot resolve something or the user asks for a person, use the escalar_a_agente tool.',
   );
+  estables.push(
+    idioma === 'es'
+      ? 'Podés analizar imágenes, documentos PDF y hojas de cálculo (Excel/CSV, te llegan como texto) que el usuario adjunte. Si adjunta un video u otro archivo que no podés ver (aparece como "[adjunto: … — no se puede analizar]"), decilo con claridad y ofrecé pasarlo con un agente (escalar_a_agente).'
+      : 'You can analyze images, PDF documents and spreadsheets (Excel/CSV, delivered to you as text) the user attaches. If they attach a video or another file you cannot see (it appears as "[adjunto: … — no se puede analizar]"), say so clearly and offer to connect them with an agent (escalar_a_agente).',
+  );
 
   const variables: string[] = [];
   if (ctx.contact) {
@@ -127,15 +133,153 @@ function buildSystemBlocks(ctx: BotContext): Anthropic.TextBlockParam[] {
   return blocks;
 }
 
-function historyToMessages(msgs: Message[]): Anthropic.MessageParam[] {
-  const out: Anthropic.MessageParam[] = [];
-  for (const m of msgs) {
-    if (m.interno || m.sender.tipo === 'sistema') continue;
-    const role = m.sender.tipo === 'user' ? 'user' : 'assistant';
-    const texto = m.texto?.trim();
-    if (!texto) continue;
-    out.push({ role, content: texto });
+const VISION_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'] as const;
+type VisionImageType = (typeof VISION_IMAGE_TYPES)[number];
+const SPREADSHEET_TYPES = [
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
+  'application/vnd.ms-excel', // .xls
+  'text/csv',
+] as const;
+const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+const MAX_PDF_BYTES = 10 * 1024 * 1024;
+const MAX_SHEET_BYTES = 5 * 1024 * 1024;
+const MAX_SHEET_CHARS = 30_000;
+const MAX_IMAGES_PER_TURN = 3;
+const MAX_PDFS_PER_TURN = 1;
+const MAX_SHEETS_PER_TURN = 1;
+
+/** Convierte un Excel/CSV a texto (CSV por hoja) acotado para el modelo. */
+async function spreadsheetToText(buffer: Buffer, mime: string, nombre: string): Promise<string> {
+  let contenido: string;
+  if (mime === 'text/csv') {
+    contenido = buffer.toString('utf8');
+  } else {
+    const XLSX = await import('xlsx');
+    const wb = XLSX.read(buffer, { type: 'buffer' });
+    contenido = wb.SheetNames.map(
+      (hoja) => `Hoja "${hoja}":\n${XLSX.utils.sheet_to_csv(wb.Sheets[hoja])}`,
+    ).join('\n\n');
   }
+  if (contenido.length > MAX_SHEET_CHARS) {
+    contenido = `${contenido.slice(0, MAX_SHEET_CHARS)}\n… (contenido truncado)`;
+  }
+  return `[Contenido de "${nombre}"]\n${contenido}`;
+}
+
+/** Placeholder textual para adjuntos que no viajan al modelo. */
+function attachmentPlaceholder(a: Attachment): string {
+  return a.tipo === 'imagen' ? '[imagen adjunta]' : `[archivo adjunto: ${a.nombre ?? a.tipo}]`;
+}
+
+/**
+ * Descarga un adjunto del turno actual y lo convierte en bloque para el modelo:
+ * imágenes → visión, PDF → documento. Devuelve null si el tipo no es
+ * analizable, excede los topes o la descarga falla (el caller pone placeholder).
+ */
+async function attachmentBlock(
+  a: Attachment,
+  counters: { imagenes: number; pdfs: number; hojas: number },
+): Promise<Anthropic.ContentBlockParam | null> {
+  const mime = a.mimeType ?? '';
+  const esImagen = (VISION_IMAGE_TYPES as readonly string[]).includes(mime);
+  const esPdf = mime === 'application/pdf';
+  const esHoja = (SPREADSHEET_TYPES as readonly string[]).includes(mime);
+  if ((!esImagen && !esPdf && !esHoja) || !a.storagePath) return null;
+  if (esImagen && counters.imagenes >= MAX_IMAGES_PER_TURN) return null;
+  if (esPdf && counters.pdfs >= MAX_PDFS_PER_TURN) return null;
+  if (esHoja && counters.hojas >= MAX_SHEETS_PER_TURN) return null;
+  try {
+    const file = storage.bucket().file(a.storagePath);
+    const [meta] = await file.getMetadata();
+    const size = Number(meta.size ?? 0);
+    const maxBytes = esImagen ? MAX_IMAGE_BYTES : esPdf ? MAX_PDF_BYTES : MAX_SHEET_BYTES;
+    if (size > maxBytes) return null;
+    const [buffer] = await file.download();
+    if (esImagen) {
+      counters.imagenes++;
+      return {
+        type: 'image',
+        source: {
+          type: 'base64',
+          media_type: mime as VisionImageType,
+          data: buffer.toString('base64'),
+        },
+      };
+    }
+    if (esHoja) {
+      counters.hojas++;
+      return {
+        type: 'text',
+        text: await spreadsheetToText(buffer, mime, a.nombre ?? 'hoja de cálculo'),
+      };
+    }
+    counters.pdfs++;
+    return {
+      type: 'document',
+      source: { type: 'base64', media_type: 'application/pdf', data: buffer.toString('base64') },
+    };
+  } catch (err) {
+    logger.warn('Adjunto no descargable para el bot', {
+      path: a.storagePath,
+      message: (err as Error).message,
+    });
+    return null;
+  }
+}
+
+/**
+ * Historial para el modelo. Los adjuntos del TURNO ACTUAL (la cola contigua de
+ * mensajes del usuario tras la última respuesta) se envían como bloques de
+ * imagen/documento con topes de tamaño y cantidad; los de mensajes anteriores
+ * quedan como texto para no re-pagar tokens de media en cada turno.
+ */
+async function buildHistory(msgs: Message[]): Promise<Anthropic.MessageParam[]> {
+  const relevantes = msgs.filter((m) => !m.interno && m.sender.tipo !== 'sistema');
+
+  // El turno actual empieza después del último mensaje que no es del usuario.
+  let inicioTurno = 0;
+  for (let i = relevantes.length - 1; i >= 0; i--) {
+    if (relevantes[i].sender.tipo !== 'user') {
+      inicioTurno = i + 1;
+      break;
+    }
+  }
+
+  const counters = { imagenes: 0, pdfs: 0, hojas: 0 };
+  const out: Anthropic.MessageParam[] = [];
+
+  for (let i = 0; i < relevantes.length; i++) {
+    const m = relevantes[i];
+    const role = m.sender.tipo === 'user' ? 'user' : 'assistant';
+    const texto = m.texto?.trim() ?? '';
+    const adjuntos = m.adjuntos ?? [];
+
+    if (adjuntos.length === 0) {
+      if (texto) out.push({ role, content: texto });
+      continue;
+    }
+
+    const bloques: Anthropic.ContentBlockParam[] = [];
+    const marcadores: string[] = [];
+    if (role === 'user' && i >= inicioTurno) {
+      for (const a of adjuntos) {
+        const bloque = await attachmentBlock(a, counters);
+        if (bloque) bloques.push(bloque);
+        else marcadores.push(`[adjunto: ${a.nombre ?? a.tipo} — no se puede analizar]`);
+      }
+    } else {
+      marcadores.push(...adjuntos.map(attachmentPlaceholder));
+    }
+
+    const textoFinal = [texto, ...marcadores].filter(Boolean).join('\n');
+    if (bloques.length > 0) {
+      if (textoFinal) bloques.push({ type: 'text', text: textoFinal });
+      out.push({ role, content: bloques });
+    } else if (textoFinal) {
+      out.push({ role, content: textoFinal });
+    }
+  }
+
   // La API exige empezar con user.
   while (out.length && out[0].role !== 'user') out.shift();
   return out.slice(-20);
@@ -151,7 +295,7 @@ async function runBot(
     .orderBy('createdAt', 'asc')
     .limitToLast(30)
     .get();
-  const history = historyToMessages(msgsSnap.docs.map((d) => d.data() as Message));
+  const history = await buildHistory(msgsSnap.docs.map((d) => d.data() as Message));
   if (history.length === 0) return { texto: '' };
 
   const messages: Anthropic.MessageParam[] = [...history];

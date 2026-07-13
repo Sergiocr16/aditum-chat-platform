@@ -27,9 +27,12 @@ interface Props {
   onSelect(ticketId: string | null): void;
   /** Cierra todo el panel del widget (X del header, igual que en el chat). */
   onClose?(): void;
+  /** Mobile: back arrow on the left (→ list) + close on the right, same contract
+      as the chat header. Desktop right pane passes false to keep the single `‹`. */
+  mostrarVolver?: boolean;
 }
 
-export function Tickets({ fb, session, ticketId, onSelect, onClose }: Props) {
+export function Tickets({ fb, session, ticketId, onSelect, onClose, mostrarVolver = true }: Props) {
   const t = makeT(widgetMessages, session.idioma);
   const [tab, setTab] = useState<Tab>('mis');
   const [filtro, setFiltro] = useState<SubFiltro>('todos');
@@ -61,6 +64,7 @@ export function Tickets({ fb, session, ticketId, onSelect, onClose }: Props) {
         ticket={seleccionado}
         onBack={() => onSelect(null)}
         onClose={onClose}
+        mostrarVolver={mostrarVolver}
       />
     );
   }
@@ -159,12 +163,14 @@ function TicketDetail({
   ticket,
   onBack,
   onClose,
+  mostrarVolver = true,
 }: {
   fb: WidgetFirebase;
   session: WidgetSessionResponse;
   ticket: Doc<Ticket>;
   onBack(): void;
   onClose?(): void;
+  mostrarVolver?: boolean;
 }) {
   const t = makeT(widgetMessages, session.idioma);
   const [eventos, setEventos] = useState<Doc<TicketEvent>[]>([]);
@@ -179,8 +185,14 @@ function TicketDetail({
 
   return (
     <div class="ac-tk-detalle">
-      {/* Header estilo chat: avatar de ticket + número/estado + cerrar (<) */}
+      {/* Header estilo chat: volver (←) a la lista + asunto/estado + cerrar.
+          En el panel derecho de escritorio (mostrarVolver=false) queda solo `‹`. */}
       <div class="ac-tk-d-topbar">
+        {mostrarVolver && (
+          <button class="ac-icon-btn" aria-label="Volver" onClick={onBack}>
+            <span class="ac-icon">arrow_back</span>
+          </button>
+        )}
         <div class="ac-chat-avatar ac-tk-d-ava">
           <span class="ac-icon">confirmation_number</span>
         </div>
@@ -190,9 +202,21 @@ function TicketDetail({
             {ticketStatusLabels[session.idioma][d.estado]}
           </span>
         </div>
-        <button class="ac-icon-btn" aria-label="Cerrar" onClick={() => (onClose ? onClose() : onBack())}>
-          <span class="ac-icon">chevron_left</span>
-        </button>
+        {mostrarVolver ? (
+          onClose && (
+            <button class="ac-icon-btn" aria-label="Cerrar" onClick={onClose}>
+              <span class="ac-icon">close</span>
+            </button>
+          )
+        ) : (
+          <button
+            class="ac-icon-btn"
+            aria-label="Cerrar"
+            onClick={() => (onClose ? onClose() : onBack())}
+          >
+            <span class="ac-icon">chevron_left</span>
+          </button>
+        )}
       </div>
 
       <div class="ac-tk-d-body">

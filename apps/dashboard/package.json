@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@aditum-chat/shared": "workspace:*",
+    "@aditum-chat/widget": "workspace:^",
     "firebase": "^11.10.0",
     "next": "^15.3.5",
     "react": "^19.1.0",

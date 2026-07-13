@@ -103,15 +103,15 @@ export function EquipoTab() {
       </div>
 
       {/* Tabla de miembros */}
-      <div className="bg-white border border-warm-border shadow-card rounded-lg overflow-hidden">
+      <div className="bg-white border border-warm-border shadow-card rounded-lg overflow-x-auto">
         <table className="w-full text-left">
           <thead>
             <tr className="border-b border-cream-3 text-[10px] font-bold tracking-wider text-warm-gray uppercase">
               <th className="px-4 py-3">{m.miembro}</th>
-              <th className="px-4 py-3">{m.correo}</th>
+              <th className="px-4 py-3 hidden md:table-cell">{m.correo}</th>
               <th className="px-4 py-3">{m.rol}</th>
-              <th className="px-4 py-3">{m.estado}</th>
-              <th className="px-4 py-3">{m.carga}</th>
+              <th className="px-4 py-3 hidden md:table-cell">{m.estado}</th>
+              <th className="px-4 py-3 hidden md:table-cell">{m.carga}</th>
               <th className="px-4 py-3">{m.activo}</th>
               <th className="px-4 py-3" />
             </tr>
@@ -142,7 +142,9 @@ export function EquipoTab() {
                       </div>
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-[12px] text-warm-gray">{p.email}</td>
+                  <td className="px-4 py-3 text-[12px] text-warm-gray hidden md:table-cell">
+                    {p.email}
+                  </td>
                   <td className="px-4 py-3">
                     <span
                       className={`text-[10px] font-bold tracking-wider px-2 py-0.5 rounded-full ${
@@ -152,7 +154,7 @@ export function EquipoTab() {
                       {(p.rol === 'admin' ? m.admin : m.agente).toUpperCase()}
                     </span>
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-3 hidden md:table-cell">
                     <span className="flex items-center gap-1.5 text-[11.5px] text-warm-gray">
                       <span
                         className={`h-2 w-2 rounded-full ${enLinea ? 'bg-ok' : 'bg-warm-gray-4'}`}
@@ -160,7 +162,7 @@ export function EquipoTab() {
                       {enLinea ? m.enLinea : p.presencia === 'ausente' ? m.ausente : m.desconectado}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-[11.5px] text-warm-gray">
+                  <td className="px-4 py-3 text-[11.5px] text-warm-gray hidden md:table-cell">
                     {m.cargaFmt(p.carga?.chats ?? 0, p.carga?.tickets ?? 0)}
                   </td>
                   <td className="px-4 py-3">
@@ -192,8 +194,8 @@ export function EquipoTab() {
           <thead>
             <tr className="border-b border-cream-3 text-[10px] font-bold tracking-wider text-warm-gray uppercase">
               <th className="py-2" />
-              <th className="py-2 w-24 text-center">{m.admin}</th>
-              <th className="py-2 w-24 text-center">{m.agente}</th>
+              <th className="py-2 w-14 sm:w-24 text-center">{m.admin}</th>
+              <th className="py-2 w-14 sm:w-24 text-center">{m.agente}</th>
             </tr>
           </thead>
           <tbody>

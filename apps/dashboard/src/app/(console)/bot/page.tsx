@@ -6,6 +6,11 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { BotConfig, Idioma, KbDoc, KbDocEstado, WidgetConfig } from '@aditum-chat/shared';
+import { EMOJI_CATEGORIES, makeT, widgetMessages } from '@aditum-chat/shared';
+import { renderMarkdown } from '@/components/ConversationView';
+// The test chat reuses the REAL widget stylesheet so it always looks identical.
+import '@aditum-chat/widget/src/ui/styles.css';
+import './probar-widget.css';
 import { useAuth } from '@/lib/auth';
 import { useSiteFilter } from '@/components/Shell';
 import { useSites, type Row } from '@/lib/data';
@@ -65,14 +70,19 @@ const M = {
     nombrePrompt: 'Nombre para mostrar:',
     kbError: 'No se pudo agregar el documento. Probá de nuevo.',
     identidad: 'Identidad del bot',
+    identidadNombre: 'Nombre del bot',
+    identidadNombreHint: 'Aparece en el encabezado del chat y junto a cada mensaje',
     identidadTitulo: 'Imagen del bot en el chat',
-    identidadDesc: 'Aparece junto a cada mensaje del asistente',
+    identidadDesc: 'Se muestra en el encabezado y en cada mensaje del asistente',
     cambiar: 'Cambiar',
     subiendo: 'Subiendo…',
     comportamiento: 'Comportamiento',
     escalar: 'Escalar a agente si no puede resolver',
     escalarPre: 'Tras',
     escalarPost: 'intentos sin resolver',
+    adjuntos: 'Permitir adjuntar archivos',
+    adjuntosHint:
+      'El usuario puede mandar imágenes, PDF y Excel/CSV en el chat del bot; el asistente los analiza',
     saludoBot: 'Saludo inicial',
     saludoBotSub: 'Se muestra al abrir el chat del asistente',
     saludoBotHint: 'Vacío = saludo por defecto del bot',
@@ -131,14 +141,19 @@ const M = {
     nombrePrompt: 'Display name:',
     kbError: 'The document could not be added. Try again.',
     identidad: 'Bot identity',
+    identidadNombre: 'Bot name',
+    identidadNombreHint: 'Shown in the chat header and next to each message',
     identidadTitulo: 'Bot image in the chat',
-    identidadDesc: 'Shown next to each assistant message',
+    identidadDesc: 'Shown in the header and next to each assistant message',
     cambiar: 'Change',
     subiendo: 'Uploading…',
     comportamiento: 'Behavior',
     escalar: 'Escalate to an agent when it cannot resolve',
     escalarPre: 'After',
     escalarPost: 'unresolved attempts',
+    adjuntos: 'Allow file attachments',
+    adjuntosHint:
+      'Users can send images, PDFs and Excel/CSV files in the bot chat; the assistant analyzes them',
     saludoBot: 'Initial greeting',
     saludoBotSub: 'Shown when the assistant chat opens',
     saludoBotHint: "Empty = the bot's default greeting",
@@ -173,6 +188,7 @@ const DEFAULT_BOT: BotConfig = {
   responderFueraDeHorario: true,
   crearTicketsAutomaticamente: true,
   saludo: '',
+  adjuntos: true,
 };
 
 const MAX_INSTRUCCIONES = 10000;
@@ -264,7 +280,11 @@ export default function BotPage() {
     if (!siteId || saving) return;
     setSaving(true);
     try {
-      await guardarBotOverride(siteId, override);
+      // Un nombre vacío rompería el prompt y el header del widget: se descarta
+      // el override y el sitio vuelve a heredar el nombre global.
+      const limpio = { ...override };
+      if (limpio.nombre !== undefined && !limpio.nombre.trim()) delete limpio.nombre;
+      await guardarBotOverride(siteId, limpio);
       await guardarWidgetMensajes(siteId, mensajes);
       setDirty(false);
     } finally {
@@ -341,6 +361,9 @@ export default function BotPage() {
           <div className="flex flex-col gap-4 min-w-0">
             <CardIdentidad
               siteId={siteId}
+              nombre={efectivo.nombre}
+              nombreGlobal={esGlobal('nombre')}
+              onNombre={(v) => setCampo('nombre', v)}
               avatarUrl={efectivo.avatarUrl}
               global={esGlobal('avatarUrl')}
               onAvatar={(url) => setCampo('avatarUrl', url)}
@@ -358,11 +381,12 @@ export default function BotPage() {
               override={override}
               avatarUrl={efectivo.avatarUrl}
               nombre={efectivo.nombre}
-              saludo={
+              saludo={(
                 mensajeEfectivo('mensajeAI') ||
                 efectivo.saludo ||
                 m.probarSaludoDefault.replace('{nombre}', efectivo.nombre)
-              }
+              ).replace('{nombre}', agent?.perfil?.nombre?.split(' ')[0] ?? 'admin')}
+              idioma={idioma}
               m={m}
             />
           </div>
@@ -670,12 +694,18 @@ function CardKb({
 
 function CardIdentidad({
   siteId,
+  nombre,
+  nombreGlobal,
+  onNombre,
   avatarUrl,
   global,
   onAvatar,
   m,
 }: {
   siteId: string | null;
+  nombre: string;
+  nombreGlobal: boolean;
+  onNombre(v: string): void;
   avatarUrl?: string;
   global: boolean;
   onAvatar(url: string): void;
@@ -696,15 +726,26 @@ function CardIdentidad({
   };
 
   return (
-    <Card
-      titulo={
-        <>
-          {m.identidad}
-          <GlobalTag show={global} m={m} />
-        </>
-      }
-    >
-      <div className="flex items-center gap-3">
+    <Card titulo={m.identidad}>
+      {/* Nombre del bot */}
+      <div className="mb-4">
+        <div className="flex items-center gap-2 mb-1.5">
+          <span className="text-[10px] font-bold tracking-wider text-warm-gray-2">
+            {m.identidadNombre.toUpperCase()}
+          </span>
+          <GlobalTag show={nombreGlobal} m={m} />
+        </div>
+        <input
+          value={nombre}
+          onChange={(e) => onNombre(e.target.value)}
+          maxLength={40}
+          className="w-full border border-warm-border rounded-lg bg-cream-0 px-3 py-2 text-[12.5px] outline-none focus:border-navy focus:bg-white transition-colors"
+        />
+        <div className="text-[10.5px] text-warm-gray-2 mt-1">{m.identidadNombreHint}</div>
+      </div>
+
+      {/* Imagen del bot */}
+      <div className="flex items-center gap-3 pt-3 border-t border-cream-3">
         <div className="h-12 w-12 rounded-full flex-none overflow-hidden bg-ai-bg text-ai flex items-center justify-center">
           {avatarUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
@@ -714,7 +755,10 @@ function CardIdentidad({
           )}
         </div>
         <div className="flex-1 min-w-0">
-          <div className="text-[12.5px] font-semibold">{m.identidadTitulo}</div>
+          <div className="text-[12.5px] font-semibold flex items-center gap-2">
+            {m.identidadTitulo}
+            <GlobalTag show={global} m={m} />
+          </div>
           <div className="text-[11px] text-warm-gray-2">{m.identidadDesc}</div>
         </div>
         <button
@@ -820,6 +864,14 @@ function CardComportamiento({
           onChange={(v) => setCampo('escalarTrasIntentos', v ? intentos : 0)}
           m={m}
         />
+        <FilaToggle
+          label={m.adjuntos}
+          hint={m.adjuntosHint}
+          checked={efectivo.adjuntos !== false}
+          global={esGlobal('adjuntos')}
+          onChange={(v) => setCampo('adjuntos', v)}
+          m={m}
+        />
       </div>
 
       {/* Tono de respuesta */}
@@ -897,7 +949,12 @@ const TEST_IMG_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 const TEST_IMG_MAX_BYTES = 4 * 1024 * 1024;
 
 function horaAhora(): string {
-  return new Date().toLocaleTimeString('es-CR', { hour: '2-digit', minute: '2-digit' });
+  // Mismo formato 24h que usa el widget (formatTime).
+  return new Date().toLocaleTimeString('es-CR', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
 }
 
 function fileToBase64(file: File): Promise<string> {
@@ -909,13 +966,14 @@ function fileToBase64(file: File): Promise<string> {
   });
 }
 
-/** Réplica del chat del widget: saludo, burbujas, adjuntos y multi-turno. */
+/** Réplica exacta del chat del widget: mismo CSS (importado del widget) y mismo markup. */
 function CardProbar({
   siteId,
   override,
   avatarUrl,
   nombre,
   saludo,
+  idioma,
   m,
 }: {
   siteId: string | null;
@@ -923,15 +981,31 @@ function CardProbar({
   avatarUrl?: string;
   nombre: string;
   saludo: string;
+  idioma: Idioma;
   m: Msgs;
 }) {
+  const t = makeT(widgetMessages, idioma);
   const [msgs, setMsgs] = useState<TestMsg[]>([]);
   const [pregunta, setPregunta] = useState('');
-  const [adjunto, setAdjunto] = useState<File | null>(null);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [cargando, setCargando] = useState(false);
   const [aviso, setAviso] = useState<string | null>(null);
+  const [showEmoji, setShowEmoji] = useState(false);
+  // Feedback "¿te sirvió?" local (solo visual, como en el widget real).
+  const [votos, setVotos] = useState<Record<number, boolean>>({});
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const pendingFileUrl = useMemo(
+    () => (pendingFile ? URL.createObjectURL(pendingFile) : null),
+    [pendingFile],
+  );
+  useEffect(
+    () => () => {
+      if (pendingFileUrl) URL.revokeObjectURL(pendingFileUrl);
+    },
+    [pendingFileUrl],
+  );
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
@@ -948,19 +1022,35 @@ function CardProbar({
       setAviso(m.probarImgGrande);
       return;
     }
-    setAdjunto(file);
+    setPendingFile(file);
+    inputRef.current?.focus();
+  };
+
+  const insertEmoji = (emoji: string) => {
+    const el = inputRef.current;
+    const focused = el && document.activeElement === el;
+    const start = focused ? (el.selectionStart ?? pregunta.length) : pregunta.length;
+    const end = focused ? (el.selectionEnd ?? pregunta.length) : pregunta.length;
+    setPregunta(pregunta.slice(0, start) + emoji + pregunta.slice(end));
+    el?.focus();
+    requestAnimationFrame(() => {
+      if (!el) return;
+      const pos = start + emoji.length;
+      el.setSelectionRange(pos, pos);
+    });
   };
 
   const enviar = async () => {
+    setShowEmoji(false);
     const q = pregunta.trim();
-    if ((!q && !adjunto) || !siteId || cargando) return;
+    if ((!q && !pendingFile) || !siteId || cargando) return;
     // Historial para el modelo: la conversación de prueba hasta acá, sin errores.
     const historial = msgs
       .filter((x): x is TestMsg & { rol: 'user' | 'bot' } => x.rol !== 'error')
       .map((x) => ({ rol: x.rol, texto: x.texto || `[${m.probarImagen}]` }));
-    const file = adjunto;
+    const file = pendingFile;
     setPregunta('');
-    setAdjunto(null);
+    setPendingFile(null);
     setMsgs((prev) => [
       ...prev,
       { rol: 'user', texto: q, imgUrl: file ? URL.createObjectURL(file) : undefined, hora: horaAhora() },
@@ -977,19 +1067,54 @@ function CardProbar({
     }
   };
 
+  const avatarBot = avatarUrl ? (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img className="ac-avatar-img" src={avatarUrl} alt="" />
+  ) : (
+    <span className="ac-icon">smart_toy</span>
+  );
+
   const burbujaBot = (texto: string, error: boolean, hora: string, key: React.Key) => (
-    <div key={key} className="flex items-end gap-2 max-w-[88%]">
-      <BotAvatar avatarUrl={avatarUrl} />
-      <div
-        className={`text-[12.5px] rounded-lg rounded-bl-sm px-3 py-2 whitespace-pre-wrap shadow-card ${
-          error ? 'bg-danger-bg text-danger' : 'bg-white text-ink'
-        }`}
-      >
-        {texto}
-        <span className="block text-right text-[9.5px] text-warm-gray-2 mt-1">{hora}</span>
+    <div key={key} className="ac-msg ac-msg-other">
+      <div className="ac-msg-avatar" data-tipo="bot">
+        {avatarBot}
+      </div>
+      <div className="ac-burbuja">
+        <div className="ac-msg-texto" style={error ? { color: 'var(--ac-red)' } : undefined}>
+          {renderMarkdown(texto)}
+        </div>
+        {hora && <div className="ac-msg-meta">{hora}</div>}
       </div>
     </div>
   );
+
+  const feedbackRow = (i: number) =>
+    votos[i] !== undefined ? (
+      <div key={`fb${i}`} className="ac-feedback ac-feedback-enviado">
+        <span className="ac-icon">{votos[i] ? 'thumb_up' : 'thumb_down'}</span>
+        {t('bot.feedbackGracias')}
+      </div>
+    ) : (
+      <div key={`fb${i}`} className="ac-feedback">
+        <span className="ac-feedback-pregunta">{t('bot.feedbackPregunta')}</span>
+        <button
+          type="button"
+          className="ac-feedback-btn"
+          onClick={() => setVotos((v) => ({ ...v, [i]: true }))}
+        >
+          <span className="ac-icon">thumb_up</span>
+          {t('bot.feedbackSi')}
+        </button>
+        <button
+          type="button"
+          className="ac-feedback-btn"
+          onClick={() => setVotos((v) => ({ ...v, [i]: false }))}
+        >
+          <span className="ac-icon">thumb_down</span>
+          {t('bot.feedbackNo')}
+        </button>
+      </div>
+    );
 
   return (
     <Card
@@ -1001,132 +1126,168 @@ function CardProbar({
       }
     >
       <div className="rounded-card border border-warm-border overflow-hidden">
-        {/* Header del widget: avatar + nombre del bot + estado */}
-        <div className="bg-navy text-white px-3.5 py-2.5 flex items-center gap-2.5">
-          <div className="h-9 w-9 rounded-full flex-none overflow-hidden bg-ai text-white flex items-center justify-center">
-            {avatarUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={avatarUrl} alt="" className="h-full w-full object-cover" />
-            ) : (
-              <span className="msr text-[19px]">smart_toy</span>
-            )}
-          </div>
-          <div className="min-w-0">
-            <div className="text-[13px] font-bold truncate">{nombre}</div>
-            <div className="text-[10.5px] text-white/70 flex items-center gap-1">
-              <span className="h-1.5 w-1.5 rounded-full bg-ok inline-block" />
-              {m.probarEnLinea}
-            </div>
-          </div>
-        </div>
-
-        {/* Cuerpo del chat */}
-        <div ref={scrollRef} className="h-72 overflow-y-auto bg-cream-1 p-3 flex flex-col gap-2.5">
-          {burbujaBot(saludo, false, '', 'saludo')}
-          {msgs.map((msg, i) =>
-            msg.rol === 'user' ? (
-              <div
-                key={i}
-                className="self-end max-w-[80%] bg-[#D9FDD3] text-ink text-[12.5px] rounded-lg rounded-br-sm px-3 py-2 shadow-card"
-              >
-                {msg.imgUrl && (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={msg.imgUrl} alt="" className="rounded-lg max-h-40 mb-1.5" />
-                )}
-                {msg.texto && <span className="whitespace-pre-wrap">{msg.texto}</span>}
-                <span className="block text-right text-[9.5px] text-warm-gray-2 mt-1">{msg.hora}</span>
+        <div className="ac-root ac-probar">
+          <div className="ac-chat">
+            {/* Header idéntico al widget: avatar + nombre + chip AI + estado. */}
+            <div className="ac-chat-header">
+              <div className="ac-chat-avatar">{avatarBot}</div>
+              <div className="ac-chat-htxt">
+                <div className="ac-chat-htitle">
+                  {nombre}
+                  <span className="ac-chip-ai">AI</span>
+                </div>
+                <div className="ac-chat-hsub">
+                  {cargando ? `${nombre} ${t('chat.escribiendo')}` : m.probarEnLinea}
+                </div>
               </div>
-            ) : (
-              burbujaBot(msg.texto, msg.rol === 'error', msg.hora, i)
-            ),
-          )}
-          {cargando && (
-            <div className="flex items-end gap-2">
-              <BotAvatar avatarUrl={avatarUrl} />
-              <div className="bg-white rounded-lg rounded-bl-sm px-3.5 py-3 shadow-card flex gap-1">
-                {[0, 1, 2].map((d) => (
-                  <span
-                    key={d}
-                    className="h-1.5 w-1.5 rounded-full bg-warm-gray-3 animate-bounce"
-                    style={{ animationDelay: `${d * 150}ms` }}
-                  />
+            </div>
+
+            <div className="ac-chat-body" ref={scrollRef}>
+              {burbujaBot(saludo, false, '', 'saludo')}
+              {msgs.map((msg, i) =>
+                msg.rol === 'user' ? (
+                  <div key={i} className="ac-msg ac-msg-own">
+                    <div className="ac-burbuja ac-burbuja-own">
+                      {msg.imgUrl && (
+                        <div className="ac-adjuntos">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img className="ac-adj-img" src={msg.imgUrl} alt="" />
+                        </div>
+                      )}
+                      {msg.texto && <div className="ac-msg-texto">{msg.texto}</div>}
+                      <div className="ac-msg-meta">
+                        {msg.hora}
+                        <span className="ac-icon ac-check">done_all</span>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div key={i}>
+                    {burbujaBot(msg.texto, msg.rol === 'error', msg.hora, `b${i}`)}
+                    {msg.rol === 'bot' && feedbackRow(i)}
+                  </div>
+                ),
+              )}
+              {cargando && (
+                <div className="ac-msg ac-msg-other">
+                  <div className="ac-msg-avatar" data-tipo="bot">
+                    {avatarBot}
+                  </div>
+                  <div className="ac-burbuja ac-typing">
+                    <span />
+                    <span />
+                    <span />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {pendingFile && (
+              <div className="ac-attach-preview">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                {pendingFileUrl && <img className="ac-attach-thumb" src={pendingFileUrl} alt="" />}
+                <div className="ac-attach-meta">
+                  <span className="ac-attach-name">{pendingFile.name}</span>
+                  <span className="ac-attach-size">{formatTestBytes(pendingFile.size)}</span>
+                </div>
+                <button
+                  className="ac-icon-btn-dark"
+                  aria-label="Quitar adjunto"
+                  onClick={() => setPendingFile(null)}
+                >
+                  <span className="ac-icon">close</span>
+                </button>
+              </div>
+            )}
+            {aviso && <div className="ac-attach-error">{aviso}</div>}
+
+            {showEmoji && (
+              <div className="ac-emoji-panel">
+                {EMOJI_CATEGORIES.map((cat) => (
+                  <div key={cat.label.es}>
+                    <div className="ac-emoji-cat">{cat.label[idioma]}</div>
+                    <div className="ac-emoji-grid">
+                      {cat.emojis.map((emoji) => (
+                        <button
+                          key={emoji}
+                          type="button"
+                          className="ac-emoji-btn"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => insertEmoji(emoji)}
+                        >
+                          {emoji}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 ))}
               </div>
+            )}
+
+            <div className="ac-composer">
+              <input
+                ref={fileRef}
+                type="file"
+                accept={TEST_IMG_TYPES.join(',')}
+                hidden
+                onChange={(e) => {
+                  elegirAdjunto(e.target.files?.[0] ?? null);
+                  e.target.value = '';
+                }}
+              />
+              <button
+                className={`ac-comp-btn${showEmoji ? ' ac-comp-btn-activo' : ''}`}
+                aria-label="Emoji"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => setShowEmoji((v) => !v)}
+              >
+                <span className="ac-icon">{showEmoji ? 'keyboard' : 'mood'}</span>
+              </button>
+              <button
+                className="ac-comp-btn"
+                aria-label={m.probarAdjuntar}
+                title={m.probarAdjuntar}
+                onClick={() => fileRef.current?.click()}
+              >
+                <span className="ac-icon">attach_file</span>
+              </button>
+              <textarea
+                ref={inputRef}
+                className="ac-input"
+                rows={1}
+                value={pregunta}
+                onChange={(e) => setPregunta(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    enviar();
+                  }
+                }}
+                placeholder={
+                  pendingFile
+                    ? idioma === 'es'
+                      ? 'Agregá un comentario…'
+                      : 'Add a caption…'
+                    : t('chat.placeholder')
+                }
+              />
+              <button
+                className="ac-send"
+                aria-label={m.enviar}
+                onClick={enviar}
+                disabled={cargando || (!pregunta.trim() && !pendingFile) || !siteId}
+              >
+                <span className="ac-icon">send</span>
+              </button>
             </div>
-          )}
-        </div>
-
-        {/* Adjunto pendiente */}
-        {adjunto && (
-          <div className="bg-white border-t border-cream-3 px-3 py-2 flex items-center gap-2.5">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={URL.createObjectURL(adjunto)} alt="" className="h-10 w-10 rounded-lg object-cover" />
-            <span className="flex-1 text-[11.5px] text-warm-gray truncate">{adjunto.name}</span>
-            <button
-              onClick={() => setAdjunto(null)}
-              className="msr text-[17px] text-warm-gray-2 hover:text-danger"
-              aria-label="Quitar adjunto"
-            >
-              close
-            </button>
           </div>
-        )}
-
-        {/* Composer estilo widget */}
-        <div className="bg-white border-t border-cream-3 p-2.5 flex items-center gap-2">
-          <button
-            onClick={() => fileRef.current?.click()}
-            disabled={cargando}
-            title={m.probarAdjuntar}
-            aria-label={m.probarAdjuntar}
-            className="h-9 w-9 flex-none rounded-full text-warm-gray hover:bg-cream-1 flex items-center justify-center disabled:opacity-40 transition-colors"
-          >
-            <span className="msr text-[20px]">image</span>
-          </button>
-          <input
-            ref={fileRef}
-            type="file"
-            accept={TEST_IMG_TYPES.join(',')}
-            className="hidden"
-            onChange={(e) => {
-              elegirAdjunto(e.target.files?.[0] ?? null);
-              e.target.value = '';
-            }}
-          />
-          <input
-            value={pregunta}
-            onChange={(e) => setPregunta(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') enviar();
-            }}
-            placeholder={m.probarPlaceholder}
-            disabled={cargando}
-            className="flex-1 min-w-0 border border-warm-border rounded-full px-3.5 py-2 text-[12.5px] bg-cream-0 outline-none focus:border-navy disabled:opacity-60"
-          />
-          <button
-            onClick={enviar}
-            disabled={cargando || (!pregunta.trim() && !adjunto) || !siteId}
-            aria-label={m.enviar}
-            className="h-9 w-9 flex-none rounded-full bg-navy text-white flex items-center justify-center disabled:opacity-40 hover:bg-navy-light transition-colors"
-          >
-            <span className="msr text-[17px]">send</span>
-          </button>
         </div>
       </div>
-      {aviso && <div className="text-[11.5px] text-danger mt-2">{aviso}</div>}
     </Card>
   );
 }
 
-function BotAvatar({ avatarUrl }: { avatarUrl?: string }) {
-  return (
-    <div className="h-7 w-7 rounded-full flex-none overflow-hidden bg-ai text-white flex items-center justify-center">
-      {avatarUrl ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={avatarUrl} alt="" className="h-full w-full object-cover" />
-      ) : (
-        <span className="msr text-[15px]">smart_toy</span>
-      )}
-    </div>
-  );
+function formatTestBytes(bytes: number): string {
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }

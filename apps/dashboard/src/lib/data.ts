@@ -633,12 +633,13 @@ function destinosNoLeidos(conv: Row<Conversation>): string[] {
       : [];
 }
 
-/** El agente adjunta una imagen/video/archivo y lo envía al cliente (widget). */
+/** El agente adjunta una imagen/video/archivo (con caption opcional) y lo envía al cliente (widget). */
 export async function agentSendAttachment(
   conv: Row<Conversation>,
   uid: string,
   nombreChat: string,
   file: File,
+  caption?: string,
 ) {
   const { ref: sref, uploadBytes, getDownloadURL } = await import('firebase/storage');
   const path = `adjuntos/${conv.id}/${Date.now()}_${file.name}`;
@@ -649,10 +650,12 @@ export async function agentSendAttachment(
   const esImagen = file.type.startsWith('image/');
   const esVideo = file.type.startsWith('video/');
   const tipoContenido = esImagen ? 'imagen' : esVideo ? 'video' : 'archivo';
+  const texto = caption?.trim() ?? '';
+  const emoji = esImagen ? '📷' : esVideo ? '🎥' : '📎';
 
   await addDoc(collection(db, 'conversations', conv.id, 'messages'), {
     sender: { tipo: 'agent', id: uid, nombre: nombreChat },
-    texto: '',
+    texto,
     tipoContenido,
     adjuntos: [{ tipo: tipoContenido, storagePath: path, url, nombre: file.name, mimeType: file.type }],
     createdAt: serverTimestamp(),
@@ -663,7 +666,13 @@ export async function agentSendAttachment(
   );
   await updateDoc(doc(db, 'conversations', conv.id), {
     lastMessage: {
-      texto: esImagen ? '📷 Foto' : esVideo ? '🎥 Video' : `📎 ${file.name}`,
+      texto: texto
+        ? `${emoji} ${texto}`
+        : esImagen
+          ? '📷 Foto'
+          : esVideo
+            ? '🎥 Video'
+            : `📎 ${file.name}`,
       senderTipo: 'agent',
       senderId: uid,
       senderNombre: nombreChat,

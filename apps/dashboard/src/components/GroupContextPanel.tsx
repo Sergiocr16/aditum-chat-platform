@@ -29,11 +29,16 @@ export function GroupContextPanel({
   width,
   onScrollToConversation,
   onTicketCreado,
+  abierto,
+  onClose,
 }: {
   conv: Row<Conversation>;
   width?: number;
   onScrollToConversation?(convId: string): void;
   onTicketCreado?(convId: string): void;
+  /** Mobile drawer: open state + close callback (below lg; static panel at lg+). */
+  abierto?: boolean;
+  onClose?(): void;
 }) {
   const { agent } = useAuth();
   const t = useT();
@@ -72,7 +77,7 @@ export function GroupContextPanel({
 
   return (
     <aside
-      className="hidden lg:flex flex-col w-[280px] flex-none bg-white overflow-y-auto"
+      className={`${abierto ? 'flex' : 'hidden'} lg:flex fixed inset-y-0 right-0 z-40 w-full max-w-sm shadow-2xl lg:static lg:z-auto lg:w-[280px] lg:max-w-none lg:shadow-none flex-col flex-none bg-white overflow-y-auto`}
       style={width ? { width } : undefined}
     >
       {/* Identidad del equipo */}
@@ -91,6 +96,15 @@ export function GroupContextPanel({
             </span>
           </div>
         </div>
+        {onClose && (
+          <button
+            onClick={onClose}
+            title="Cerrar"
+            className="lg:hidden text-warm-gray-2 hover:text-ink flex-none"
+          >
+            <span className="msr text-[18px]">close</span>
+          </button>
+        )}
       </div>
 
       {/* Condominios que administra el grupo: conteo + lista desplegable. */}

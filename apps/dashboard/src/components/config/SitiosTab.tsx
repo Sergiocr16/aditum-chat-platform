@@ -38,6 +38,8 @@ const M = {
     payloadEjemplo: 'Ejemplo de payload (antes de cifrar)',
     payloadCamposTitulo: 'CAMPOS',
     snippetComment: 'recomendado: tu endpoint que devuelve { payload } fresco',
+    snippetViewport:
+      'En el <head>: <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"> — necesario para el modo pantalla completa del widget en teléfonos',
     payloadCampos: [
       ['userId', 'ID del usuario en tu sistema'],
       ['name', 'Nombre para mostrar'],
@@ -116,6 +118,8 @@ const M = {
     payloadEjemplo: 'Sample payload (before encryption)',
     payloadCamposTitulo: 'FIELDS',
     snippetComment: 'recommended: your endpoint returning a fresh { payload }',
+    snippetViewport:
+      'In the <head>: <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"> — required for the widget’s fullscreen mode on phones',
     payloadCampos: [
       ['userId', 'User ID in your system'],
       ['name', 'Display name'],
@@ -206,7 +210,8 @@ export function SitiosTab() {
 
   const siteId = selId ?? 'app-aditum';
 
-  const snippet = `<script>
+  const snippet = `<!-- ${m.snippetViewport} -->
+<script>
   window.AditumChatSettings = {
     siteId: '${siteId}',
     payload: 'PAYLOAD_CIFRADO_GENERADO_EN_TU_SERVIDOR',
@@ -305,7 +310,7 @@ export function SitiosTab() {
       {error && <div className="text-danger text-[12px]">{error}</div>}
 
       {/* Cards de sitios */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         {sites.map((s) => {
           const st = s.data.stats;
           const sel = s.id === selId;

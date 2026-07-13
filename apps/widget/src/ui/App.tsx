@@ -55,6 +55,34 @@ export function App({ settings, onReady, emit }: Props) {
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
+  // On-screen keyboard height (iOS Safari does not resize the layout viewport,
+  // so the fullscreen panel would stay behind the keyboard). Exposed to CSS as
+  // --ac-kb; the ≤640px block subtracts it from the panel height. On browsers
+  // that resize the layout viewport (Android Chrome) this stays ≈0.
+  const [keyboardInset, setKeyboardInset] = useState(0);
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv || !openPanel || esEscritorio) {
+      setKeyboardInset(0);
+      return;
+    }
+    let raf = 0;
+    const update = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        setKeyboardInset(Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop)));
+      });
+    };
+    vv.addEventListener('resize', update);
+    vv.addEventListener('scroll', update);
+    update();
+    return () => {
+      cancelAnimationFrame(raf);
+      vv.removeEventListener('resize', update);
+      vv.removeEventListener('scroll', update);
+    };
+  }, [openPanel, esEscritorio]);
+
   useEffect(() => {
     onReady({
       open: (v) => {
@@ -231,7 +259,7 @@ export function App({ settings, onReady, emit }: Props) {
   const amplio = esEscritorio ? view !== 'inicio' : enChat || view === 'tickets';
 
   return (
-    <div class={`ac-root ac-${posicion} ${openPanel ? 'ac-abierto' : ''}`} style={`--ac-primary:${color};--ac-accent:${accent}`}>
+    <div class={`ac-root ac-${posicion} ${openPanel ? 'ac-abierto' : ''}`} style={`--ac-primary:${color};--ac-accent:${accent};--ac-kb:${keyboardInset}px`}>
       {openPanel && esEscritorio && (
         <div class={`ac-panel ${amplio ? 'ac-panel-amplio' : ''}`}>
           {state.status === 'loading' && <div class="ac-loading">…</div>}
@@ -330,6 +358,7 @@ export function App({ settings, onReady, emit }: Props) {
                     <Tickets
                       fb={state.fb}
                       session={state.session}
+                      mostrarVolver={false}
                       ticketId={ticketSel}
                       onSelect={(id) => {
                         if (id) setTicketSel(id);

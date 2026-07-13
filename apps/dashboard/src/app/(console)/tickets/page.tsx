@@ -169,7 +169,49 @@ export default function TicketsPage() {
       </header>
 
       <div className="mt-4 bg-white rounded-lg border border-warm-border shadow-card overflow-hidden">
-        <div className="overflow-x-auto">
+        {/* Mobile: card list (the 8-column table is unusable on a phone) */}
+        <div className="md:hidden divide-y divide-cream-3">
+          {visibles.map((tk) => (
+            <button
+              key={tk.id}
+              onClick={() => setSel(tk)}
+              className="w-full text-left px-4 py-3 hover:bg-cream-0 transition-colors"
+            >
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-[12px] font-semibold text-navy">
+                  {formatTicketNumber(tk.data.numero)}
+                </span>
+                {tk.data.publico && (
+                  <span className="msr text-[14px] text-warm-gray-2" title={t('ticket.publico')}>
+                    public
+                  </span>
+                )}
+                <span className="ml-auto flex-none">
+                  <TicketEstadoChip estado={tk.data.estado} idioma={idioma} />
+                </span>
+              </div>
+              <div className="text-[13px] font-semibold text-ink mt-1 line-clamp-2">
+                {tk.data.asunto}
+              </div>
+              <div className="text-[11.5px] text-warm-gray mt-0.5 truncate">
+                {tk.data.clientNombre ?? tk.data.groupName ?? '—'}
+                {tk.data.asignadoNombre ? ` · ${tk.data.asignadoNombre}` : ''}
+              </div>
+              <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+                <SitioChip nombre={siteNombre[tk.data.siteId] ?? tk.data.siteId} />
+                <PrioridadChip prioridad={tk.data.prioridad} idioma={idioma} />
+                <SlaChip sla={tk.data.sla} idioma={idioma} />
+              </div>
+            </button>
+          ))}
+          {visibles.length === 0 && (
+            <div className="px-4 py-10 text-center text-[12.5px] text-warm-gray-2">
+              {m('vacio')}
+            </div>
+          )}
+        </div>
+
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-left">
             <thead>
               <tr className="border-b border-cream-3">

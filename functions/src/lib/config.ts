@@ -30,6 +30,7 @@ export const DEFAULT_BOT_CONFIG: BotConfig = {
   responderFueraDeHorario: true,
   crearTicketsAutomaticamente: false,
   saludo: '¡Hola {nombre}! Soy el asistente de Aditum. ¿En qué puedo ayudarte?',
+  adjuntos: true,
 };
 
 export const DEFAULT_SCHEDULE: ScheduleConfig = {

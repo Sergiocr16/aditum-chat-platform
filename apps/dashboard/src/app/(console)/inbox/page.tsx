@@ -5,7 +5,7 @@ import type { Conversation } from '@aditum-chat/shared';
 import { categoryLabel, conversationStatusLabels } from '@aditum-chat/shared';
 import { useAuth } from '@/lib/auth';
 import { useT } from '@/lib/i18n';
-import { useSiteFilter } from '@/components/Shell';
+import { useMobileTopbar, useSiteFilter } from '@/components/Shell';
 import {
   fmtRelativo,
   iniciales,
@@ -86,6 +86,19 @@ export default function InboxPage() {
   const esDirectaCtx = !!(sel && sel.data.tipo === 'directa' && sel.data.contactId);
   const esGrupoCtx = !!(sel && sel.data.tipo === 'grupo');
   const mostrarCtx = esDirectaCtx || esGrupoCtx;
+
+  // Below lg the context panel becomes a drawer; reset it when switching conversations.
+  const [ctxAbierto, setCtxAbierto] = useState(false);
+  useEffect(() => setCtxAbierto(false), [selId]);
+
+  // Mobile: hide the shell topbar while a conversation is open (more vertical
+  // space; the conversation header's back arrow keeps navigation reachable).
+  const { setOculto: setTopbarOculto } = useMobileTopbar();
+  const hayConv = !!sel;
+  useEffect(() => {
+    setTopbarOculto(hayConv);
+    return () => setTopbarOculto(false);
+  }, [hayConv, setTopbarOculto]);
 
   // Para que el panel de contexto pueda subir el hilo a una conversación anterior.
   const convViewRef = useRef<ConversationViewHandle>(null);
@@ -181,6 +194,7 @@ export default function InboxPage() {
             conv={sel}
             onBack={() => setSelId(null)}
             onOpenConversation={setSelId}
+            onOpenContext={mostrarCtx ? () => setCtxAbierto(true) : undefined}
           />
         ) : (
           <InboxVacio convs={convs} t={t} />
@@ -196,13 +210,24 @@ export default function InboxPage() {
         />
       )}
 
+      {/* Backdrop for the mobile context drawer */}
+      {ctxAbierto && mostrarCtx && (
+        <div
+          className="fixed inset-0 z-30 bg-black/40 lg:hidden"
+          onClick={() => setCtxAbierto(false)}
+          aria-hidden
+        />
+      )}
+
       {/* Panel de contexto: residente (directa) o equipo (grupo) */}
       {esDirectaCtx && (
         <ContextPanel
           contactId={sel!.data.contactId!}
           onScrollToConversation={(id) => convViewRef.current?.scrollToConversation(id)}
           onTicketCreado={(id) => convViewRef.current?.refrescarYVer(id)}
-          width={montado ? contexto.width : undefined}
+          width={montado && esLg ? contexto.width : undefined}
+          abierto={ctxAbierto}
+          onClose={() => setCtxAbierto(false)}
         />
       )}
       {esGrupoCtx && (
@@ -210,7 +235,9 @@ export default function InboxPage() {
           conv={sel!}
           onScrollToConversation={(id) => convViewRef.current?.scrollToConversation(id)}
           onTicketCreado={(id) => convViewRef.current?.refrescarYVer(id)}
-          width={montado ? contexto.width : undefined}
+          width={montado && esLg ? contexto.width : undefined}
+          abierto={ctxAbierto}
+          onClose={() => setCtxAbierto(false)}
         />
       )}
     </div>

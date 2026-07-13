@@ -22,6 +22,11 @@ const SiteCtx = createContext<{ siteId: string | null; setSiteId(v: string | nul
 });
 export const useSiteFilter = () => useContext(SiteCtx);
 
+// Mobile topbar visibility — the inbox hides it while a conversation is open
+// to reclaim vertical space (the back arrow keeps navigation reachable).
+const TopbarCtx = createContext<{ setOculto(v: boolean): void }>({ setOculto: () => {} });
+export const useMobileTopbar = () => useContext(TopbarCtx);
+
 const NAV = [
   { href: '/inbox', icon: 'inbox', key: 'nav.inbox' as const },
   { href: '/tickets', icon: 'confirmation_number', key: 'nav.tickets' as const },
@@ -40,6 +45,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const [siteId, setSiteId] = useState<string | null>(null);
   // Drawer de la barra lateral en móvil (off-canvas). En ≥md siempre visible.
   const [menuAbierto, setMenuAbierto] = useState(false);
+  const [topbarOculto, setTopbarOculto] = useState(false);
   // Al navegar, cerrar el drawer.
   useEffect(() => {
     setMenuAbierto(false);
@@ -97,6 +103,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
   return (
     <SiteCtx.Provider value={{ siteId, setSiteId }}>
+      <TopbarCtx.Provider value={{ setOculto: setTopbarOculto }}>
       <div className="flex h-screen overflow-hidden">
         {/* Backdrop del drawer (solo móvil) */}
         {menuAbierto && (
@@ -204,8 +211,10 @@ export function Shell({ children }: { children: React.ReactNode }) {
         </aside>
 
         <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
-          {/* Topbar móvil: hamburguesa + logo (oculto en ≥md) */}
-          <header className="md:hidden flex-none flex items-center gap-3 h-14 px-3 bg-navy-deep text-white">
+          {/* Topbar móvil: hamburguesa + logo (oculto en ≥md y con conversación abierta) */}
+          <header
+            className={`${topbarOculto ? 'hidden' : 'flex'} md:hidden flex-none items-center gap-3 h-14 px-3 bg-navy-deep text-white`}
+          >
             <button
               onClick={() => setMenuAbierto(true)}
               className="relative -ml-1 p-1.5 text-white/80 hover:text-white"
@@ -222,6 +231,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
           <main className="flex-1 min-w-0 overflow-hidden bg-cream-1">{children}</main>
         </div>
       </div>
+      </TopbarCtx.Provider>
     </SiteCtx.Provider>
   );
 }

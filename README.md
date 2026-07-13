@@ -206,6 +206,10 @@ The host server encrypts the user identity with the site key
 embeds it:
 
 ```html
+<!-- In the <head>: required for the widget's fullscreen mode on phones
+     (safe-area insets are inert without viewport-fit=cover). -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+
 <script>
   window.AditumChatSettings = {
     siteId: 'app-aditum',

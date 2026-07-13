@@ -561,6 +561,7 @@ export async function sendAttachment(
   nombre: string,
   file: File,
   otrosParticipantes?: string[],
+  caption?: string,
 ): Promise<void> {
   const { ref: sref, uploadBytes, getDownloadURL } = await import('firebase/storage');
   const path = `adjuntos/${convId}/${Date.now()}_${file.name}`;
@@ -570,9 +571,11 @@ export async function sendAttachment(
   const esImagen = file.type.startsWith('image/');
   const esVideo = file.type.startsWith('video/');
   const tipoContenido = esImagen ? 'imagen' : esVideo ? 'video' : 'archivo';
+  const texto = caption?.trim() ?? '';
+  const emoji = esImagen ? '📷' : esVideo ? '🎥' : '📎';
   await addDoc(collection(fb.db, 'conversations', convId, 'messages'), {
     sender: { tipo: 'user', id: session.contactId, nombre },
-    texto: '',
+    texto,
     tipoContenido,
     adjuntos: [
       {
@@ -587,7 +590,13 @@ export async function sendAttachment(
   });
   await updateDoc(doc(fb.db, 'conversations', convId), {
     lastMessage: {
-      texto: esImagen ? '📷 Foto' : esVideo ? '🎥 Video' : `📎 ${file.name}`,
+      texto: texto
+        ? `${emoji} ${texto}`
+        : esImagen
+          ? '📷 Foto'
+          : esVideo
+            ? '🎥 Video'
+            : `📎 ${file.name}`,
       senderTipo: 'user',
       senderId: session.contactId,
       senderNombre: nombre,

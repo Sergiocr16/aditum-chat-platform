@@ -140,6 +140,7 @@ export const widgetSession = onRequest({ cors: true, region: 'us-central1' }, as
         nombre: config.bot.nombre,
         avatarUrl: config.bot.avatarUrl,
         saludo: config.bot.saludo,
+        adjuntos: config.bot.adjuntos !== false,
       },
       scheduleText: scheduleText(config.schedule, idioma),
       enHorario: isWithinSchedule(config.schedule),

@@ -2,6 +2,7 @@ export * from './types';
 export * from './tokens';
 export * from './i18n';
 export * from './schedule';
+export * from './emoji';
 
 export const TICKET_NUMBER_PREFIX = 'TK';
 

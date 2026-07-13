@@ -86,6 +86,8 @@ export interface BotConfig {
   responderFueraDeHorario: boolean;
   crearTicketsAutomaticamente: boolean;
   saludo: string;
+  /** Permitir adjuntar archivos en el chat del bot (el bot analiza imágenes y PDF). */
+  adjuntos?: boolean;
 }
 
 export interface ScheduleConfig {
@@ -609,7 +611,7 @@ export interface WidgetSessionResponse {
   groupName?: string;
   idioma: Idioma;
   widgetConfig: WidgetConfig;
-  botConfig: Pick<BotConfig, 'activo' | 'nombre' | 'avatarUrl' | 'saludo'>;
+  botConfig: Pick<BotConfig, 'activo' | 'nombre' | 'avatarUrl' | 'saludo' | 'adjuntos'>;
   scheduleText: string;
   enHorario: boolean;
   grupoConversationId?: string;
