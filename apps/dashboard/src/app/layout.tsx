@@ -5,11 +5,24 @@ import { AuthProvider } from '@/lib/auth';
 export const metadata: Metadata = {
   title: 'Aditum — Consola de soporte',
   description: 'Consola de agentes de Aditum',
+  // PWA: instalada a pantalla de inicio abre standalone (sin barra de URL).
+  manifest: '/manifest.json',
+  appleWebApp: {
+    capable: true,
+    title: 'Aditum Chat',
+    statusBarStyle: 'black-translucent',
+  },
+  icons: {
+    icon: [{ url: '/favicon.ico' }, { url: '/icon-192.png', sizes: '192x192', type: 'image/png' }],
+    apple: '/apple-touch-icon.png',
+  },
 };
 
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
+  viewportFit: 'cover',
+  themeColor: '#0A1D31',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

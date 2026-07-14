@@ -118,7 +118,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
             menuAbierto ? 'translate-x-0' : '-translate-x-full'
           }`}
         >
-          <div className="px-4 py-4">
+          <div className="px-4 py-4 pt-[max(1rem,env(safe-area-inset-top))]">
             {/* Logo sobre fondo transparente: isotipo en su color + "ADITUM" en blanco */}
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src="/aditum-logo-menu.png" alt="Aditum" className="h-7 w-auto" />
@@ -213,7 +213,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
         <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
           {/* Topbar móvil: hamburguesa + logo (oculto en ≥md y con conversación abierta) */}
           <header
-            className={`${topbarOculto ? 'hidden' : 'flex'} md:hidden flex-none items-center gap-3 h-14 px-3 bg-navy-deep text-white`}
+            className={`${topbarOculto ? 'hidden' : 'flex'} md:hidden flex-none items-center gap-3 min-h-14 px-3 pt-[env(safe-area-inset-top)] bg-navy-deep text-white`}
           >
             <button
               onClick={() => setMenuAbierto(true)}

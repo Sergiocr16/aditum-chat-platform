@@ -285,6 +285,8 @@ export interface ContactThread {
   filas: ThreadRow[];
   hayMas: boolean;
   cargando: boolean;
+  /** First live snapshot arrived (skeleton gate for the initial load). */
+  listo: boolean;
   loadOlder(): Promise<void>;
   /** Re-lee los mensajes de una conversación ya cargada y mete los nuevos en su
    *  bloque (p. ej. el mensaje de sistema al crear un ticket de una vieja). */
@@ -311,6 +313,7 @@ function useConvThread(
   const [viejos, setViejos] = useState<ThreadRow[]>([]);
   const [cargando, setCargando] = useState(false);
   const [hayMas, setHayMas] = useState(false);
+  const [listo, setListo] = useState(false);
   const [cursorVersion, setCursorVersion] = useState(0);
 
   const liveConvIdRef = useRef<string | null>(null);
@@ -372,6 +375,7 @@ function useConvThread(
     }
     liveConvIdRef.current = liveId;
     setLiveMsgs([]);
+    setListo(false);
     let first = true;
     const q = query(
       collection(db, 'conversations', liveId, 'messages'),
@@ -383,6 +387,7 @@ function useConvThread(
       setLiveMsgs(
         docs.map((d) => ({ convId: liveId, msg: { id: d.id, data: d.data() as Message } })).reverse(),
       );
+      setListo(true);
       if (first) {
         first = false;
         cursorRef.current = {
@@ -478,7 +483,7 @@ function useConvThread(
     return out;
   }, [viejos, liveMsgs]);
 
-  return { filas, hayMas, cargando, loadOlder, refrescarConversacion, activa, convPorId };
+  return { filas, hayMas, cargando, listo, loadOlder, refrescarConversacion, activa, convPorId };
 }
 
 /** Hilo continuo de un contacto: todas sus conversaciones `directa` encadenadas. */

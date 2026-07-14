@@ -337,6 +337,8 @@ function ContactPanel({
 
   return (
     <aside className="fixed inset-y-0 right-0 z-40 w-full max-w-sm shadow-2xl lg:static lg:z-auto lg:max-w-none lg:w-[300px] lg:shadow-none flex-none border-l border-warm-border bg-white overflow-y-auto">
+      {/* Franja navy tras el status bar del teléfono (PWA standalone). */}
+      <div className="lg:hidden bg-navy-deep h-[env(safe-area-inset-top)]" />
       <div className="p-4 border-b border-cream-3">
         <div className="flex items-start gap-3">
           <div className="h-11 w-11 rounded-full flex-none flex items-center justify-center text-[13px] font-bold bg-cream-3 text-ink-2">

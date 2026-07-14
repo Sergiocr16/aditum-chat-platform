@@ -38,7 +38,7 @@ export default function LoginPage() {
     <div className="min-h-screen grid lg:grid-cols-[1.05fr_1fr] bg-[#FDFCFA]">
       {/* Panel de marca: banda compacta en móvil, columna completa en escritorio */}
       <aside
-        className="relative bg-[#0A1D31] text-white overflow-hidden flex flex-col justify-center lg:justify-start px-6 py-5 lg:p-12"
+        className="relative bg-[#0A1D31] text-white overflow-hidden flex flex-col justify-center lg:justify-start px-6 py-5 pt-[max(1.25rem,env(safe-area-inset-top))] lg:p-12"
         style={{ backgroundImage: DOODLE_BLANCO, backgroundSize: '320px' }}
       >
         {/* eslint-disable-next-line @next/next/no-img-element */}

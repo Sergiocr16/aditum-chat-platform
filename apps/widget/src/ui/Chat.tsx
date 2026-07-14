@@ -1,5 +1,5 @@
 import type { VNode } from 'preact';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { Conversation, Message, WidgetSessionResponse } from '@aditum-chat/shared';
 import {
   categoryLabel,
@@ -217,6 +217,8 @@ export function Chat({
 
   // --- Página en vivo (última conversación) + páginas históricas.
   const [liveMsgs, setLiveMsgs] = useState<Fila[]>([]);
+  // Primer snapshot de la conversación activa ya llegó (gate del skeleton).
+  const [liveListo, setLiveListo] = useState(false);
   const [viejos, setViejos] = useState<Fila[]>([]);
   const [cargandoMas, setCargandoMas] = useState(false);
   const cursorRef = useRef<{ convId: string; cursor: unknown | null; agotada: boolean } | null>(null);
@@ -245,9 +247,11 @@ export function Chat({
     }
     liveConvIdRef.current = liveId;
     setLiveMsgs([]);
+    setLiveListo(false);
 
     const unsub = subscribeLatestMessages(fb, liveId, PAGE, (msgs, oldestCursor, llena) => {
       setLiveMsgs(msgs.map((m) => ({ convId: liveId, msg: m })));
+      setLiveListo(true);
       // El cursor del vivo solo se fija si aún no empezamos a paginar hacia atrás.
       if (!cursorRef.current) {
         cursorRef.current = { convId: liveId, cursor: oldestCursor, agotada: !llena };
@@ -533,7 +537,9 @@ export function Chat({
   // Preservar posición al prepender; auto-scroll abajo solo con mensajes nuevos.
   const ultimoId = filas[filas.length - 1]?.msg.id;
   const prevUltimoId = useRef<string | undefined>(undefined);
-  useEffect(() => {
+  // Layout effect: el anclaje corre ANTES del paint — al entrar a un chat los
+  // mensajes ya aparecen anclados al fondo, sin el brinco visible de scroll.
+  useLayoutEffect(() => {
     const el = bodyRef.current;
     if (!el) return;
     if (ajusteScroll.current !== null) {
@@ -624,6 +630,10 @@ export function Chat({
   // a escribir (activa resuelta o sin mensajes) y se oculta al llegar el real.
   // El canal de AGENTE NO muestra saludo antes de escribir: responde después del
   // primer mensaje (auto-respuesta / fuera de horario, vía trigger).
+  // Skeleton de carga: hasta que las conversaciones y el primer snapshot de
+  // mensajes hayan llegado, se muestran burbujas fantasma (sin brinco de scroll).
+  const cargandoChat = !convsCargadas || (!!activa && !liveListo);
+
   const esBotCanal = !grupo && session.botConfig.activo && modo === 'bot';
   const bienvenida = (session.widgetConfig.mensajeAI?.trim() || session.botConfig.saludo || '')
     .replace(/\{nombre\}/g, session.nombre.split(' ')[0]);
@@ -834,7 +844,15 @@ export function Chat({
       </div>
 
       <div class="ac-chat-body" ref={bodyRef} onClick={() => setMenuMsg(null)} onScroll={onScrollBody}>
-        {cargandoMas && <div class="ac-sep ac-cargando">···</div>}
+        {cargandoChat && (
+          <div class="ac-skel" aria-hidden>
+            <div class="ac-skel-burbuja" style="width:58%" />
+            <div class="ac-skel-burbuja ac-skel-own" style="width:44%" />
+            <div class="ac-skel-burbuja" style="width:66%" />
+            <div class="ac-skel-burbuja ac-skel-own" style="width:38%" />
+          </div>
+        )}
+        {!cargandoChat && cargandoMas && <div class="ac-sep ac-cargando">···</div>}
         {filas.map((fila, i) => {
           // First-message race only (live segment with just the user's rows):
           // the virtual welcome goes at the START of the active segment, where
@@ -1144,11 +1162,12 @@ export function Chat({
           );
         })}
 
-        {mostrarBienvenida &&
+        {!cargandoChat &&
+          mostrarBienvenida &&
           (filasActiva.length === 0 || activa?.data.estado === 'resolved') &&
           burbujaBienvenida}
 
-        {(typingNames.length > 0 || esperandoBot) && (
+        {!cargandoChat && (typingNames.length > 0 || esperandoBot) && (
           <div class="ac-msg ac-msg-other">
             {esperandoBot && (
               <div class="ac-msg-avatar" data-tipo="bot">
@@ -1167,7 +1186,7 @@ export function Chat({
           </div>
         )}
 
-        {mostrarChips && (
+        {!cargandoChat && mostrarChips && (
           <div class="ac-chips">
             <button class="ac-chip-sugerencia" onClick={onChipAgente}>
               {t('inicio.hablarAgente')}

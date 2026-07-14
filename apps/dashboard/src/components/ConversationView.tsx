@@ -1,6 +1,14 @@
 'use client';
 
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { httpsCallable } from 'firebase/functions';
 import type { Attachment, Conversation, Idioma, Message } from '@aditum-chat/shared';
 import { categoryLabel, EMOJI_CATEGORIES, formatTicketNumber } from '@aditum-chat/shared';
@@ -72,6 +80,7 @@ export const ConversationView = forwardRef<
   const filas: ThreadRow[] = thread.filas;
   const hayMas = thread.hayMas;
   const cargando = thread.cargando;
+  const listo = thread.listo;
   const loadOlder = thread.loadOlder;
   const activa = thread.activa ?? conv;
   const convPorId = thread.convPorId;
@@ -155,8 +164,9 @@ export const ConversationView = forwardRef<
     void loadOlder();
   }
 
-  // Al prepender páginas, preservar la posición de lectura.
-  useEffect(() => {
+  // Al prepender páginas, preservar la posición de lectura. Layout effect:
+  // corre antes del paint, así el ajuste no se ve como un brinco.
+  useLayoutEffect(() => {
     const el = bodyRef.current;
     if (el && ajusteScroll.current !== null) {
       el.scrollTop += el.scrollHeight - ajusteScroll.current;
@@ -167,7 +177,8 @@ export const ConversationView = forwardRef<
   // Mientras estás al fondo: mantener anclado ahí y rellenar con historial si el
   // contenido no desborda (para dar contexto y permitir el scroll hacia atrás).
   // `[&>*:first-child]:mt-auto` empuja el contenido corto hacia abajo (WhatsApp).
-  useEffect(() => {
+  // Layout effect: al entrar al chat los mensajes aparecen YA anclados al fondo.
+  useLayoutEffect(() => {
     const el = bodyRef.current;
     if (!el || cargando || filas.length === 0 || ajusteScroll.current !== null) return;
     if (!enElFondoRef.current) return;
@@ -410,6 +421,9 @@ export const ConversationView = forwardRef<
 
   return (
     <div className="flex flex-col h-full">
+      {/* PWA standalone: franja navy tras el status bar del teléfono (reloj/batería
+          legibles y el header no queda debajo). En navegador env() = 0. */}
+      <div className="md:hidden flex-none bg-navy-deep h-[env(safe-area-inset-top)]" />
       <header className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-3 bg-white border-b border-warm-border">
         {onBack && (
           <button
@@ -494,7 +508,16 @@ export const ConversationView = forwardRef<
           onClick={() => setMenuMsg(null)}
           className="chat-doodle-bg absolute inset-0 overflow-y-auto px-5 py-4 flex flex-col gap-2.5 [&>*:first-child]:mt-auto"
         >
-          {cargando && (
+          {/* Skeleton del primer load: burbujas fantasma en vez del brinco. */}
+          {!listo && (
+            <div className="flex flex-col gap-2.5" aria-hidden>
+              <div className="h-11 w-[46%] rounded-xl bg-white/70 animate-pulse" />
+              <div className="h-11 w-[32%] rounded-xl bg-[#D9FDD3]/60 animate-pulse self-end" />
+              <div className="h-11 w-[54%] rounded-xl bg-white/70 animate-pulse" />
+              <div className="h-11 w-[38%] rounded-xl bg-[#D9FDD3]/60 animate-pulse self-end" />
+            </div>
+          )}
+          {listo && cargando && (
             <div className="self-center text-[11px] text-warm-gray-2 py-1 animate-pulse">···</div>
           )}
           {filas.flatMap((f, i) => {
@@ -596,7 +619,7 @@ export const ConversationView = forwardRef<
         )}
       </div>
 
-      <footer className="bg-white border-t border-warm-border px-4 pt-2 pb-3">
+      <footer className="bg-white border-t border-warm-border px-4 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
         <div className="flex gap-4 mb-2">
           <button
             onClick={() => setTab('responder')}

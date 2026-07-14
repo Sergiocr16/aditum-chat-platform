@@ -1045,6 +1045,31 @@
   background: transparent;
 }
 
+/* ---------- Skeleton de carga del chat ---------- */
+.ac-skel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 6px 0;
+}
+.ac-skel-burbuja {
+  height: 46px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.65);
+  animation: ac-skel-pulse 1.3s ease-in-out infinite;
+}
+.ac-skel-own {
+  align-self: flex-end;
+  background: rgba(217, 253, 211, 0.55);
+}
+@keyframes ac-skel-pulse {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ac-skel-burbuja { animation: none; opacity: 0.7; }
+}
+
 /* ---------- Phone layout (≤640px): fullscreen panel, app-like ---------- */
 /* Kept at the end of the file on purpose: several rules below tie with the
    `.ac-panel-amplio …` desktop-scale rules on specificity (0,2,0 / 0,3,0),
