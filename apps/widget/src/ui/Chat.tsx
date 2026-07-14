@@ -210,16 +210,9 @@ export function Chat({
     [csatRateados, convPorId],
   );
 
-  // Primera conversación: SOLO cuando ya llegó el primer snapshot y no hay ninguna
-  // (evita crear conversaciones fantasma por la carrera del primer render).
-  const creando = useRef(false);
-  useEffect(() => {
-    if (grupo || creando.current || !convsCargadas) return;
-    if (convsDesc.length === 0) {
-      creando.current = true;
-      void ensureDirectConversation(fb, session, session.nombre, modo);
-    }
-  }, [grupo, convsCargadas, convsDesc.length, fb, session, modo]);
+  // The conversation doc is created on the user's FIRST message (convParaEscribir),
+  // never on open — opening the chat must not surface ghost conversations in the
+  // console. Until then the virtual welcome bubble covers the empty state.
 
   // --- Página en vivo (última conversación) + páginas históricas.
   const [liveMsgs, setLiveMsgs] = useState<Fila[]>([]);
@@ -607,10 +600,32 @@ export function Chat({
   const esBotCanal = !grupo && session.botConfig.activo && modo === 'bot';
   const bienvenida = (session.widgetConfig.mensajeAI?.trim() || session.botConfig.saludo || '')
     .replace(/\{nombre\}/g, session.nombre.split(' ')[0]);
+  // Keep the virtual bubble through the first-message race: after the first send
+  // there is a window where only the user's message exists (the welcome trigger
+  // hasn't written `_bienvenida` yet); hide it only once the real welcome or any
+  // bot/system message arrives in the active segment.
+  const filasActiva = useMemo(
+    () => (activa ? filas.filter((f) => f.convId === activa.id) : []),
+    [filas, activa],
+  );
+  const tieneBienvenidaReal = filasActiva.some((f) => f.msg.data.bienvenida);
+  const soloMensajesDelUsuario = filasActiva.every((f) => f.msg.data.sender.tipo === 'user');
   const mostrarBienvenida =
     esBotCanal &&
     !!bienvenida &&
-    (!activa || activa.data.estado === 'resolved' || filas.length === 0);
+    (!activa ||
+      activa.data.estado === 'resolved' ||
+      (!tieneBienvenidaReal && soloMensajesDelUsuario));
+  const burbujaBienvenida = (
+    <div class="ac-msg ac-msg-other ac-bienvenida">
+      <div class="ac-msg-avatar" data-tipo={esBotCanal ? 'bot' : 'agent'}>
+        <span class="ac-icon">{esBotCanal ? 'smart_toy' : 'support_agent'}</span>
+      </div>
+      <div class="ac-burbuja">
+        <div class="ac-msg-texto">{renderMarkdown(bienvenida)}</div>
+      </div>
+    </div>
+  );
 
   function onInputDraft(value: string) {
     setDraft(value);
@@ -794,6 +809,17 @@ export function Chat({
       <div class="ac-chat-body" ref={bodyRef} onClick={() => setMenuMsg(null)} onScroll={onScrollBody}>
         {cargandoMas && <div class="ac-sep ac-cargando">···</div>}
         {filas.map((fila, i) => {
+          // First-message race only (live segment with just the user's rows):
+          // the virtual welcome goes at the START of the active segment, where
+          // the real `_bienvenida` will land once the trigger writes it. For a
+          // resolved segment the bubble renders at the bottom instead (a fresh
+          // welcome inviting the next segment).
+          const esInicioActiva =
+            mostrarBienvenida &&
+            activa?.data.estado !== 'resolved' &&
+            filasActiva.length > 0 &&
+            fila.convId === activa?.id &&
+            (!filas[i - 1] || filas[i - 1].convId !== fila.convId);
           const m = fila.msg;
           const prev = filas[i - 1];
           const next = filas[i + 1];
@@ -819,14 +845,19 @@ export function Chat({
           const marcaResueltaAntes = resuelta && csat;
           const marcaResueltaDespues =
             resuelta && finDeConv && !csat && !convsConCsat.has(fila.convId);
+          // An escalated segment closed by handoff reads differently from a
+          // resolved one: the user was passed to an agent, nothing got "solved".
+          const escalada = Boolean(conv?.data.escaladoA);
           const separadorResuelta = (
             <div class="ac-sep ac-sep-conv">
-              <span class="ac-icon">check_circle</span>
-              {conv?.data.categoria
-                ? t('chat.convResuelta', {
-                    categoria: categoryLabel(conv.data.categoria, session.idioma),
-                  })
-                : t('chat.convResueltaSin')}
+              <span class="ac-icon">{escalada ? 'support_agent' : 'check_circle'}</span>
+              {escalada
+                ? t('chat.convEscalada')
+                : conv?.data.categoria
+                  ? t('chat.convResuelta', {
+                      categoria: categoryLabel(conv.data.categoria, session.idioma),
+                    })
+                  : t('chat.convResueltaSin')}
             </div>
           );
 
@@ -840,8 +871,13 @@ export function Chat({
                 </div>
               )}
               {sep && <div class="ac-sep">{sep}</div>}
+              {esInicioActiva && burbujaBienvenida}
               {marcaResueltaAntes && separadorResuelta}
               {csat ? (
+                // CSAT never renders in the bot channel (its satisfaction signal
+                // is the 👍/👎 feedback row); server-side the survey is only
+                // injected on agent conversations, this is belt and suspenders.
+                !esBotCanal &&
                 mostrarCsat && (
                   <CsatCard
                     texto={m.data.texto}
@@ -1081,16 +1117,9 @@ export function Chat({
           );
         })}
 
-        {mostrarBienvenida && (
-          <div class="ac-msg ac-msg-other ac-bienvenida">
-            <div class="ac-msg-avatar" data-tipo={esBotCanal ? 'bot' : 'agent'}>
-              <span class="ac-icon">{esBotCanal ? 'smart_toy' : 'support_agent'}</span>
-            </div>
-            <div class="ac-burbuja">
-              <div class="ac-msg-texto">{renderMarkdown(bienvenida)}</div>
-            </div>
-          </div>
-        )}
+        {mostrarBienvenida &&
+          (filasActiva.length === 0 || activa?.data.estado === 'resolved') &&
+          burbujaBienvenida}
 
         {(typingNames.length > 0 || esperandoBot) && (
           <div class="ac-msg ac-msg-other">

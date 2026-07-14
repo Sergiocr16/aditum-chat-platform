@@ -78,7 +78,8 @@ export function useConversations(siteId: string | null, filtro: InboxFiltro, uid
       c.push(where('estado', '==', 'resolved'));
     } else {
       if (filtro === 'mias') c.push(where('asignadoA', '==', uid));
-      if (filtro === 'bot') c.push(where('estado', '==', 'bot'));
+      // Bot filter = the full bot-channel registry: attending AND resolved.
+      if (filtro === 'bot') c.push(where('subcanal', '==', 'bot'));
       if (filtro === 'equipos') c.push(where('tipo', '==', 'grupo'));
       if (filtro === 'sin_asignar') c.push(where('asignadoA', '==', null));
       if (filtro !== 'bot') c.push(where('estado', 'in', ['bot', 'open', 'pending']));
@@ -87,6 +88,48 @@ export function useConversations(siteId: string | null, filtro: InboxFiltro, uid
     return c;
   }, [siteId, filtro, uid]);
   return useCollection<Conversation>('conversations', constraints, [siteId, filtro, uid]);
+}
+
+/**
+ * Inbox row after collapsing a contact's channel docs (bot + agente) into one:
+ * the freshest doc represents the contact, unread is summed across its docs.
+ */
+export interface InboxRow {
+  conv: Row<Conversation>;
+  /** Sum of unread.agentes across the contact's fetched docs. */
+  unreadTotal: number;
+  /** The contact ALSO has a live bot-channel conversation. */
+  botVivo: boolean;
+}
+
+/**
+ * Collapses directa conversations to one row per contact (rows must already be
+ * ordered updatedAt desc, so the first doc per contact is the representative).
+ * Group conversations and directas without contactId pass through 1:1.
+ */
+export function collapseByContact(rows: Row<Conversation>[]): InboxRow[] {
+  const out: InboxRow[] = [];
+  const porContacto = new Map<string, InboxRow>();
+  for (const conv of rows) {
+    const d = conv.data;
+    const esBotVivo = (d.subcanal ?? 'agente') === 'bot' && d.estado === 'bot';
+    const unread = d.unread?.agentes ?? 0;
+    const key = d.tipo === 'directa' ? d.contactId : null;
+    if (!key) {
+      out.push({ conv, unreadTotal: unread, botVivo: false });
+      continue;
+    }
+    const existente = porContacto.get(key);
+    if (existente) {
+      existente.unreadTotal += unread;
+      existente.botVivo ||= esBotVivo;
+    } else {
+      const row: InboxRow = { conv, unreadTotal: unread, botVivo: esBotVivo };
+      porContacto.set(key, row);
+      out.push(row);
+    }
+  }
+  return out;
 }
 
 /** Conversaciones resueltas de un contacto (panel de contexto). */
@@ -459,20 +502,20 @@ export function useContactThread(contactId: string | null, pageSize = 40): Conta
  * Hilo continuo del chat grupal de un cliente: todos los segmentos `grupo`
  * encadenados (activa = el más reciente no resuelto), igual que las directas.
  */
-export function useGroupThread(clientId: string | null, pageSize = 40): ContactThread {
+export function useGroupThread(groupId: string | null, pageSize = 40): ContactThread {
   const constraints = useMemo<QueryConstraint[]>(
     () =>
-      clientId
+      groupId
         ? [
             where('tipo', '==', 'grupo'),
-            where('clientId', '==', clientId),
+            where('groupId', '==', groupId),
             orderBy('updatedAt', 'desc'),
             fsLimit(20),
           ]
         : [],
-    [clientId],
+    [groupId],
   );
-  return useConvThread(clientId, constraints, pageSize);
+  return useConvThread(groupId, constraints, pageSize);
 }
 
 /**
@@ -500,7 +543,12 @@ export async function ensureAgentConversation(params: {
       fsLimit(10),
     ),
   );
-  if (!snap.empty) return snap.docs[0].id;
+  // Reuse only the agent channel: the bot channel is a separate registry the
+  // console must never write into (legacy docs without subcanal are 'agente').
+  const activo = snap.docs.find(
+    (d) => ((d.data() as Conversation).subcanal ?? 'agente') === 'agente',
+  );
+  if (activo) return activo.id;
   const ref = await addDoc(collection(db, 'conversations'), {
     tipo: 'directa',
     subcanal: 'agente',

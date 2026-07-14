@@ -107,7 +107,9 @@ export function subscribeMyGroupConversations(
         if (!d.metadata.hasPendingWrites) confirmadas.add(d.id);
         if (!confirmadas.has(d.id)) continue;
         const data = d.data() as Conversation;
-        if (!session.clientId || data.clientId === session.clientId) {
+        // v2 group chats are org-level: keyed by groupId (they carry no
+        // clientId). Same filter ensureGroupConversation uses below.
+        if (!session.groupId || data.groupId === session.groupId) {
           rows.push({ id: d.id, data });
         }
       }
@@ -353,14 +355,6 @@ export async function toggleMute(
 ): Promise<void> {
   await updateDoc(doc(fb.db, 'conversations', convId), {
     [`silenciado.${session.contactId}`]: silenciar,
-  });
-}
-
-/** Escalar: pasa la conversación de bot a agente. */
-export async function escalateToAgent(fb: WidgetFirebase, convId: string): Promise<void> {
-  await updateDoc(doc(fb.db, 'conversations', convId), {
-    estado: 'open',
-    updatedAt: serverTimestamp(),
   });
 }
 

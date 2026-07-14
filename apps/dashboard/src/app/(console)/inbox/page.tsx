@@ -7,13 +7,14 @@ import { useAuth } from '@/lib/auth';
 import { useT } from '@/lib/i18n';
 import { useMobileTopbar, useSiteFilter } from '@/components/Shell';
 import {
+  collapseByContact,
   fmtRelativo,
   iniciales,
   useConversations,
   useDoc,
   useSites,
   type InboxFiltro,
-  type Row,
+  type InboxRow,
 } from '@/lib/data';
 import { ConversationView, type ConversationViewHandle } from '@/components/ConversationView';
 import { ContextPanel } from '@/components/ContextPanel';
@@ -54,7 +55,20 @@ export default function InboxPage() {
     [sites],
   );
 
-  const abiertas = convs.filter((c) => c.data.estado !== 'resolved').length;
+  // One row per CONTACT in the active-inbox filters (a contact can hold a live
+  // bot doc AND a live agent doc); registry-style filters stay one row per doc.
+  const filas = useMemo<InboxRow[]>(() => {
+    const colapsar = filtro === 'todas' || filtro === 'mias' || filtro === 'sin_asignar';
+    return colapsar
+      ? collapseByContact(convs)
+      : convs.map((c) => ({
+          conv: c,
+          unreadTotal: c.data.unread?.agentes ?? 0,
+          botVivo: false,
+        }));
+  }, [convs, filtro]);
+
+  const abiertas = filas.filter((r) => r.conv.data.estado !== 'resolved').length;
   // La selección puede venir de fuera de la lista filtrada (ej. "Ver conversación
   // completa" desde el panel de contexto) — en ese caso se carga por id.
   const externa = useDoc<Conversation>(
@@ -157,18 +171,18 @@ export default function InboxPage() {
           </div>
         </header>
         <div className="flex-1 overflow-y-auto">
-          {convs.map((c) => (
+          {filas.map((r) => (
             <ConversationRow
-              key={c.id}
-              conv={c}
-              activa={c.id === selId}
-              siteNombre={siteNombre[c.data.siteId] ?? c.data.siteId}
+              key={r.conv.id}
+              row={r}
+              activa={r.conv.id === selId}
+              siteNombre={siteNombre[r.conv.data.siteId] ?? r.conv.data.siteId}
               idioma={idioma}
-              onClick={() => setSelId(c.id)}
+              onClick={() => setSelId(r.conv.id)}
               t={t}
             />
           ))}
-          {convs.length === 0 && (
+          {filas.length === 0 && (
             <div className="p-6 text-sm text-warm-gray-2 text-center">—</div>
           )}
         </div>
@@ -197,7 +211,7 @@ export default function InboxPage() {
             onOpenContext={mostrarCtx ? () => setCtxAbierto(true) : undefined}
           />
         ) : (
-          <InboxVacio convs={convs} t={t} />
+          <InboxVacio filas={filas} t={t} />
         )}
       </section>
 
@@ -245,9 +259,9 @@ export default function InboxPage() {
 }
 
 /** Estado vacío del panel de conversación: guía + pulso de la bandeja visible. */
-function InboxVacio({ convs, t }: { convs: Row<Conversation>[]; t: ReturnType<typeof useT> }) {
-  const abiertas = convs.filter((c) => c.data.estado !== 'resolved').length;
-  const sinLeer = convs.filter((c) => (c.data.unread?.agentes ?? 0) > 0).length;
+function InboxVacio({ filas, t }: { filas: InboxRow[]; t: ReturnType<typeof useT> }) {
+  const abiertas = filas.filter((r) => r.conv.data.estado !== 'resolved').length;
+  const sinLeer = filas.filter((r) => r.unreadTotal > 0).length;
 
   return (
     <div className="flex-1 flex items-center justify-center">
@@ -284,24 +298,24 @@ function InboxVacio({ convs, t }: { convs: Row<Conversation>[]; t: ReturnType<ty
 }
 
 function ConversationRow({
-  conv,
+  row,
   activa,
   siteNombre,
   idioma,
   onClick,
   t,
 }: {
-  conv: Row<Conversation>;
+  row: InboxRow;
   activa: boolean;
   siteNombre: string;
   idioma: 'es' | 'en';
   onClick(): void;
   t: ReturnType<typeof useT>;
 }) {
-  const c = conv.data;
+  const c = row.conv.data;
   const grupo = c.tipo === 'grupo';
   const nombre = grupo ? (c.groupName ?? c.clientNombre ?? 'Equipo') : (c.contactNombre ?? '—');
-  const unreadAgentes = c.unread?.agentes ?? 0;
+  const unreadAgentes = row.unreadTotal;
 
   return (
     <button
@@ -354,6 +368,15 @@ function ConversationRow({
             {(!grupo && c.groupName ? c.groupName : siteNombre).toUpperCase()}
           </span>
           <EstadoChip estado={c.estado} idioma={idioma} />
+          {row.botVivo && c.estado !== 'bot' && (
+            <span
+              title={t('inbox.botActivo')}
+              className="text-[8.5px] font-bold tracking-wider bg-ai-bg text-ai px-1.5 py-0.5 rounded-full flex items-center gap-0.5"
+            >
+              <span className="msr text-[11px]">smart_toy</span>
+              {t('inbox.botActivo').toUpperCase()}
+            </span>
+          )}
           {c.estado === 'resolved' && c.categoria && (
             <span className="text-[8.5px] font-bold tracking-wider bg-cream-2 text-warm-gray px-1.5 py-0.5 rounded-full">
               {categoryLabel(c.categoria, idioma).toUpperCase()}

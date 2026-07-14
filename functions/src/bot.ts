@@ -459,6 +459,12 @@ export const botReply = onDocumentCreated(
       update.escaladoA = agenteConvId;
       update.escaladoAt = FieldValue.serverTimestamp();
       update.botIntentos = 0;
+      // The bot conversation closes on handoff (same as the feedback-escalate
+      // path): it stays as the bot registry; the next user message in the bot
+      // channel opens a fresh segment.
+      update.estado = 'resolved';
+      update.resueltaPor = 'bot';
+      update.resueltaAt = FieldValue.serverTimestamp();
     }
     await convRef.update(update);
 

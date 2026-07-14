@@ -66,7 +66,7 @@ export const ConversationView = forwardRef<
   // Ambos son hilos continuos segmentados: el grupo encadena sus segmentos por
   // cliente; la directa, las conversaciones del contacto.
   const directaThread = useContactThread(grupo ? null : (c.contactId ?? null));
-  const grupoThread = useGroupThread(grupo ? (c.clientId ?? null) : null);
+  const grupoThread = useGroupThread(grupo ? (c.groupId ?? null) : null);
   const thread = grupo ? grupoThread : directaThread;
 
   const filas: ThreadRow[] = thread.filas;
@@ -75,6 +75,21 @@ export const ConversationView = forwardRef<
   const loadOlder = thread.loadOlder;
   const activa = thread.activa ?? conv;
   const convPorId = thread.convPorId;
+
+  // Live agent-channel conversation. Agent replies always go to this channel:
+  // the bot channel is a separate registry the console never writes into
+  // (legacy docs without subcanal count as 'agente'). Map preserves the
+  // updatedAt-desc order of the thread, so the first match is the freshest.
+  const activaAgente = useMemo(
+    () =>
+      [...convPorId.values()].find(
+        (cv) => (cv.data.subcanal ?? 'agente') === 'agente' && cv.data.estado !== 'resolved',
+      ) ?? null,
+    [convPorId],
+  );
+  // Resolve targets the live agent conversation; with only a live bot doc it
+  // lets the console close that one (registry hygiene).
+  const convResolver = activaAgente ?? (activa.data.estado !== 'resolved' ? activa : null);
 
   const [tab, setTab] = useState<'responder' | 'nota'>('responder');
   const [draft, setDraft] = useState('');
@@ -276,6 +291,7 @@ export const ConversationView = forwardRef<
       return { id, data: { ...activa.data, estado: 'open' } };
     }
     if (!c.contactId || !agent) return null;
+    if (activaAgente) return activaAgente;
     const targetId = await ensureAgentConversation({
       contactId: c.contactId,
       contactNombre: c.contactNombre,
@@ -285,20 +301,7 @@ export const ConversationView = forwardRef<
       uid: agent.uid,
       nombreAgente: agent.perfil?.nombre ?? 'Agente',
     });
-    return { id: targetId, data: { ...c, estado: 'open' } };
-  }
-
-  /** Si el destino sigue en 'bot', el agente toma el control. */
-  async function tomarSiBot(targetId: string) {
-    if (!agent) return;
-    if (convPorId.get(targetId)?.data.estado === 'bot') {
-      await updateConversation(targetId, {
-        estado: 'open',
-        asignadoA: agent.uid,
-        asignadoNombre: agent.perfil?.nombre ?? '',
-        asignadoFoto: agent.perfil?.fotoUrl ?? null,
-      });
-    }
+    return { id: targetId, data: { ...c, estado: 'open', subcanal: 'agente' } };
   }
 
   /** Empezar a responder un mensaje concreto (cita + foco en el input). */
@@ -345,7 +348,6 @@ export const ConversationView = forwardRef<
         setDraft('');
         setPendingFile(null);
         setReplyTo(null);
-        if (!grupo) await tomarSiBot(target.id);
       } finally {
         setSubiendo(false);
       }
@@ -357,10 +359,11 @@ export const ConversationView = forwardRef<
     setReplyTo(null);
     anclarAlFondo();
     const nombreChat = agent.perfil?.nombreChat ?? agent.perfil?.nombre ?? 'Soporte';
-    const target = await convDestino();
+    // Internal notes annotate the viewed conversation (even a bot/resolved one);
+    // replies always route to the agent channel via convDestino.
+    const target = tab === 'nota' ? activa : await convDestino();
     if (!target) return;
     await agentSendMessage(target, agent.uid, nombreChat, texto, tab === 'nota', cita);
-    if (!grupo && tab === 'responder') await tomarSiBot(target.id);
   }
 
   /** Inserts an emoji at the caret position, keeping focus in the textarea. */
@@ -396,11 +399,12 @@ export const ConversationView = forwardRef<
 
   async function asignar(uid: string, nombreAgente: string, foto?: string) {
     setShowAsignar(false);
-    await updateConversation(activa.id, {
+    // Assignment targets the agent channel when it exists; it never converts a
+    // bot conversation (the bot keeps attending its channel until handoff).
+    await updateConversation((activaAgente ?? activa).id, {
       asignadoA: uid,
       asignadoNombre: nombreAgente,
       asignadoFoto: foto ?? null,
-      ...(activa.data.estado === 'bot' ? { estado: 'open' } : {}),
     });
   }
 
@@ -463,7 +467,7 @@ export const ConversationView = forwardRef<
             </div>
           )}
         </div>
-        {activa.data.estado !== 'resolved' && (
+        {convResolver && (
           <button
             onClick={() => setShowResolve(true)}
             title={t('inbox.resolver')}
@@ -552,18 +556,26 @@ export const ConversationView = forwardRef<
               );
             }
 
-            // Marcador "Conversación resuelta · categoría" al final de una
-            // conversación resuelta — se muestra al instante (derivado del estado).
+            // Marcador al final de una conversación cerrada — se muestra al
+            // instante (derivado del estado). Un segmento escalado al agente
+            // se marca distinto de uno resuelto.
             if (finDeConv && convActual?.data.estado === 'resolved') {
+              const escalada = Boolean(convActual.data.escaladoA);
               const cat = convActual.data.categoria
                 ? categoryLabel(convActual.data.categoria, idioma)
                 : '';
               nodes.push(
                 <div key={`res_${f.convId}_${f.msg.id}`} className="self-stretch my-1 flex justify-center">
-                  <span className="inline-flex items-center gap-1.5 text-[10px] font-bold tracking-wide bg-ok-bg text-ok-dark rounded-full px-3 py-1">
-                    <span className="msr text-[13px]">check_circle</span>
-                    {t('inbox.convResuelta')}
-                    {cat ? ` · ${cat}` : ''}
+                  <span
+                    className={`inline-flex items-center gap-1.5 text-[10px] font-bold tracking-wide rounded-full px-3 py-1 ${
+                      escalada ? 'bg-ai-bg text-ai' : 'bg-ok-bg text-ok-dark'
+                    }`}
+                  >
+                    <span className="msr text-[13px]">
+                      {escalada ? 'support_agent' : 'check_circle'}
+                    </span>
+                    {escalada ? t('inbox.convEscalada') : t('inbox.convResuelta')}
+                    {!escalada && cat ? ` · ${cat}` : ''}
                   </span>
                 </div>,
               );
@@ -785,7 +797,9 @@ export const ConversationView = forwardRef<
       </footer>
 
       {showConvert && <ConvertTicketModal conv={activa} onClose={() => setShowConvert(false)} />}
-      {showResolve && <ResolveModal convId={activa.id} onClose={() => setShowResolve(false)} />}
+      {showResolve && convResolver && (
+        <ResolveModal convId={convResolver.id} onClose={() => setShowResolve(false)} />
+      )}
       {verTicketId && (
         <TicketDetailModal ticketId={verTicketId} onClose={() => setVerTicketId(null)} />
       )}
