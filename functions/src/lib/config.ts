@@ -14,7 +14,8 @@ export const DEFAULT_WIDGET_CONFIG: WidgetConfig = {
   accent: '#E8EEF5',
   posicion: 'bottom-left',
   titulo: 'Soporte Aditum',
-  saludo: '¡Hola! ¿En qué podemos ayudarte?',
+  // Vacío = el saludo por defecto de i18n ("Hola, {nombre} 👋") según idioma.
+  saludo: '',
   botonBot: true,
   botonAgente: true,
   botonChatEquipo: false,

@@ -70,13 +70,22 @@ export default function LoginPage() {
             Atendé las conversaciones y tickets de los administradores de condominios, con el bot de
             Claude como primera línea.
           </p>
-          <div className="flex items-center gap-2 mt-7">
-            <span className="relative flex h-2 w-2">
-              <span className="absolute inline-flex h-full w-full rounded-full bg-[#4ADE80] opacity-60 animate-ping" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-[#4ADE80]" />
+          <div className="flex flex-wrap items-center gap-2 mt-7">
+            <span className="inline-flex items-center gap-2 bg-white/[.08] border border-white/10 rounded-full px-3 py-1.5 text-[11.5px] font-semibold text-white/80">
+              <span className="relative flex h-1.5 w-1.5">
+                <span className="absolute inline-flex h-full w-full rounded-full bg-[#4ADE80] opacity-60 animate-ping" />
+                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-[#4ADE80]" />
+              </span>
+              Atención en tiempo real
             </span>
-            <span className="text-[12px] text-white/60">Atención en tiempo real · Bot con Claude</span>
+            <span className="inline-flex items-center gap-1.5 bg-white/[.08] border border-white/10 rounded-full px-3 py-1.5 text-[11.5px] font-semibold text-white/80">
+              <span className="msr text-[14px] text-[#C9B2F0]">smart_toy</span>
+              Aden · bot con Claude
+            </span>
           </div>
+          <p className="text-[11px] text-white/35 mt-8">
+            © {new Date().getFullYear()} Aditum CR · Todos los derechos reservados
+          </p>
         </div>
       </aside>
 
@@ -144,9 +153,8 @@ export default function LoginPage() {
             {busy ? 'Ingresando…' : 'Iniciar sesión'}
           </button>
 
-          <p className="text-center text-[11.5px] text-[#8A8375] mt-5">
-            ¿Problemas para ingresar?{' '}
-            <span className="text-[#5D3A5F] font-semibold">Contactá al administrador</span>
+          <p className="text-center text-[11px] text-[#B7B0A2] mt-6 lg:hidden">
+            © {new Date().getFullYear()} Aditum CR
           </p>
         </form>
       </main>

@@ -437,7 +437,6 @@ async function seedSettings() {
       posicion: 'bottom-left',
       titulo: 'Soporte Aditum',
       ...(logoUrl ? { logoUrl } : {}),
-      saludo: '¡Hola! ¿En qué podemos ayudarte?',
       botonBot: true,
       botonAgente: true,
       botonChatEquipo: false,

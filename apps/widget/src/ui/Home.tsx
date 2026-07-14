@@ -51,7 +51,11 @@ export function Home({ fb, session, go, directaBot, directaAgente, grupo, activo
     <div class="ac-home">
       <div class="ac-home-hero">
         <div class="ac-home-marca">{cfg.titulo}</div>
-        <div class="ac-home-saludo">{t('inicio.saludo', { nombre: primerNombre })}</div>
+        <div class="ac-home-saludo">
+          {cfg.saludo?.trim()
+            ? cfg.saludo.replace(/\{nombre\}/g, primerNombre)
+            : t('inicio.saludo', { nombre: primerNombre })}
+        </div>
         {session.rol && <span class="ac-home-rol">{session.rol}</span>}
         <div class={`ac-home-status ${session.enHorario ? 'ac-home-status-on' : 'ac-home-status-off'}`}>
           <div class="ac-home-status-head">

@@ -8,7 +8,14 @@ import type { Contact, Idioma } from '@aditum-chat/shared';
 import { formatTicketNumber, ticketStatusLabels } from '@aditum-chat/shared';
 import { useAuth } from '@/lib/auth';
 import { useSiteFilter } from '@/components/Shell';
-import { fmtRelativo, iniciales, useContactTickets, useSites, type Row } from '@/lib/data';
+import {
+  ensureAgentConversation,
+  fmtRelativo,
+  iniciales,
+  useContactTickets,
+  useSites,
+  type Row,
+} from '@/lib/data';
 import { useClients, useContactConversations, useContacts } from '@/lib/data-contactos';
 
 // Catálogo local (las pantallas nuevas no editan packages/shared).
@@ -102,6 +109,28 @@ export default function ContactosPage() {
   );
 
   const sel = filtrados.find((c) => c.id === selId) ?? null;
+
+  // "Conversar": asegura la conversación de agente del contacto (reusa la
+  // activa o abre un segmento nuevo) y la abre en el inbox vía deep-link.
+  const [abriendo, setAbriendo] = useState(false);
+  async function conversar(c: Row<Contact>) {
+    if (!agent || abriendo) return;
+    setAbriendo(true);
+    try {
+      const convId = await ensureAgentConversation({
+        contactId: c.id,
+        contactNombre: c.data.nombre,
+        siteId: c.data.siteId,
+        clientId: c.data.clientId,
+        clientNombre: c.data.clientId ? clientNombre[c.data.clientId] : undefined,
+        uid: agent.uid,
+        nombreAgente: agent.perfil?.nombre ?? agent.user.email ?? 'Agente',
+      });
+      router.push(`/inbox?c=${convId}`);
+    } finally {
+      setAbriendo(false);
+    }
+  }
 
   return (
     <div className="flex h-full">
@@ -205,7 +234,7 @@ export default function ContactosPage() {
                   }
                   m={m}
                   onSelect={() => setSelId(c.id === selId ? null : c.id)}
-                  onConversar={() => router.push('/inbox')}
+                  onConversar={() => void conversar(c)}
                 />
               ))}
             </tbody>
@@ -233,7 +262,7 @@ export default function ContactosPage() {
             idioma={idioma}
             m={m}
             onClose={() => setSelId(null)}
-            onConversar={() => router.push('/inbox')}
+            onConversar={() => void conversar(sel)}
           />
         </>
       )}
@@ -304,9 +333,13 @@ function ContactRow({
             {m.conversar}
           </button>
           <button
-            onClick={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              onSelect();
+            }}
             className="text-warm-gray-2 hover:text-ink p-1"
-            aria-label="Más opciones"
+            aria-label="Ver información"
+            title="Ver información"
           >
             <span className="msr text-[17px]">more_horiz</span>
           </button>
@@ -337,8 +370,8 @@ function ContactPanel({
 
   return (
     <aside className="fixed inset-y-0 right-0 z-40 w-full max-w-sm shadow-2xl lg:static lg:z-auto lg:max-w-none lg:w-[300px] lg:shadow-none flex-none border-l border-warm-border bg-white overflow-y-auto">
-      {/* Franja blanca tras el status bar del teléfono (PWA standalone). */}
-      <div className="lg:hidden bg-white h-[env(safe-area-inset-top)]" />
+      {/* Franja plum tras el status bar del teléfono (texto iOS en blanco). */}
+      <div className="lg:hidden bg-navy-deep h-[env(safe-area-inset-top)]" />
       <div className="p-4 border-b border-cream-3">
         <div className="flex items-start gap-3">
           <div className="h-11 w-11 rounded-full flex-none flex items-center justify-center text-[13px] font-bold bg-cream-3 text-ink-2">

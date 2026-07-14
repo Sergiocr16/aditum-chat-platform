@@ -15,7 +15,7 @@ import type {
   Site,
   WidgetConfig,
 } from '@aditum-chat/shared';
-import { formatSchedule } from '@aditum-chat/shared';
+import { formatSchedule, makeT, widgetMessages } from '@aditum-chat/shared';
 import { db, storage } from '@/lib/firebase';
 import { useAuth } from '@/lib/auth';
 import { useDoc, useSites } from '@/lib/data';
@@ -27,7 +27,7 @@ const DEFAULT_WIDGET: WidgetConfig = {
   accent: '#E8EEF5',
   posicion: 'bottom-left',
   titulo: 'Soporte Aditum',
-  saludo: '¡Hola! ¿En qué podemos ayudarte?',
+  saludo: '',
   botonBot: true,
   botonAgente: true,
   botonChatEquipo: false,
@@ -68,6 +68,7 @@ const M = {
     mensajes: 'Mensajes',
     titulo: 'Título del widget',
     saludo: 'Saludo inicial',
+    saludoHint: 'Es el saludo grande del inicio del widget · vacío usa el default por idioma · {nombre} = nombre del usuario',
     botones: 'Botones de inicio',
     botonesSub: 'Qué opciones ve el usuario al abrir el chat',
     botonBot: 'Preguntas al bot',
@@ -125,6 +126,7 @@ const M = {
     mensajes: 'Messages',
     titulo: 'Widget title',
     saludo: 'Welcome message',
+    saludoHint: "The big greeting on the widget home · empty uses the per-language default · {nombre} = the user's name",
     botones: 'Start buttons',
     botonesSub: 'Options the user sees when opening the chat',
     botonBot: 'Ask the bot',
@@ -504,8 +506,10 @@ export function WidgetConfigTab() {
                   rows={2}
                   value={eff.saludo}
                   onChange={(e) => setW('saludo', e.target.value)}
+                  placeholder={idioma === 'es' ? 'Hola, {nombre} 👋' : 'Hi, {nombre} 👋'}
                   className={`${inputCls} resize-none`}
                 />
+                <div className="text-[10.5px] text-warm-gray-2 mt-1">{m.saludoHint}</div>
               </Campo>
             </div>
           </Card>
@@ -628,7 +632,7 @@ export function WidgetConfigTab() {
           <WidgetPreview
             config={eff}
             horarioTexto={formatSchedule(effSchedule, idioma)}
-            m={m}
+            idioma={idioma}
           />
         </aside>
       </div>
@@ -657,52 +661,77 @@ function ToggleMini({ on, onChange }: { on: boolean; onChange(v: boolean): void 
   );
 }
 
-/** Mock estático del widget (no iframe) — se actualiza en vivo con la config. */
+/** Mock estático del widget (no iframe) — replica el Inicio real del widget
+ * (header solo-marca, hero saludo + tarjeta de estado, acciones con flecha,
+ * tabbar) usando los mismos textos de `widgetMessages`. */
 function WidgetPreview({
   config,
   horarioTexto,
-  m,
+  idioma,
 }: {
   config: WidgetConfig;
   horarioTexto: string;
-  m: (typeof M)[Idioma];
+  idioma: Idioma;
 }) {
   const derecha = config.posicion === 'bottom-right';
   const accent = config.accent ?? '#E8EEF5';
+  const t = makeT(widgetMessages, idioma);
+  const nombre = idioma === 'es' ? 'María' : 'Maria';
   return (
     <div className="flex flex-col gap-3">
       <div className="rounded-panel overflow-hidden border border-warm-border shadow-raised bg-white">
-        {/* Header: logo horizontal en formato natural (fondo transparente) + cerrar */}
+        {/* Header real: solo la marca (logo o inicial) + cerrar */}
         <div
-          className="h-[52px] px-4 text-white flex items-center gap-2.5"
+          className="px-4 py-3 text-white flex items-center justify-between"
           style={{ background: config.color }}
         >
           {config.logoUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={config.logoUrl} alt="" className="h-7 w-auto max-w-[120px] object-contain flex-none" />
+            <img src={config.logoUrl} alt="" className="h-7 w-auto max-w-[140px] object-contain" />
           ) : (
-            <div className="h-7 w-7 rounded-full bg-white/20 flex-none flex items-center justify-center text-[12px] font-bold">
-              {(config.titulo[0] ?? 'A').toUpperCase()}
+            <div className="h-7 w-7 rounded-full bg-white/20 flex items-center justify-center text-[12px] font-bold uppercase">
+              {config.titulo[0] ?? 'A'}
             </div>
           )}
-          <div className="text-[13.5px] font-semibold flex-1 truncate">{config.titulo}</div>
           <span className="msr text-[18px] opacity-80">close</span>
         </div>
-        <div className="p-4 bg-cream-0 flex flex-col gap-1 min-h-[210px]">
-          {/* Hero: saludo + estado + horario (como el Inicio real) */}
-          <div className="text-[16px] font-bold text-ink">{config.saludo}</div>
-          <div className="flex items-center gap-1.5 text-[11px] font-semibold text-ink-2">
-            <span className="h-2 w-2 rounded-full bg-ok inline-block" />
-            {m.previewEnLinea}
+
+        <div className="px-4 py-5 bg-cream-0 flex flex-col">
+          {/* Hero: marca discreta → saludo protagonista → rol como chip */}
+          <div className="text-[10.5px] font-bold tracking-[.09em] uppercase text-warm-gray-2">
+            {config.titulo}
           </div>
-          {horarioTexto && <div className="text-[10.5px] text-warm-gray">{horarioTexto}</div>}
-          {/* Botones de inicio según toggles — el primero muestra el color de acento (activo) */}
-          <div className="flex flex-col gap-1.5 mt-2.5">
+          <div className="mt-1.5 text-[21px] font-bold tracking-[-.01em] leading-tight text-ink">
+            {config.saludo?.trim()
+              ? config.saludo.replaceAll('{nombre}', nombre)
+              : t('inicio.saludo', { nombre })}
+          </div>
+          <span className="self-start mt-2 px-2.5 py-[3px] rounded-full bg-cream-2 text-[11px] font-semibold text-ink-2">
+            {idioma === 'es' ? 'Administradora' : 'Administrator'}
+          </span>
+
+          {/* Tarjeta de estado (en línea) */}
+          <div className="mt-3.5 px-3.5 py-3 rounded-xl bg-ok-bg flex flex-col gap-0.5">
+            <div className="flex items-center gap-2 text-[12.5px] font-bold text-ok-dark">
+              <span className="h-2 w-2 rounded-full bg-ok inline-block" />
+              {t('inicio.enLinea')}
+            </div>
+            <div className="text-[12px] text-ink-2 pl-4">{t('inicio.enLineaSub')}</div>
+            {horarioTexto && (
+              <div className="flex items-center gap-1.5 mt-1 pl-4 text-[11.5px] text-warm-gray">
+                <span className="msr text-[14px] text-warm-gray-2">schedule</span>
+                {horarioTexto}
+              </div>
+            )}
+          </div>
+
+          {/* Acciones — la primera con el color de acento (estado activo) */}
+          <div className="flex flex-col gap-2 mt-4">
             {config.botonBot && (
               <PreviewBoton
                 icon="smart_toy"
                 iconUrl={config.botonBotIcono}
-                label={config.botonBotTexto || m.previewBot}
+                label={config.botonBotTexto || t('inicio.preguntasSistema')}
                 color={config.color}
                 accent={accent}
                 activo
@@ -713,7 +742,7 @@ function WidgetPreview({
               <PreviewBoton
                 icon="support_agent"
                 iconUrl={config.botonAgenteIcono}
-                label={config.botonAgenteTexto || m.previewAgente}
+                label={config.botonAgenteTexto || t('inicio.hablarAgente')}
                 color={config.color}
                 badge={2}
               />
@@ -722,12 +751,13 @@ function WidgetPreview({
               <PreviewBoton
                 icon="groups"
                 iconUrl={config.botonEquipoIcono}
-                label={config.botonEquipoTexto || m.previewEquipo}
+                label={config.botonEquipoTexto || t('inicio.chatEquipo')}
                 color={config.color}
               />
             )}
           </div>
         </div>
+
         {/* Tab bar Inicio / Tickets */}
         <div className="flex border-t border-cream-3 bg-white">
           <div
@@ -735,11 +765,11 @@ function WidgetPreview({
             style={{ color: config.color }}
           >
             <span className="msr msr-fill text-[18px]">home</span>
-            {m.previewInicio}
+            {idioma === 'es' ? 'Inicio' : 'Home'}
           </div>
           <div className="flex-1 flex flex-col items-center gap-0.5 py-2 text-[10px] font-semibold text-warm-gray-2">
             <span className="msr text-[18px]">confirmation_number</span>
-            {m.previewTickets}
+            Tickets
           </div>
         </div>
       </div>

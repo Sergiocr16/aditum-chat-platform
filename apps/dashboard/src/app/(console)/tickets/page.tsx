@@ -218,7 +218,6 @@ export default function TicketsPage() {
                 <Th>{t('tickets.col.numero')}</Th>
                 <Th>{t('tickets.col.asunto')}</Th>
                 <Th>{t('tickets.col.cliente')}</Th>
-                <Th>{t('tickets.col.sitio')}</Th>
                 <Th>{t('tickets.col.estado')}</Th>
                 <Th>{t('tickets.col.prioridad')}</Th>
                 <Th>{t('tickets.col.agente')}</Th>
@@ -250,9 +249,6 @@ export default function TicketsPage() {
                   </td>
                   <td className="px-4 py-3 text-[12.5px] text-ink-2 whitespace-nowrap">
                     {tk.data.clientNombre ?? tk.data.groupName ?? '—'}
-                  </td>
-                  <td className="px-4 py-3">
-                    <SitioChip nombre={siteNombre[tk.data.siteId] ?? tk.data.siteId} />
                   </td>
                   <td className="px-4 py-3">
                     <TicketEstadoChip estado={tk.data.estado} idioma={idioma} />
