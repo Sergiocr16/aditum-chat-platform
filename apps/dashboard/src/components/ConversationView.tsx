@@ -173,8 +173,14 @@ export const ConversationView = forwardRef<
   useEffect(() => {
     const el = inputRef.current;
     if (!el) return;
+    if (!draft) {
+      // Empty: let CSS size it naturally (measuring at mount can freeze
+      // fallback-font metrics before the webfont loads).
+      el.style.height = '';
+      return;
+    }
     el.style.height = 'auto';
-    el.style.height = `${el.scrollHeight}px`;
+    el.style.height = `${el.scrollHeight + el.offsetHeight - el.clientHeight}px`;
   }, [draft, tab]);
   const bodyRef = useRef<HTMLDivElement>(null);
   const ajusteScroll = useRef<number | null>(null);

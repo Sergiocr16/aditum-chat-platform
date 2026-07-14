@@ -1033,12 +1033,19 @@
   padding-top: 0;
   padding-bottom: 0;
 }
-.ac-escritorio .ac-tabbar,
-.ac-escritorio .ac-composer {
+.ac-escritorio .ac-tabbar {
   height: 66px;
   box-sizing: border-box;
 }
-.ac-escritorio .ac-composer { align-items: center; padding-top: 0; padding-bottom: 0; }
+/* min-height (not height): the band matches the 66px tabbar single-line,
+   but must GROW with the auto-expanding textarea (WhatsApp Web style). */
+.ac-escritorio .ac-composer {
+  min-height: 66px;
+  box-sizing: border-box;
+  align-items: flex-end;
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
 .ac-escritorio .ac-tab { justify-content: center; padding: 0; }
 
 /* ---------- Activo en el menú (escritorio): solo color de acento ---------- */

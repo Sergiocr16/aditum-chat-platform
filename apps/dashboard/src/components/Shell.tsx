@@ -55,11 +55,19 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const [push, setPush] = useState<PushEstado>('desactivado');
   useEffect(() => {
     if (!pushDisponible()) return setPush('no-disponible');
-    if (pushPreferencia() && agent) {
+    if (!agent) return;
+    const pref = pushPreferencia();
+    const permisoDado = 'Notification' in window && Notification.permission === 'granted';
+    const tokenRegistrado = (agent.perfil?.fcmTokens?.length ?? 0) > 0;
+    // Rehidratar encendido con la preferencia guardada, o — si localStorage se
+    // perdió (p. ej. PWA instalada = storage aparte) — con permiso ya dado +
+    // token del agente registrado. Un 'off' explícito siempre gana.
+    if (permisoDado && pref !== 'off' && (pref === 'on' || tokenRegistrado)) {
+      setPush('activado'); // reflejo inmediato; abajo se refresca el token
       habilitarPush(agent.uid).then(setPush);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agent?.uid]);
+  }, [agent?.uid, agent?.perfil?.fcmTokens?.length]);
 
   async function togglePush() {
     if (!agent || push === 'no-disponible') return;

@@ -33,8 +33,11 @@ export function pushDisponible(): boolean {
   );
 }
 
-export function pushPreferencia(): boolean {
-  return typeof window !== 'undefined' && localStorage.getItem(PREF_KEY) === 'on';
+/** Preferencia guardada en este navegador: 'on' | 'off' | null (nunca eligió). */
+export function pushPreferencia(): 'on' | 'off' | null {
+  if (typeof window === 'undefined') return null;
+  const v = localStorage.getItem(PREF_KEY);
+  return v === 'on' ? 'on' : v === 'off' ? 'off' : null;
 }
 
 let messagingInstance: Messaging | null = null;
@@ -56,6 +59,9 @@ export async function habilitarPush(uid: string): Promise<PushEstado> {
 
   const permiso = await Notification.requestPermission();
   if (permiso !== 'granted') return 'denegado';
+  // Record the intent as soon as permission exists — a later failure in
+  // token registration must not leave the preference unsaved.
+  localStorage.setItem(PREF_KEY, 'on');
 
   const registration = await registrarSw();
   const token = await getToken(messaging, {
@@ -65,7 +71,6 @@ export async function habilitarPush(uid: string): Promise<PushEstado> {
   if (!token) return 'no-disponible';
 
   await updateDoc(doc(db, 'team', uid), { fcmTokens: arrayUnion(token) });
-  localStorage.setItem(PREF_KEY, 'on');
 
   // En primer plano solo notificar si la pestaña está oculta (el inbox ya suena).
   // Mensajes data-only: título/cuerpo vienen en payload.data.

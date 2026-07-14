@@ -546,8 +546,16 @@ export function Chat({
   useEffect(() => {
     const el = inputRef.current;
     if (!el) return;
+    if (!draft) {
+      // Empty: let CSS size it naturally. Measuring at mount can capture
+      // fallback-font metrics (webfont not loaded yet) and freeze a stale,
+      // taller height; the natural height re-flows on its own.
+      el.style.height = '';
+      return;
+    }
     el.style.height = 'auto';
-    el.style.height = `${el.scrollHeight}px`;
+    // scrollHeight excludes borders; height (border-box) includes them.
+    el.style.height = `${el.scrollHeight + el.offsetHeight - el.clientHeight}px`;
   }, [draft]);
   const typingTimer = useRef<number | null>(null);
   const ajusteScroll = useRef<number | null>(null);

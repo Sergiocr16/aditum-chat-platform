@@ -13,6 +13,7 @@ import {
 import { playNotificationSound } from '../sound.js';
 import { Home } from './Home.js';
 import { Chat } from './Chat.js';
+import { LauncherIcon } from './LauncherIcon.js';
 import { Tickets } from './Tickets.js';
 
 export type WidgetView = 'inicio' | 'chat' | 'grupo' | 'tickets';
@@ -563,7 +564,7 @@ export function App({ settings, onReady, emit }: Props) {
             }
           }}
         >
-          <span class="ac-icon ac-bubble-icon">{openPanel ? 'close' : 'chat'}</span>
+          {openPanel ? <span class="ac-icon ac-bubble-icon">close</span> : <LauncherIcon />}
           {!openPanel && unread > 0 && <span class="ac-badge">{unread}</span>}
         </button>
       )}

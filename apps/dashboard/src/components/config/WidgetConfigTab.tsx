@@ -773,14 +773,14 @@ function WidgetPreview({
           </div>
         </div>
       </div>
-      {/* Burbuja según posición (siempre el ícono de mensaje) */}
+      {/* Burbuja según posición (réplica del LauncherIcon del widget) */}
       {!config.ocultarBurbuja && (
         <div className={`flex ${derecha ? 'justify-end' : 'justify-start'}`}>
           <div
             className="h-12 w-12 rounded-full flex items-center justify-center text-white shadow-raised"
             style={{ background: config.colorBurbuja ?? config.color }}
           >
-            <span className="msr msr-fill text-[22px]">chat</span>
+            <LauncherIconPreview />
           </div>
         </div>
       )}
@@ -836,4 +836,10 @@ function PreviewBoton({
       </span>
     </div>
   );
+}
+
+/** Mirror of the widget's default launcher icon (apps/widget/src/ui/launcher-icon.png). */
+function LauncherIconPreview() {
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img src="/launcher-icon.png" width={34} height={34} alt="" className="block" />;
 }
