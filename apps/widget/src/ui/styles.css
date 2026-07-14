@@ -1090,4 +1090,10 @@
 
   /* In-panel notice: clear the safe area too. */
   .ac-aviso { bottom: calc(76px + env(safe-area-inset-bottom)); }
+
+  /* iOS Safari auto-zooms focused fields with font-size < 16px: never zoom. */
+  .ac-root .ac-input,
+  .ac-root .ac-panel-amplio .ac-input {
+    font-size: 16px;
+  }
 }

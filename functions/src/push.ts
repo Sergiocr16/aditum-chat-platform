@@ -2,9 +2,11 @@ import { onDocumentCreated } from 'firebase-functions/v2/firestore';
 import { defineSecret } from 'firebase-functions/params';
 import { logger } from 'firebase-functions/v2';
 import { cert, getApps, initializeApp, type App } from 'firebase-admin/app';
+import { getDatabase } from 'firebase-admin/database';
 import { getMessaging, type Messaging } from 'firebase-admin/messaging';
 import type { Contact, Conversation, Message, Site } from '@aditum-chat/shared';
 import { db, messaging as defaultMessaging } from './lib/admin.js';
+import { markdownToPlain } from './lib/markdown.js';
 import { getSiteServiceAccount } from './pushConfig.js';
 
 const configKek = defineSecret('CONFIG_KEK');
@@ -43,7 +45,10 @@ async function messagingForSite(siteId: string): Promise<Messaging | null> {
       message: (err as Error).message,
     });
   }
-  siteApps.set(siteId, result);
+  // Only cache SUCCESSFUL inits: a warm instance that saw "no credentials yet"
+  // must retry once the admin saves them (otherwise it silently falls back to
+  // the platform project until the instance dies).
+  if (result) siteApps.set(siteId, result);
   return result;
 }
 
@@ -84,12 +89,29 @@ export const pushNotify = onDocumentCreated(
           : []
         : (conv.participantes ?? []).filter((p) => p.includes('_'));
 
-    const sender = (await messagingForSite(conv.siteId)) ?? defaultMessaging;
+    const senderSitio = await messagingForSite(conv.siteId);
+    const sender = senderSitio ?? defaultMessaging;
+
+    // Presence del widget (RTDB): si el contacto está VIENDO esta conversación
+    // ahora mismo, no hay que molestarlo con un push.
+    const PRESENCE_FRESH_MS = 90_000;
+    async function viendoConversacion(contactId: string): Promise<boolean> {
+      try {
+        const snap = await getDatabase().ref(`presence/${contactId}`).get();
+        const p = snap.val() as { convId?: string; at?: number } | null;
+        if (!p || p.convId !== event.params.convId) return false;
+        return typeof p.at === 'number' && Date.now() - p.at < PRESENCE_FRESH_MS;
+      } catch {
+        return false; // sin RTDB: mejor notificar de más que perder avisos
+      }
+    }
 
     for (const contactId of contactIds) {
       if (contactId === msg.sender.id) continue;
       // Respeta el silenciado por usuario (chats grupales).
       if (conv.silenciado?.[contactId]) continue;
+      // No molestar si tiene la conversación abierta en pantalla.
+      if (await viendoConversacion(contactId)) continue;
 
       const contactSnap = await db.doc(`contacts/${contactId}`).get();
       const contact = contactSnap.data() as Contact | undefined;
@@ -103,8 +125,12 @@ export const pushNotify = onDocumentCreated(
           : idioma === 'es'
             ? `${msg.sender.nombre} te respondió`
             : `${msg.sender.nombre} replied`;
+      // Plain text: bot replies carry markdown that reads as noise in a push.
+      const textoPlano = markdownToPlain(msg.texto);
       const body =
-        conv.tipo === 'grupo' ? `${msg.sender.nombre}: ${msg.texto}`.slice(0, 140) : msg.texto.slice(0, 140);
+        conv.tipo === 'grupo'
+          ? `${msg.sender.nombre}: ${textoPlano}`.slice(0, 140)
+          : textoPlano.slice(0, 140);
 
       try {
         const res = await sender.sendEachForMulticast({
@@ -124,9 +150,18 @@ export const pushNotify = onDocumentCreated(
         }
         logger.info('push enviado', {
           siteId: conv.siteId,
-          proyecto: site?.pushInfo?.projectId ?? 'propio',
+          // The ACTUAL sender project (pushInfo alone lies when init fails
+          // and the send falls back to the platform project).
+          proyecto: senderSitio ? (site?.pushInfo?.projectId ?? 'sitio') : 'propio',
           exitosos: res.successCount,
           fallidos: res.failureCount,
+          ...(res.failureCount > 0
+            ? {
+                errores: res.responses
+                  .filter((r) => r.error)
+                  .map((r) => r.error!.code ?? r.error!.message),
+              }
+            : {}),
         });
       } catch (err) {
         // En emuladores FCM no está disponible — no es un error fatal.

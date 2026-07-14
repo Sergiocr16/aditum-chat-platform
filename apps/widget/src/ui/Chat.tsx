@@ -21,6 +21,7 @@ import {
   sendAttachment,
   sendMessage,
   setTyping,
+  setViewing,
   submitBotFeedback,
   submitCsat,
   subscribeLatestMessages,
@@ -502,6 +503,32 @@ export function Chat({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fb, activa?.id, session]);
+
+  // Presence "viendo la conversación": mientras el chat esté visible en
+  // pantalla, pushNotify no manda push al teléfono. Heartbeat de 45s para que
+  // la marca no envejezca en webviews suspendidos sin evento de visibilidad.
+  useEffect(() => {
+    const convId = activa?.id;
+    if (!convId) return;
+    let timer: number | undefined;
+    const start = () => {
+      void setViewing(fb, session, convId, true);
+      if (timer) window.clearInterval(timer);
+      timer = window.setInterval(() => void setViewing(fb, session, convId, true), 45_000);
+    };
+    const stop = () => {
+      if (timer) window.clearInterval(timer);
+      timer = undefined;
+      void setViewing(fb, session, convId, false);
+    };
+    const onVis = () => (document.visibilityState === 'visible' ? start() : stop());
+    onVis();
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      document.removeEventListener('visibilitychange', onVis);
+      stop();
+    };
+  }, [fb, session, activa?.id]);
 
   // Preservar posición al prepender; auto-scroll abajo solo con mensajes nuevos.
   const ultimoId = filas[filas.length - 1]?.msg.id;

@@ -95,9 +95,13 @@
       setEstado(`Pidiendo payload cifrado… (entorno: ${selEnt.value})`);
       try {
         // Local: demoPayload del emulador. Prod: simulador del host (host-sim.mjs).
-        const url = env.payloadUrl
+        // ?deviceToken=<fcm> en la URL de esta página se reenvía al payload
+        // para probar push al teléfono.
+        const deviceToken = params.get('deviceToken');
+        const url = (env.payloadUrl
           ? `${env.payloadUrl}?user=${user}`
-          : `${env.functions}/demoPayload?user=${user}`;
+          : `${env.functions}/demoPayload?user=${user}`) +
+          (deviceToken ? `&deviceToken=${encodeURIComponent(deviceToken)}` : '');
         const res = await fetch(url);
         if (!res.ok) throw new Error(`payload HTTP ${res.status}` +
           (env.payloadUrl ? ' — ¿está corriendo host-sim.mjs en :4186?' : ''));

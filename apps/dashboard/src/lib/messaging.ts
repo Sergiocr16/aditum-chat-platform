@@ -73,9 +73,10 @@ export async function habilitarPush(uid: string): Promise<PushEstado> {
     if (!document.hidden) return;
     const d = payload.data ?? {};
     if (!d.title) return;
+    // Tag único por mensaje para que las notificaciones se apilen (ver SW).
     const notif = new Notification(d.title, {
       body: d.body,
-      tag: d.convId ?? 'aditum-chat',
+      tag: d.msgId ? `${d.convId}_${d.msgId}` : `aditum-chat-${Date.now()}`,
       icon: '/icon-192.png',
     });
     notif.onclick = () => {

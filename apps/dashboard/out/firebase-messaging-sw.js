@@ -23,9 +23,11 @@ const messaging = firebase.messaging();
 // Mensajes data-only: construimos la notificación acá (control total, sin duplicados).
 messaging.onBackgroundMessage((payload) => {
   const d = payload.data || {};
+  // Tag único por mensaje: las notificaciones se APILAN en el navegador (con un
+  // tag repetido se reemplazan; solo dedup si FCM re-entrega el mismo mensaje).
   self.registration.showNotification(d.title || 'Aditum Chat', {
     body: d.body || 'Nuevo mensaje',
-    tag: d.convId || 'aditum-chat',
+    tag: d.msgId ? d.convId + '_' + d.msgId : 'aditum-chat-' + Date.now(),
     icon: '/icon-192.png',
     data: { link: d.link || '/inbox' },
   });

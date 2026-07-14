@@ -31,9 +31,14 @@ const USERS = {
   ana: { userId: 'usr_2001', name: 'Ana Brenes', email: 'ana.brenes@gmail.com', role: 'Residente (filial B-14)', clientId: 'torres-de-sabana', clientName: 'Torres de Sabana', clientInfo: { location: 'Sabana, San José', units: 96, plan: 'Empresarial', customerSince: 2024, modules: ['Cobros', 'Reservas'] }, language: 'en' },
 };
 
-initializeApp({ projectId: PROJECT, credential: applicationDefault() });
-const db = getFirestore();
-const { keyHex } = (await db.doc(`sites/${SITE_ID}/secrets/current`).get()).data() ?? {};
+// Site key: SITE_KEY_HEX env (sin credenciales) o lectura de Firestore prod
+// (requiere GOOGLE_APPLICATION_CREDENTIALS / ADC).
+let keyHex = process.env.SITE_KEY_HEX?.trim();
+if (!keyHex) {
+  initializeApp({ projectId: PROJECT, credential: applicationDefault() });
+  const db = getFirestore();
+  ({ keyHex } = (await db.doc(`sites/${SITE_ID}/secrets/current`).get()).data() ?? {});
+}
 if (!keyHex) { console.error('No hay clave del sitio en prod. ¿Seedeaste?'); process.exit(1); }
 const key = Buffer.from(keyHex, 'hex');
 
@@ -49,8 +54,15 @@ createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
   if (url.pathname !== '/payload') { res.statusCode = 404; return res.end('nope'); }
   const user = USERS[url.searchParams.get('user') ?? 'juan'] ?? USERS.juan;
+  // Push testing: FCM device token via ?deviceToken=… (or DEVICE_TOKEN env default).
+  const deviceToken = url.searchParams.get('deviceToken') || process.env.DEVICE_TOKEN || '';
   const now = Math.floor(Date.now() / 1000);
-  const payload = encrypt({ ...user, iat: now, exp: now + 300 });
+  const payload = encrypt({
+    ...user,
+    ...(deviceToken ? { deviceToken } : {}),
+    iat: now,
+    exp: now + 300,
+  });
   res.setHeader('Content-Type', 'application/json');
   res.end(JSON.stringify({ siteId: SITE_ID, payload }));
 }).listen(PORT, '127.0.0.1', () => console.log(`host-sim en http://127.0.0.1:${PORT}/payload (paylods de PRODUCCIÓN)`));

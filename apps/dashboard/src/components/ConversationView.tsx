@@ -430,7 +430,7 @@ export const ConversationView = forwardRef<
               ? Object.values(c.participantesInfo ?? {})
                   .map((p) => p.nombre.split(' ')[0])
                   .join(', ')
-              : `${c.clientNombre ?? ''}${activa.data.asignadoNombre ? ` · ${activa.data.asignadoNombre}` : ''}`}
+              : `${c.clientNombre ?? ''}${(activaAgente ?? activa).data.asignadoNombre ? ` · ${(activaAgente ?? activa).data.asignadoNombre}` : ''}`}
           </div>
         </div>
         <button

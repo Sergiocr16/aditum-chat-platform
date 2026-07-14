@@ -3,6 +3,7 @@ import { logger } from 'firebase-functions/v2';
 import { FieldValue } from 'firebase-admin/firestore';
 import type { Conversation, Message, TeamMember } from '@aditum-chat/shared';
 import { db, messaging } from './lib/admin.js';
+import { markdownToPlain } from './lib/markdown.js';
 
 /**
  * Web Push (FCM) a los AGENTES de la consola cuando un usuario escribe.
@@ -46,8 +47,9 @@ export const notifyAgentsOnMessage = onDocumentCreated(
     const titulo = [conv.contactNombre ?? msg.sender.nombre, conv.clientNombre]
       .filter(Boolean)
       .join(' · ');
+    const textoPlano = markdownToPlain(msg.texto);
     const cuerpo =
-      msg.texto.length > 120 ? `${msg.texto.slice(0, 117)}…` : msg.texto || 'Nuevo mensaje';
+      textoPlano.length > 120 ? `${textoPlano.slice(0, 117)}…` : textoPlano || 'Nuevo mensaje';
     const link = `/inbox?c=${convId}`;
 
     try {
@@ -55,7 +57,9 @@ export const notifyAgentsOnMessage = onDocumentCreated(
       // Evita el auto-display de FCM (que dependía de config en el SW) y duplicados.
       const res = await messaging.sendEachForMulticast({
         tokens,
-        data: { title: titulo, body: cuerpo, convId, link },
+        // msgId keys the browser notification tag: unique per message so
+        // notifications STACK instead of replacing each other.
+        data: { title: titulo, body: cuerpo, convId, msgId: event.params.msgId, link },
         webpush: { fcmOptions: { link } },
       });
 

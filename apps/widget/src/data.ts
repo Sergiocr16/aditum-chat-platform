@@ -652,6 +652,31 @@ export async function setTyping(
   }
 }
 
+/**
+ * Presence "viendo esta conversación" (RTDB): mientras exista y esté fresca,
+ * pushNotify NO manda push al teléfono. onDisconnect la limpia al cerrar.
+ */
+export async function setViewing(
+  fb: WidgetFirebase,
+  session: WidgetSessionResponse,
+  convId: string,
+  viewing: boolean,
+): Promise<void> {
+  try {
+    const { getDatabase, ref, set, onDisconnect } = await import('firebase/database');
+    const rtdb = getDatabase(fb.app);
+    const node = ref(rtdb, `presence/${session.contactId}`);
+    if (viewing) {
+      await set(node, { convId, at: Date.now() });
+      onDisconnect(node).remove();
+    } else {
+      await set(node, null);
+    }
+  } catch {
+    // RTDB es opcional — sin presence solo se pierde el gating de push.
+  }
+}
+
 export function subscribeTyping(
   fb: WidgetFirebase,
   convId: string,

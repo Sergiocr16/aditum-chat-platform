@@ -82,3 +82,14 @@ body {
   background-repeat: repeat;
   background-size: 320px;
 }
+
+/* iOS Safari hace auto-zoom al enfocar campos con fuente < 16px. En pantallas
+   táctiles/angostas los campos van a 16px para que NUNCA haga ese zoom.
+   (!important: las clases text-[13px] de Tailwind ganan al selector de elemento.) */
+@media (max-width: 640px) {
+  input,
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+}
