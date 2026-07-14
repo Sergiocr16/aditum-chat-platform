@@ -1,13 +1,13 @@
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import type { TeamRole } from '@aditum-chat/shared';
 import { auth, db, FieldValue, Timestamp } from './lib/admin.js';
-import { formatSiteKey, generateSiteKeyHex } from './lib/crypto.js';
+import { formatSiteKey, generateSiteKeyHex, generateTempPassword } from './lib/crypto.js';
 
 /** Horas que la clave anterior sigue siendo válida tras rotar. */
 const GRACIA_ROTACION_HORAS = 24;
 
 interface ManageTeamInput {
-  accion: 'crear' | 'actualizar' | 'desactivar';
+  accion: 'crear' | 'actualizar' | 'desactivar' | 'eliminar' | 'resetPassword';
   uid?: string;
   email?: string;
   password?: string;
@@ -59,6 +59,23 @@ export const manageTeam = onCall({ region: 'us-central1' }, async (req) => {
     await auth.updateUser(input.uid, { disabled: true });
     await db.doc(`team/${input.uid}`).update({ activo: false });
     return { uid: input.uid };
+  }
+
+  if (input.accion === 'eliminar') {
+    if (input.uid === req.auth.uid) {
+      throw new HttpsError('failed-precondition', 'No podés eliminar tu propia cuenta.');
+    }
+    // Assigned conversations/tickets keep the denormalized asignadoNombre.
+    await auth.deleteUser(input.uid);
+    await db.doc(`team/${input.uid}`).delete();
+    return { uid: input.uid };
+  }
+
+  if (input.accion === 'resetPassword') {
+    // The plaintext only exists in this response — it is never persisted.
+    const password = generateTempPassword();
+    await auth.updateUser(input.uid, { password });
+    return { uid: input.uid, password };
   }
 
   // actualizar

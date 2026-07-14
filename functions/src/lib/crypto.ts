@@ -89,3 +89,15 @@ export function generateSiteKeyHex(): string {
 export function formatSiteKey(siteId: string, keyHex: string): string {
   return `pk_${siteId}_${keyHex}`;
 }
+
+/**
+ * Temporary agent password: 12 chars in Xxxx-Xxxx-Xxxx groups from an
+ * unambiguous alphabet (no 0/O/1/l/I) — easy to read out or copy. Meant to
+ * be shown once and changed by the agent on first sign-in.
+ */
+export function generateTempPassword(): string {
+  const alphabet = '23456789abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ';
+  const bytes = randomBytes(12);
+  const chars = [...bytes].map((b) => alphabet[b % alphabet.length]);
+  return `${chars.slice(0, 4).join('')}-${chars.slice(4, 8).join('')}-${chars.slice(8).join('')}`;
+}
