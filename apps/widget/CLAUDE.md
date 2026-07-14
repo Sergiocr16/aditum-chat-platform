@@ -53,6 +53,11 @@ demo/           Host-simulator page. scripts/verify-*.mjs headless checks.
   attachment-only messages use `messagePreview` ("📷 Foto").
 - **Welcome / auto-reply** is server-side (`functions/welcome.ts`); the widget just renders those
   first messages. Launcher button text/icon and the AI chip come from `session.widgetConfig`.
+- **Branding from config:** `--ac-primary` (color), `--ac-accent`, and `--ac-bubble`
+  (`colorBurbuja`, falls back to color) are set in App.tsx. The home greeting uses
+  `cfg.saludo` with `{nombre}` templating (empty = i18n default). The FAB's default icon is
+  `ui/LauncherIcon.tsx` (`launcher-icon.png` inlined as data URI; the console preview mirrors
+  `apps/dashboard/public/launcher-icon.png` — keep in sync).
 
 ## Notes
 

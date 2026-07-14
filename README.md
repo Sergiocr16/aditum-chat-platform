@@ -35,6 +35,9 @@ see [`docs/design-spec.md`](docs/design-spec.md).
   (send is the button), on desktop Enter sends / Shift+Enter breaks.
 - Launcher buttons with **configurable text and icon** per button (upload an image), an "AI" chip
   on the bot button, and open/close chevrons.
+- Per-site branding: primary/accent colors, a **separate launcher-bubble color**, and a
+  **configurable home greeting** with `{nombre}` templating (empty = per-language default). The
+  default launcher icon is the brand's chat-bubble-with-headset glyph.
 
 **Console (what your agents use)**
 - **Inbox** — live conversations with continuous segmented thread, resizable columns, and context
@@ -52,7 +55,8 @@ see [`docs/design-spec.md`](docs/design-spec.md).
   SLA compliance against the configured `settings/sla` target, CSAT distribution (5★→1★), trend,
   and per-agent / bot-helpfulness tables. Full-width on desktop.
 - **Configuración** — sites, widget appearance (including per-button text/icon and welcome/auto-reply
-  messages), SLA policy, team, tags, closing categories.
+  messages), SLA policy, team (invite, edit, **delete agents and reset their passwords** — the
+  generated temp password shows once with a copy button), tags, closing categories.
 - Desktop push (FCM Web Push) so agents get notified even with the tab closed.
 - **Installable PWA** — standalone display (no URL bar), plum icon set (maskable included), iOS
   safe-area handling; the console carries its own plum brand (`#2C1C2C`) distinct from the

@@ -64,10 +64,13 @@ src/lib/            firebase.ts (SDK + emulator wiring), auth.tsx, i18n.ts, soun
 - Desktop push: `messaging.ts` + service worker at `public/firebase-messaging-sw.js`
   (notification tag `convId_msgId` → stacking); disabled under emulators.
 - **Installable PWA:** `public/manifest.json` (standalone, start `/inbox`, plum `#2C1C2C`),
-  `appleWebApp.statusBarStyle: 'default'` + white safe-area strips so content never underlaps the
-  iOS status bar. Icon set in `public/` is generated from the master logo (transparent corners
+  `appleWebApp.statusBarStyle: 'black-translucent'` + **plum** safe-area strips (iOS draws the
+  clock in white — strips must stay dark) so content never underlaps the iOS status bar. Icon set in `public/` is generated from the master logo (transparent corners
   for favicon/PWA `any`, full-bleed plum for maskable/apple-touch) — regenerate from
   `logo/aditum-chat-logo-master-2048.png`, don't hand-edit.
 - Mobile (≤640px) forces 16px font on inputs (`globals.css`) to kill the iOS focus zoom.
+- **EquipoTab row actions:** key = reset password (server generates it via `manageTeam
+  resetPassword`; show-once modal with copy), trash = delete agent (`eliminar`; hidden on your own
+  row). Both use the inline Sí/No confirm pattern.
 - Run `pnpm --filter @aditum-chat/dashboard typecheck` after edits (prefix the nvm PATH).
 - Regenerating the hosting export corrupts a running dev server — see root `CLAUDE.md` gotcha.

@@ -22,12 +22,21 @@ export const notifyAgentsOnMessage = onDocumentCreated(
   },
   async (event) => {
     const msg = event.data?.data() as Message | undefined;
-    if (!msg || msg.sender.tipo !== 'user' || msg.interno) return;
+    if (!msg || msg.interno) return;
+    // User messages notify; system messages only when they are the bot
+    // escalation handoff (botConvRef) — the moment the chat reaches agents.
+    const esEscalacion = msg.sender.tipo === 'sistema' && Boolean(msg.botConvRef);
+    if (msg.sender.tipo !== 'user' && !esEscalacion) return;
 
     const convId = event.params.convId;
     const convSnap = await db.doc(`conversations/${convId}`).get();
     if (!convSnap.exists) return;
     const conv = convSnap.data() as Conversation;
+
+    // The bot is autonomous: agents are never pushed while it attends
+    // (estado 'bot' or the bot-channel registry); they get notified via the
+    // escalation into the agent channel.
+    if (conv.estado === 'bot' || conv.subcanal === 'bot') return;
 
     // Destinatarios: TODOS los agentes con acceso al sitio, siempre
     // (sin importar a quién esté asignada la conversación).
