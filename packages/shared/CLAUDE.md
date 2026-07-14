@@ -13,8 +13,10 @@ The shared source of truth for the data model, design system, and i18n. `"type":
   `mensajeAI`/`mensajeAgente`/`mensajeFueraHorario`; `TicketEventTipo` `'edicion'`; `TicketNote.editadoAt`.
 - **`i18n.ts`** — es/en catalogs (**Costa Rican voseo**), `CONVERSATION_CATEGORIES` + bilingual
   labels, `makeT`/`categoryLabel`, `widgetMessages`.
-- **`tokens.ts`** — design tokens from the "Aditum Chat" Claude Design spec: brand navy
+- **`tokens.ts`** — design tokens from the "Aditum Chat" Claude Design spec: corporate navy
   (`#123C68`), warm-paper neutrals, semantic colors, Claude-bot purple, WhatsApp-style bubbles.
+  **These are the widget's (resident-facing) palette.** The console was rebranded to plum
+  `#2C1C2C` — its palette lives in `apps/dashboard/src/app/globals.css` `@theme`, not here.
   **No teal.**
 - **`schedule.ts`** — business-hours types/helpers.
 - **`index.ts`** — barrel; also exports `formatTicketNumber` (`#TK-0042`),

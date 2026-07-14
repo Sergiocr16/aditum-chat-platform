@@ -55,13 +55,22 @@ Ports: Auth `9101`, Functions `5201`, Firestore `8181`, RTDB `9102`, Storage `91
 - **No automatic deploys.** Test locally against the emulators only.
 - Copy is **Costa Rican Spanish (voseo)** + English via `packages/shared/src/i18n.ts`. Default to
   Spanish when talking to the maintainer.
-- **Do not use teal.** Use the design tokens in `packages/shared/src/tokens.ts` (brand navy
-  `#123C68`, warm-paper neutrals, Claude-bot purple).
+- **Do not use teal.** Two brand palettes since the Jul 2026 rebrand: the **console** is plum
+  (`#2C1C2C` family — the `navy*` tokens in `apps/dashboard/src/app/globals.css` keep their
+  historic NAME but hold plum values); the **widget** (resident-facing) keeps Aditum corporate
+  navy `#123C68` from `packages/shared/src/tokens.ts`. Don't "fix" one to match the other.
 - Timezone: **America/Costa_Rica** (UTC-6).
 
 ## Gotchas
 
 - **Node version split:** everyday work on Node 20 (`.nvmrc`); `functions` targets Node **22**.
+- **Prod builds corrupt a running dev server:** `next build` writes to the same `.next` the dev
+  server uses. To regenerate the hosting export: kill `next dev` → `rm -rf apps/dashboard/.next` →
+  `NEXT_PUBLIC_USE_EMULATORS=false pnpm --filter @aditum-chat/dashboard build` → `rm -rf .next`
+  again → restart dev. The flag is **compile-time inlined** — a build without it ships an
+  emulator-connected console.
+- **Touch vs desktop UX is gated on `(hover: none)`** (message-menu tap targets, Enter=newline in
+  composers) — test touch behavior with that media query, not by narrowing the window.
 - **React StrictMode** double-invokes effects in dev — expect transient states in the console.
 - **Secrets** live in `functions/.secret.local` (gitignored): `ANTHROPIC_API_KEY`,
   `VOYAGE_API_KEY` (optional), `CONFIG_KEK`. Never commit them. Bot models are **fixed in code**

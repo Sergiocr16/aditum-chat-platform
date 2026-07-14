@@ -11,7 +11,8 @@ src/main.tsx    Entry. Mounts into #aditum-chat-root inside a SHADOW DOM. Expose
                 on window.AditumChat: init, destroy, open(view?), close(), on(event, fn)
                 (opened|closed|unreadCount). Auto-inits if window.AditumChatSettings is present.
 src/ui/         App.tsx (root/controls), Home.tsx (launcher: bot / agent / team chat),
-                Chat.tsx (main chat surface), Tickets.tsx.
+                Chat.tsx (main chat surface), Visor.tsx (fullscreen image/PDF lightbox),
+                Tickets.tsx.
 src/data.ts     Firestore/RTDB/Storage access via the modular firebase SDK.
 src/session.ts  Host handshake; src/firebase.ts; src/sound.ts.
 demo/           Host-simulator page. scripts/verify-*.mjs headless checks.
@@ -37,10 +38,16 @@ demo/           Host-simulator page. scripts/verify-*.mjs headless checks.
   per (contact, subcanal) / (client, group) but **segmented** — `ensure*Conversation` reuses the
   active segment and opens a NEW one when the last is resolved (never reopens, never duplicates).
 - **Other data.ts APIs:** `sendMessage` (with `replyTo`), `editMessage` (stores `textoAnterior` for
-  the "edited" hover), `sendAttachment` (Storage `adjuntos/{convId}/…`), `submitCsat` (`csat/{id}`,
-  1–5), `subscribeMyCsat` (so a rated conversation never re-prompts), `toggleReaction`
-  (`👍❤️😂😮🙏`), `setTyping`/`subscribeTyping` (**RTDB**, `onDisconnect().remove()`, degrades
-  gracefully), `markRead`, `toggleMute`, ticket subscriptions.
+  the "edited" hover), `sendAttachment` (Storage `adjuntos/{convId}/…`, persists the tokened
+  download URL), `submitCsat` (`csat/{id}`, 1–5), `subscribeMyCsat` (so a rated conversation never
+  re-prompts), `toggleReaction` (`👍❤️😂😮🙏`), `setTyping`/`subscribeTyping` (**RTDB**,
+  `onDisconnect().remove()`, degrades gracefully), `setViewing` (**RTDB presence**
+  `presence/{contactId}` — Chat heartbeats it every 45 s while visible so `pushNotify` doesn't
+  push a conversation the user is looking at), `markRead`, `toggleMute`, ticket subscriptions.
+- **Touch UX (`hover: none`):** the message-actions menu opens by tapping the bubble (the hover
+  chevron is hidden); Enter inserts a newline (send = button) while desktop keeps Enter=send; the
+  composer textarea auto-grows up to 120px. Image/PDF attachments open in the in-app `Visor`
+  (arrows, keys, swipe); videos stay inline; other files keep the download tile.
 - **Welcome / auto-reply** is server-side (`functions/welcome.ts`); the widget just renders those
   first messages. Launcher button text/icon and the AI chip come from `session.widgetConfig`.
 

@@ -23,9 +23,14 @@ see [`docs/design-spec.md`](docs/design-spec.md).
 - Configurable **welcome / auto-reply** messages per channel: bot greeting on open, agent
   auto-reply after the first message, and a separate after-hours reply.
 - Message actions: **reply** (quote + jump-to-message), **react**, **copy**, and **edit** (marks
-  "edited" and shows the previous version on hover). URLs are auto-linkified.
+  "edited" and shows the previous version on hover). URLs are auto-linkified. On touch devices the
+  actions menu opens by **tapping the bubble** (no hover chevron) and flips to stay on-screen.
 - Native tickets, CSAT rating (persistent, one-time), attachments (image/video/file), typing
   indicators, read receipts, per-user mute.
+- **In-app attachment viewer** — WhatsApp-style fullscreen lightbox for images and PDFs: arrows,
+  `←/→/Esc`, touch swipe, `n / m` counter, open-in-tab escape hatch; videos play inline.
+- **WhatsApp-style composer** — auto-growing textarea; on touch devices Enter inserts a newline
+  (send is the button), on desktop Enter sends / Shift+Enter breaks.
 - Launcher buttons with **configurable text and icon** per button (upload an image), an "AI" chip
   on the bot button, and open/close chevrons.
 
@@ -41,10 +46,16 @@ see [`docs/design-spec.md`](docs/design-spec.md).
   ticket(s) already linked to it) and client tickets as compact cards.
 - **Contactos** — auto-populated contact directory with tags.
 - **Bot** — configure the bot, upload knowledge-base PDFs/URLs, and test it live.
-- **Reportes** — CSAT, SLA, and daily activity metrics.
+- **Reportes** — real aggregates over `metrics_daily` + `csat`: KPI deltas vs the previous period,
+  SLA compliance against the configured `settings/sla` target, CSAT distribution (5★→1★), trend,
+  and per-agent / bot-helpfulness tables. Full-width on desktop.
 - **Configuración** — sites, widget appearance (including per-button text/icon and welcome/auto-reply
   messages), SLA policy, team, tags, closing categories.
 - Desktop push (FCM Web Push) so agents get notified even with the tab closed.
+- **Installable PWA** — standalone display (no URL bar), plum icon set (maskable included), iOS
+  safe-area handling; the console carries its own plum brand (`#2C1C2C`) distinct from the
+  widget's Aditum navy.
+- Same in-app attachment viewer and WhatsApp-style composer as the widget.
 
 **Bot (Claude)**
 - First-line answers with an agentic tool loop: `escalar_a_agente` and `crear_ticket`.
@@ -64,7 +75,7 @@ Host app (JHipster/etc.)                 This project
                                                                       │ Firebase Web SDK
                                                                       ▼
    ┌──────────────────────────────────────────────────────────────────────────────┐
-   │  Firebase: Auth · Firestore · Realtime DB (typing) · Storage · Hosting        │
+   │  Firebase: Auth · Firestore · Realtime DB (typing, presence) · Storage · Hosting │
    └───────────────┬──────────────────────────────────────────────┬───────────────┘
                    │ triggers / callables                          │ Web SDK
                    ▼                                               ▼
@@ -298,13 +309,17 @@ Firebase project (not this one). In Configuración → Sitios conectados → Not
 upload that project's **service account** (Firebase Console → Service accounts → Generate private
 key). It is stored **AES-256-GCM encrypted** in `sites/{siteId}/secrets/fcm` (unreadable by
 clients) under the `CONFIG_KEK` secret. `pushNotify` sends through that project and respects
-per-user mute.
+per-user mute. It also **skips users actively viewing that conversation** (RTDB presence
+`presence/{contactId}` heartbeat from the widget, 90 s freshness window). Bodies are
+**plain text** (markdown stripped); attachment-only messages get a WhatsApp-style summary
+("📷 Foto", "📄 file.pdf"). Dead tokens are pruned from `contacts.deviceTokens` on send.
 
 **Desktop push to agents (console)** — agents receive system notifications even with the console
 tab closed (FCM Web Push). The prod project config and VAPID public key ship as defaults; in prod
 just set `NEXT_PUBLIC_USE_EMULATORS=false`. Each agent enables notifications with the bell next to
-their profile; the token is stored in `team/{uid}.fcmTokens`. `notifyAgentsOnMessage` sends the
-push when a user writes (to the assigned agent, or all site agents if unassigned); the click opens
+their profile; the token is stored in `team/{uid}.fcmTokens`. `notifyAgentsOnMessage` sends a
+**data-only** push when a user writes (the service worker builds the notification; tag =
+`convId_msgId` so notifications **stack** instead of replacing); the click opens
 `/inbox?c=<convId>`. In the emulator, sending is skipped with a log warning (no local FCM).
 
 ---
@@ -460,5 +475,8 @@ Functions deploy on `nodejs22`, region `us-central1`.
 - **No automatic commits or pushes** — changes stay in the working tree; the maintainer decides
   when to commit/push.
 - Copy is Costa Rican Spanish (voseo) + English; the widget language comes from the payload.
-- Design system tokens live in `packages/shared/src/tokens.ts`. **Do not use teal.**
+- **Two brand palettes:** the console is plum `#2C1C2C` (tokens in
+  `apps/dashboard/src/app/globals.css` — the `navy*` names are historic, the values are plum);
+  the widget keeps Aditum corporate navy `#123C68` (`packages/shared/src/tokens.ts`).
+  **Do not use teal.**
 - Timezone: America/Costa_Rica.

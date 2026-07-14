@@ -28,7 +28,7 @@ Secrets in `functions/.secret.local` (gitignored): `ANTHROPIC_API_KEY`, `VOYAGE_
 | SLA | `ticketSlaInit`, `firstResponseTracker`, `slaEngine` (runs every 1 min) — `sla.ts` |
 | Metrics | `metricsOnConversation`, `metricsOnResolve`, `metricsOnCsat` (also writes `csatRating` to the conversation), `metricsOnMessage` — `metrics.ts` |
 | Auto replies | `welcomeOnConversation` (bot greeting on a new bot conversation), `agentAutoReply` (agent-channel reply after the user's first message; after-hours variant) — `welcome.ts` |
-| Push | `pushNotify` (to end user, host project), `notifyAgentsOnMessage` (to console agents), `setSiteFcmCredentials` |
+| Push | `pushNotify` (to end user, host project), `notifyAgentsOnMessage` (to console agents), `setSiteFcmCredentials` — see push conventions below |
 
 Shared `src/lib/` provides `db`, `FieldValue`, `resolveSiteConfig`, schedule helpers, and the
 AES/crypto helpers.
@@ -59,6 +59,12 @@ AES/crypto helpers.
   with a 24 h grace window; the KEK comes from `CONFIG_KEK`.
 - Dual-project push: end-user push uses the **host's** Firebase project (per-site encrypted service
   account); agent desktop push uses **this** project's FCM Web Push.
+- **Push conventions** (`push.ts`, `pushAgentes.ts`, `lib/markdown.ts`): bodies go through
+  `markdownToPlain`; attachment-only messages fall back to `attachmentSummary` ("📷 Foto" /
+  "📄 file.pdf", localized). `pushNotify` skips contacts whose RTDB presence
+  (`presence/{contactId}`, <90 s, same convId) says they're viewing the conversation, and prunes
+  dead device tokens. `messagingForSite` caches **only successful** inits (never cache a null
+  credential). Agent push is data-only with tag `convId_msgId` so notifications stack.
 
 ## Notes
 
