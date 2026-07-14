@@ -452,7 +452,8 @@ export const ConversationView = forwardRef<
     <div className="flex flex-col h-full">
       {/* PWA standalone: franja blanca tras el status bar del teléfono (el header
           no queda debajo). Con status bar 'default' mide 0; es solo respaldo. */}
-      <div className="md:hidden flex-none bg-white h-[env(safe-area-inset-top)]" />
+      {/* Plum status-bar strip: iOS renders white clock text over it. */}
+      <div className="md:hidden flex-none bg-navy-deep h-[env(safe-area-inset-top)]" />
       <header className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-3 bg-white border-b border-warm-border">
         {onBack && (
           <button
@@ -484,12 +485,37 @@ export const ConversationView = forwardRef<
           <span className="hidden sm:inline">{t('inbox.convertirTicket')}</span>
         </button>
         <div className="relative">
+          {/* Asignada: el botón muestra al agente (avatar/inicial + nombre);
+              sin asignar conserva el "Asignar" genérico. Siempre abre el menú. */}
           <button
             onClick={() => setShowAsignar(!showAsignar)}
+            title={(activaAgente ?? activa).data.asignadoNombre ?? t('inbox.asignar')}
             className="flex items-center gap-1.5 border border-warm-border text-ink-2 text-[12px] font-semibold px-2.5 sm:px-3 py-1.5 rounded-lg hover:border-navy flex-none"
           >
-            <span className="msr text-[15px]">person_add</span>
-            <span className="hidden sm:inline">{t('inbox.asignar')}</span>
+            {(activaAgente ?? activa).data.asignadoNombre ? (
+              <>
+                {(activaAgente ?? activa).data.asignadoFoto ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={(activaAgente ?? activa).data.asignadoFoto!}
+                    alt=""
+                    className="h-5 w-5 rounded-full object-cover -ml-0.5"
+                  />
+                ) : (
+                  <span className="h-5 w-5 rounded-full bg-navy text-white text-[9px] font-bold flex items-center justify-center -ml-0.5">
+                    {iniciales((activaAgente ?? activa).data.asignadoNombre!)}
+                  </span>
+                )}
+                <span className="hidden sm:inline max-w-24 truncate">
+                  {(activaAgente ?? activa).data.asignadoNombre!.split(' ')[0]}
+                </span>
+              </>
+            ) : (
+              <>
+                <span className="msr text-[15px]">person_add</span>
+                <span className="hidden sm:inline">{t('inbox.asignar')}</span>
+              </>
+            )}
           </button>
           {showAsignar && (
             <div className="absolute right-0 top-full mt-1 bg-white border border-warm-border rounded-lg shadow-raised z-20 w-48 py-1">
@@ -504,7 +530,10 @@ export const ConversationView = forwardRef<
                     <span className="h-6 w-6 rounded-full bg-cream-3 text-[9px] font-bold flex items-center justify-center">
                       {iniciales(m.data.nombre)}
                     </span>
-                    {m.data.nombre}
+                    <span className="flex-1 truncate">{m.data.nombre}</span>
+                    {(activaAgente ?? activa).data.asignadoA === m.id && (
+                      <span className="msr text-[15px] text-ok">check</span>
+                    )}
                   </button>
                 ))}
             </div>
@@ -1014,6 +1043,46 @@ function Burbuja({
   const sistema = m.sender.tipo === 'sistema';
   const reacciones = Object.entries(m.reacciones ?? {}).filter(([, ids]) => ids.length > 0);
 
+  // Swipe-to-reply (WhatsApp): drag right to quote — also the reply path for
+  // media messages on touch, whose tap opens the viewer instead of the menu.
+  const swipe = useRef<{ x: number; y: number; dx: number; eje: 'h' | 'v' | null } | null>(null);
+  const swipeReciente = useRef(false);
+  const burbujaRef = useRef<HTMLDivElement>(null);
+  function swipeMove(t: React.Touch) {
+    const s = swipe.current;
+    const el = burbujaRef.current;
+    if (!s || !el) return;
+    const dx = t.clientX - s.x;
+    const dy = t.clientY - s.y;
+    if (!s.eje) {
+      if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
+      // Right-and-mostly-horizontal captures the gesture; anything else scrolls.
+      s.eje = dx > 0 && Math.abs(dx) > Math.abs(dy) * 1.3 ? 'h' : 'v';
+    }
+    if (s.eje !== 'h') return;
+    s.dx = Math.max(0, Math.min(dx, 96));
+    el.style.transition = 'none';
+    el.style.transform = `translateX(${s.dx * 0.55}px)`;
+    el.style.setProperty('--swipe', String(Math.min(1, s.dx / 56)));
+  }
+  function swipeEnd(cancelado: boolean) {
+    const s = swipe.current;
+    const el = burbujaRef.current;
+    swipe.current = null;
+    if (!s || !el) return;
+    el.style.transition = 'transform .18s ease';
+    el.style.transform = '';
+    el.style.setProperty('--swipe', '0');
+    swipeReciente.current = s.dx > 10; // suppress the tap that follows a drag
+    if (!cancelado && s.eje === 'h' && s.dx >= 56 && onResponder) {
+      onResponder({
+        messageId: msgId ?? '',
+        texto: m.texto || resumenAdjunto(m),
+        senderNombre: m.sender.nombre,
+      });
+    }
+  }
+
   const chipTicket = m.ticketRef ? (
     <button
       type="button"
@@ -1077,9 +1146,14 @@ function Burbuja({
         {bot ? <span className="msr text-[15px]">smart_toy</span> : iniciales(m.sender.nombre)}
       </div>
       <div
+        ref={burbujaRef}
         data-msgid={msgId}
         onClick={(e) => {
           e.stopPropagation();
+          if (swipeReciente.current) {
+            swipeReciente.current = false;
+            return;
+          }
           // Touch devices have no hover (no chevron): tapping the bubble
           // itself toggles the actions menu. Inner links/buttons keep their
           // own behavior.
@@ -1090,8 +1164,21 @@ function Burbuja({
             onMenu?.();
           }
         }}
+        onTouchStart={(e) => {
+          swipe.current = { x: e.touches[0].clientX, y: e.touches[0].clientY, dx: 0, eje: null };
+        }}
+        onTouchMove={(e) => swipeMove(e.touches[0])}
+        onTouchEnd={() => swipeEnd(false)}
+        onTouchCancel={() => swipeEnd(true)}
         className={`relative rounded-xl px-3 py-2 shadow-card transition-shadow ${own ? 'bg-[#D9FDD3]' : 'bg-white'}`}
       >
+        {/* Swipe-to-reply affordance: fades in as the bubble drags right. */}
+        <span
+          aria-hidden
+          className="msr absolute -left-8 top-1/2 -mt-2.5 text-[19px] text-warm-gray-2 opacity-[var(--swipe,0)] pointer-events-none"
+        >
+          reply
+        </span>
         {/* Flechita: abre menú de acciones (reaccionar / responder / copiar). */}
         <button
           type="button"
@@ -1121,10 +1208,14 @@ function Burbuja({
                 </button>
               ))}
             </div>
-            {onResponder && m.texto && (
+            {onResponder && (m.texto || m.adjuntos?.length) && (
               <button
                 onClick={() =>
-                  onResponder({ messageId: msgId ?? '', texto: m.texto, senderNombre: m.sender.nombre })
+                  onResponder({
+                    messageId: msgId ?? '',
+                    texto: m.texto || resumenAdjunto(m),
+                    senderNombre: m.sender.nombre,
+                  })
                 }
                 className="w-full text-left px-3 py-1.5 text-[12.5px] hover:bg-cream-1 flex items-center gap-2"
               >
@@ -1241,6 +1332,15 @@ export function esPdf(a: Attachment): boolean {
     a.mimeType === 'application/pdf' ||
     (a.nombre ?? a.storagePath ?? '').toLowerCase().endsWith('.pdf')
   );
+}
+
+/** Quote preview for attachment-only messages ("📷 Foto", "📄 recibo.pdf"). */
+function resumenAdjunto(m: Message): string {
+  const a = m.adjuntos?.[0];
+  if (!a) return '';
+  if (a.tipo === 'imagen') return '📷 Foto';
+  if (a.tipo === 'video') return '🎥 Video';
+  return `📄 ${a.nombre ?? 'Archivo'}`;
 }
 
 function Adjuntos({

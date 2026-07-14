@@ -58,7 +58,7 @@
   position: relative;
   width: 56px; height: 56px;
   border-radius: 99px; border: none;
-  background: var(--ac-primary); color: #fff;
+  background: var(--ac-bubble, var(--ac-primary)); color: #fff;
   cursor: pointer;
   display: flex; align-items: center; justify-content: center;
   box-shadow: 0 8px 24px rgba(10,29,49,.24);
@@ -577,6 +577,15 @@
 
 /* ---------- Menú de mensaje ---------- */
 .ac-burbuja { position: relative; }
+/* Swipe-to-reply: the reply glyph fades in at the bubble's left as it drags. */
+.ac-burbuja::after {
+  content: 'reply';
+  font-family: 'Material Symbols Rounded';
+  position: absolute; left: -32px; top: 50%; margin-top: -10px;
+  font-size: 19px; line-height: 20px; color: var(--ac-gray);
+  opacity: var(--ac-swipe, 0);
+  pointer-events: none;
+}
 .ac-msg-mas {
   position: absolute; top: 2px; right: 2px;
   background: none; border: none; cursor: pointer; color: var(--ac-gray2);

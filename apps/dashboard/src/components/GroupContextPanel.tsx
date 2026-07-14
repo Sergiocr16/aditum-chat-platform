@@ -80,8 +80,8 @@ export function GroupContextPanel({
       className={`${abierto ? 'flex' : 'hidden'} lg:flex fixed inset-y-0 right-0 z-40 w-full max-w-sm shadow-2xl lg:static lg:z-auto lg:w-[280px] lg:max-w-none lg:shadow-none flex-col flex-none bg-white overflow-y-auto`}
       style={width ? { width } : undefined}
     >
-      {/* Franja blanca tras el status bar del teléfono (PWA standalone). */}
-      <div className="lg:hidden flex-none bg-white h-[env(safe-area-inset-top)]" />
+      {/* Franja plum tras el status bar del teléfono (texto iOS en blanco). */}
+      <div className="lg:hidden flex-none bg-navy-deep h-[env(safe-area-inset-top)]" />
       {/* Identidad del equipo */}
       <div className="p-4 flex items-start gap-3 border-b border-cream-3">
         <div className="h-10 w-10 rounded-full flex-none flex items-center justify-center bg-navy-deep text-white">

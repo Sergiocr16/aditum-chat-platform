@@ -40,6 +40,8 @@ export interface WidgetConfig {
   color: string;
   /** Color de acento: fondo del ítem activo en el menú (tinte claro del primario por defecto). */
   accent?: string;
+  /** Color del botón flotante (launcher). Por defecto usa `color`. */
+  colorBurbuja?: string;
   posicion: 'bottom-right' | 'bottom-left';
   titulo: string;
   saludo: string;

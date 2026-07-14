@@ -45,9 +45,12 @@ demo/           Host-simulator page. scripts/verify-*.mjs headless checks.
   `presence/{contactId}` — Chat heartbeats it every 45 s while visible so `pushNotify` doesn't
   push a conversation the user is looking at), `markRead`, `toggleMute`, ticket subscriptions.
 - **Touch UX (`hover: none`):** the message-actions menu opens by tapping the bubble (the hover
-  chevron is hidden); Enter inserts a newline (send = button) while desktop keeps Enter=send; the
+  chevron is hidden); **swiping a bubble right quotes it** (WhatsApp-style; threshold 56px raw,
+  0.55 damping, vertical drags stay scrolls) — the reply path for media messages, whose tap opens
+  the viewer; Enter inserts a newline (send = button) while desktop keeps Enter=send; the
   composer textarea auto-grows up to 120px. Image/PDF attachments open in the in-app `Visor`
-  (arrows, keys, swipe); videos stay inline; other files keep the download tile.
+  (arrows, keys, swipe); videos stay inline; other files keep the download tile. Quotes of
+  attachment-only messages use `messagePreview` ("📷 Foto").
 - **Welcome / auto-reply** is server-side (`functions/welcome.ts`); the widget just renders those
   first messages. Launcher button text/icon and the AI chip come from `session.widgetConfig`.
 

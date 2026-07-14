@@ -24,7 +24,9 @@ see [`docs/design-spec.md`](docs/design-spec.md).
   auto-reply after the first message, and a separate after-hours reply.
 - Message actions: **reply** (quote + jump-to-message), **react**, **copy**, and **edit** (marks
   "edited" and shows the previous version on hover). URLs are auto-linkified. On touch devices the
-  actions menu opens by **tapping the bubble** (no hover chevron) and flips to stay on-screen.
+  actions menu opens by **tapping the bubble** (no hover chevron) and flips to stay on-screen;
+  **swiping a bubble right quotes it** (WhatsApp-style — also the reply path for images/PDFs,
+  whose tap opens the viewer). Attachment-only quotes show "📷 Foto" / "📄 file.pdf".
 - Native tickets, CSAT rating (persistent, one-time), attachments (image/video/file), typing
   indicators, read receipts, per-user mute.
 - **In-app attachment viewer** — WhatsApp-style fullscreen lightbox for images and PDFs: arrows,

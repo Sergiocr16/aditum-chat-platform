@@ -10,9 +10,11 @@ export const metadata: Metadata = {
   appleWebApp: {
     capable: true,
     title: 'Aditum Chat',
-    // 'default': barra de estado del sistema (texto negro sobre blanco), el
-    // contenido nunca queda debajo — sin solapes en modo app.
-    statusBarStyle: 'default',
+    // 'black-translucent': la app pinta los pixeles bajo el status bar de iOS
+    // (franjas plum en Shell/ConversationView/paneles) y iOS dibuja la hora y
+    // batería en BLANCO. Es el único modo que permite status bar con marca;
+    // las franjas deben mantenerse OSCURAS o el texto blanco desaparece.
+    statusBarStyle: 'black-translucent',
   },
   icons: {
     icon: [{ url: '/favicon.ico' }, { url: '/icon-192.png', sizes: '192x192', type: 'image/png' }],

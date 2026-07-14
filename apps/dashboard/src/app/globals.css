@@ -59,6 +59,13 @@ body {
   color: var(--color-ink);
 }
 
+/* PWA/mobile: the window itself never scrolls or rubber-bands — scrolling
+   lives in the internal columns (inbox list, thread, panels). */
+html,
+body {
+  overscroll-behavior: none;
+}
+
 /* Material Symbols */
 .msr {
   font-family: 'Material Symbols Rounded';

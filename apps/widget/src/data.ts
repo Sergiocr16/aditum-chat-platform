@@ -298,6 +298,16 @@ function unreadIncrements(
   return out;
 }
 
+/** Short quote/preview text for a message: its text, or an attachment label. */
+export function messagePreview(m: Message, idioma: 'es' | 'en'): string {
+  if (m.texto) return m.texto;
+  const a = m.adjuntos?.[0];
+  if (!a) return '';
+  if (a.tipo === 'imagen') return idioma === 'es' ? '📷 Foto' : '📷 Photo';
+  if (a.tipo === 'video') return '🎥 Video';
+  return `📄 ${a.nombre ?? (idioma === 'es' ? 'Archivo' : 'File')}`;
+}
+
 export async function sendMessage(
   fb: WidgetFirebase,
   session: WidgetSessionResponse,
@@ -315,7 +325,7 @@ export async function sendMessage(
       ? {
           replyTo: {
             messageId: replyTo.id,
-            texto: replyTo.data.texto.slice(0, 120),
+            texto: messagePreview(replyTo.data, session.idioma === 'en' ? 'en' : 'es').slice(0, 120),
             senderNombre: replyTo.data.sender.nombre,
           },
         }

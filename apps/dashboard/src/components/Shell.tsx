@@ -104,7 +104,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
   return (
     <SiteCtx.Provider value={{ siteId, setSiteId }}>
       <TopbarCtx.Provider value={{ setOculto: setTopbarOculto }}>
-      <div className="flex h-screen overflow-hidden">
+      {/* h-dvh (no h-screen): 100vh se pasa del viewport visible en Safari
+          móvil — corta el composer y deja scrollear la ventana entera. */}
+      <div className="flex h-dvh overflow-hidden">
         {/* Backdrop del drawer (solo móvil) */}
         {menuAbierto && (
           <div

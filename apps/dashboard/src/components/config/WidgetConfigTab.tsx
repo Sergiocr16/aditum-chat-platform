@@ -61,6 +61,7 @@ const M = {
     logoQuitar: 'Quitar',
     color: 'Color primario',
     accent: 'Color de acento (activo)',
+    colorBurbuja: 'Color del botón flotante',
     posicion: 'Posición de la burbuja',
     abajoDer: 'Abajo a la derecha',
     abajoIzq: 'Abajo a la izquierda',
@@ -117,6 +118,7 @@ const M = {
     logoQuitar: 'Remove',
     color: 'Primary color',
     accent: 'Accent color (active)',
+    colorBurbuja: 'Launcher button color',
     posicion: 'Bubble position',
     abajoDer: 'Bottom right',
     abajoIzq: 'Bottom left',
@@ -452,6 +454,21 @@ export function WidgetConfigTab() {
                   />
                 </div>
               </Campo>
+              <Campo label={m.colorBurbuja} tag={her('colorBurbuja')}>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="color"
+                    value={eff.colorBurbuja ?? eff.color}
+                    onChange={(e) => setW('colorBurbuja', e.target.value)}
+                    className="h-9 w-12 rounded-lg border border-warm-border cursor-pointer bg-white p-1"
+                  />
+                  <input
+                    value={eff.colorBurbuja ?? eff.color}
+                    onChange={(e) => setW('colorBurbuja', e.target.value)}
+                    className={`${inputCls} font-mono uppercase`}
+                  />
+                </div>
+              </Campo>
               <Campo label={m.posicion} tag={her('posicion')}>
                 <div className="flex gap-1.5">
                   {(
@@ -731,7 +748,7 @@ function WidgetPreview({
         <div className={`flex ${derecha ? 'justify-end' : 'justify-start'}`}>
           <div
             className="h-12 w-12 rounded-full flex items-center justify-center text-white shadow-raised"
-            style={{ background: config.color }}
+            style={{ background: config.colorBurbuja ?? config.color }}
           >
             <span className="msr msr-fill text-[22px]">chat</span>
           </div>

@@ -47,7 +47,9 @@ src/lib/            firebase.ts (SDK + emulator wiring), auth.tsx, i18n.ts, soun
   `irAMensaje` jump) / copy / **edit** (own messages; `agentEditMessage` stores `textoAnterior`,
   shown on hover). Desktop opens it via the hover chevron; **touch devices (`hover: none`) open it
   by tapping the bubble** (inner links/buttons keep their own tap) and it anchors left/right by
-  message side so it never clips. Image/PDF attachments open in `VisorAdjuntos` (galería from the
+  message side so it never clips. **Swiping a bubble right quotes it** (WhatsApp-style; also the
+  reply path for media messages) — attachment-only quotes fall back to `resumenAdjunto`
+  ("📷 Foto"). Image/PDF attachments open in `VisorAdjuntos` (galería from the
   thread rows; keyboard + swipe). The composer textarea **auto-grows** (`max-h-40`); on touch,
   Enter = newline. Dropdowns inside the scrollable context panel (e.g. `TagAssign`) must use
   `position: fixed` — `absolute` gets clipped by the panel's `overflow-y-auto`. Ticket detail (`TicketDetailModal`) stages ALL edits (title, description, estado,

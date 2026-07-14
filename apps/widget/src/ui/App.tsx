@@ -210,6 +210,7 @@ export function App({ settings, onReady, emit }: Props) {
   const sessionCfg = state.status === 'ready' ? state.session.widgetConfig : null;
   const color = settings.config?.color ?? sessionCfg?.color ?? '#123C68';
   const accent = settings.config?.accent ?? sessionCfg?.accent ?? '#E8EEF5';
+  const colorBurbuja = settings.config?.colorBurbuja ?? sessionCfg?.colorBurbuja ?? color;
   const posicion = settings.config?.posicion ?? sessionCfg?.posicion ?? 'bottom-left';
   const ocultarBurbuja = settings.config?.ocultarBurbuja ?? sessionCfg?.ocultarBurbuja ?? false;
 
@@ -259,7 +260,7 @@ export function App({ settings, onReady, emit }: Props) {
   const amplio = esEscritorio ? view !== 'inicio' : enChat || view === 'tickets';
 
   return (
-    <div class={`ac-root ac-${posicion} ${openPanel ? 'ac-abierto' : ''}`} style={`--ac-primary:${color};--ac-accent:${accent};--ac-kb:${keyboardInset}px`}>
+    <div class={`ac-root ac-${posicion} ${openPanel ? 'ac-abierto' : ''}`} style={`--ac-primary:${color};--ac-accent:${accent};--ac-bubble:${colorBurbuja};--ac-kb:${keyboardInset}px`}>
       {openPanel && esEscritorio && (
         <div class={`ac-panel ${amplio ? 'ac-panel-amplio' : ''}`}>
           {state.status === 'loading' && <div class="ac-loading">…</div>}

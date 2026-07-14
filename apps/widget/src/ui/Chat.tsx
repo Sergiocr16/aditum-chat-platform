@@ -18,6 +18,7 @@ import {
   fetchOlderMessages,
   formatTime,
   markRead,
+  messagePreview,
   sendAttachment,
   sendMessage,
   setTyping,
@@ -495,6 +496,51 @@ export function Chat({
   const bodyRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  // Swipe-to-reply (WhatsApp): dragging a bubble to the right quotes it.
+  // Also the only reply path for media messages on touch, whose tap opens
+  // the viewer instead of the actions menu.
+  const swipe = useRef<{
+    el: HTMLElement;
+    x: number;
+    y: number;
+    dx: number;
+    eje: 'h' | 'v' | null;
+  } | null>(null);
+  const swipeReciente = useRef(false);
+  function swipeStart(el: HTMLElement, t: Touch) {
+    swipe.current = { el, x: t.clientX, y: t.clientY, dx: 0, eje: null };
+  }
+  function swipeMove(t: Touch) {
+    const s = swipe.current;
+    if (!s) return;
+    const dx = t.clientX - s.x;
+    const dy = t.clientY - s.y;
+    if (!s.eje) {
+      if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
+      // Right-and-mostly-horizontal captures the gesture; anything else
+      // stays a scroll.
+      s.eje = dx > 0 && Math.abs(dx) > Math.abs(dy) * 1.3 ? 'h' : 'v';
+    }
+    if (s.eje !== 'h') return;
+    s.dx = Math.max(0, Math.min(dx, 96));
+    s.el.style.transition = 'none';
+    s.el.style.transform = `translateX(${s.dx * 0.55}px)`;
+    s.el.style.setProperty('--ac-swipe', String(Math.min(1, s.dx / 56)));
+  }
+  function swipeEnd(fila: Fila | null) {
+    const s = swipe.current;
+    swipe.current = null;
+    if (!s) return;
+    s.el.style.transition = 'transform .18s ease';
+    s.el.style.transform = '';
+    s.el.style.setProperty('--ac-swipe', '0');
+    swipeReciente.current = s.dx > 10; // suppress the tap that follows a drag
+    if (fila && s.eje === 'h' && s.dx >= 56) {
+      setReplyTo(fila);
+      setEditando(null);
+      requestAnimationFrame(() => inputRef.current?.focus());
+    }
+  }
   // WhatsApp-style auto-grow: the textarea tracks its content height
   // (the CSS max-height caps it; beyond that it scrolls).
   useEffect(() => {
@@ -1007,6 +1053,10 @@ export function Chat({
                     data-msgid={m.id}
                     onDblClick={() => setMenuMsg(menuMsg === m.id ? null : m.id)}
                     onClick={(e) => {
+                      if (swipeReciente.current) {
+                        swipeReciente.current = false;
+                        return;
+                      }
                       // Touch devices: no hover chevron — tapping the bubble
                       // toggles the menu. Inner links/buttons keep their own tap.
                       if (
@@ -1017,6 +1067,10 @@ export function Chat({
                         setMenuMsg(menuMsg === m.id ? null : m.id);
                       }
                     }}
+                    onTouchStart={(e) => swipeStart(e.currentTarget as HTMLElement, e.touches[0])}
+                    onTouchMove={(e) => swipeMove(e.touches[0])}
+                    onTouchEnd={() => swipeEnd(fila)}
+                    onTouchCancel={() => swipeEnd(null)}
                   >
                     <button
                       class="ac-msg-mas"
@@ -1268,7 +1322,10 @@ export function Chat({
               ? session.idioma === 'es'
                 ? 'Editando mensaje'
                 : 'Editing message'
-              : `${replyTo!.msg.data.sender.nombre}: ${replyTo!.msg.data.texto.slice(0, 60)}`}
+              : `${replyTo!.msg.data.sender.nombre}: ${messagePreview(
+                  replyTo!.msg.data,
+                  session.idioma === 'en' ? 'en' : 'es',
+                ).slice(0, 60)}`}
           </span>
           <button
             class="ac-icon-btn-dark"
