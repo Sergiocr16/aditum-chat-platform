@@ -60,20 +60,46 @@ function TagPicker({
   emptyLabel: string;
 }) {
   const [open, setOpen] = useState(false);
+  // Fixed positioning: the context panel scrolls (overflow-y-auto), which
+  // clips absolutely-positioned children — a fixed dropdown escapes it.
+  // Flips upward when there isn't room below (tags sit low in the panel).
+  const [pos, setPos] = useState<{ top?: number; bottom?: number; right: number }>({ right: 0 });
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
     const onDoc = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
+    // Any scroll detaches a fixed dropdown from its trigger: close it.
+    const onScroll = () => setOpen(false);
     document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
+    document.addEventListener('scroll', onScroll, true);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('scroll', onScroll, true);
+    };
   }, [open]);
+
+  function toggle() {
+    if (!open && ref.current) {
+      const r = ref.current.getBoundingClientRect();
+      const MENU_H = 268; // max-h-64 + margin
+      let right = window.innerWidth - r.right;
+      right = Math.max(8, Math.min(right, window.innerWidth - 224 - 8)); // keep w-56 on-screen
+      const espacioAbajo = window.innerHeight - r.bottom;
+      setPos(
+        espacioAbajo >= MENU_H || espacioAbajo >= r.top
+          ? { top: r.bottom + 4, right }
+          : { bottom: window.innerHeight - r.top + 4, right },
+      );
+    }
+    setOpen((v) => !v);
+  }
 
   return (
     <div ref={ref} className="relative">
       <button
-        onClick={() => setOpen((v) => !v)}
+        onClick={toggle}
         title={addLabel}
         aria-label={addLabel}
         className="inline-flex items-center text-warm-gray border border-dashed border-warm-border rounded-full px-1.5 py-0.5 hover:border-navy hover:text-navy transition-colors"
@@ -81,7 +107,10 @@ function TagPicker({
         <span className="msr text-[14px]">add</span>
       </button>
       {open && (
-        <div className="absolute right-0 top-full mt-1 z-30 w-56 bg-white border border-warm-border rounded-lg shadow-raised py-1 max-h-64 overflow-y-auto">
+        <div
+          style={pos}
+          className="fixed z-50 w-56 bg-white border border-warm-border rounded-lg shadow-raised py-1 max-h-64 overflow-y-auto"
+        >
           {siteTags.length === 0 ? (
             <div className="px-3 py-2 text-[11px] text-warm-gray-2 leading-relaxed">
               {emptyLabel}
@@ -97,7 +126,7 @@ function TagPicker({
                 >
                   <span
                     className="msr text-[16px] flex-none"
-                    style={{ color: on ? '#123C68' : '#C9C3B6' }}
+                    style={{ color: on ? '#5D3A5F' : '#C9C3B6' }}
                   >
                     {on ? 'check_box' : 'check_box_outline_blank'}
                   </span>

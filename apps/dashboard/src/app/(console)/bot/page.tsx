@@ -895,7 +895,7 @@ function CardComportamiento({
                 name="tono"
                 checked={efectivo.tono === op.valor}
                 onChange={() => setCampo('tono', op.valor)}
-                className="accent-[#123c68]"
+                className="accent-[#5d3a5f]"
               />
               {op.label}
             </label>

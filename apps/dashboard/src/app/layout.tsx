@@ -10,7 +10,9 @@ export const metadata: Metadata = {
   appleWebApp: {
     capable: true,
     title: 'Aditum Chat',
-    statusBarStyle: 'black-translucent',
+    // 'default': barra de estado del sistema (texto negro sobre blanco), el
+    // contenido nunca queda debajo — sin solapes en modo app.
+    statusBarStyle: 'default',
   },
   icons: {
     icon: [{ url: '/favicon.ico' }, { url: '/icon-192.png', sizes: '192x192', type: 'image/png' }],
@@ -22,7 +24,7 @@ export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
   viewportFit: 'cover',
-  themeColor: '#0A1D31',
+  themeColor: '#2C1C2C',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

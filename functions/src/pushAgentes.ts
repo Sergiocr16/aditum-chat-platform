@@ -3,7 +3,7 @@ import { logger } from 'firebase-functions/v2';
 import { FieldValue } from 'firebase-admin/firestore';
 import type { Conversation, Message, TeamMember } from '@aditum-chat/shared';
 import { db, messaging } from './lib/admin.js';
-import { markdownToPlain } from './lib/markdown.js';
+import { attachmentSummary, markdownToPlain } from './lib/markdown.js';
 
 /**
  * Web Push (FCM) a los AGENTES de la consola cuando un usuario escribe.
@@ -47,7 +47,8 @@ export const notifyAgentsOnMessage = onDocumentCreated(
     const titulo = [conv.contactNombre ?? msg.sender.nombre, conv.clientNombre]
       .filter(Boolean)
       .join(' · ');
-    const textoPlano = markdownToPlain(msg.texto);
+    const textoPlano =
+      markdownToPlain(msg.texto) || attachmentSummary(msg.adjuntos, 'es');
     const cuerpo =
       textoPlano.length > 120 ? `${textoPlano.slice(0, 117)}…` : textoPlano || 'Nuevo mensaje';
     const link = `/inbox?c=${convId}`;

@@ -1,6 +1,6 @@
 import type { VNode } from 'preact';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
-import type { Conversation, Message, WidgetSessionResponse } from '@aditum-chat/shared';
+import type { Attachment, Conversation, Message, WidgetSessionResponse } from '@aditum-chat/shared';
 import {
   categoryLabel,
   EMOJI_CATEGORIES,
@@ -36,6 +36,7 @@ import {
   type Doc,
 } from '../data.js';
 import type { WidgetFirebase } from '../firebase.js';
+import { Visor, type VisorItem } from './Visor.js';
 
 const EMOJIS = ['👍', '❤️', '😂', '😮', '🙏'];
 const PAGE = 30;
@@ -494,6 +495,14 @@ export function Chat({
   const bodyRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  // WhatsApp-style auto-grow: the textarea tracks its content height
+  // (the CSS max-height caps it; beyond that it scrolls).
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  }, [draft]);
   const typingTimer = useRef<number | null>(null);
   const ajusteScroll = useRef<number | null>(null);
 
@@ -633,6 +642,29 @@ export function Chat({
   // Skeleton de carga: hasta que las conversaciones y el primer snapshot de
   // mensajes hayan llegado, se muestran burbujas fantasma (sin brinco de scroll).
   const cargandoChat = !convsCargadas || (!!activa && !liveListo);
+
+  // Visor de adjuntos: galería con las imágenes y PDFs del hilo cargado.
+  const galeria = useMemo<VisorItem[]>(
+    () =>
+      filas.flatMap((f) =>
+        (f.msg.data.adjuntos ?? [])
+          .filter((a) => a.url && (a.tipo === 'imagen' || (a.tipo === 'archivo' && esPdf(a))))
+          .map((a) => ({
+            url: a.url!,
+            nombre: a.nombre ?? 'archivo',
+            esPdf: a.tipo !== 'imagen',
+          })),
+      ),
+    [filas],
+  );
+  const [visorIdx, setVisorIdx] = useState<number | null>(null);
+  const abrirVisor = useCallback(
+    (url: string) => {
+      const i = galeria.findIndex((g) => g.url === url);
+      if (i >= 0) setVisorIdx(i);
+    },
+    [galeria],
+  );
 
   const esBotCanal = !grupo && session.botConfig.activo && modo === 'bot';
   const bienvenida = (session.widgetConfig.mensajeAI?.trim() || session.botConfig.saludo || '')
@@ -974,6 +1006,17 @@ export function Chat({
                     class={`ac-burbuja ${own ? 'ac-burbuja-own' : ''}`}
                     data-msgid={m.id}
                     onDblClick={() => setMenuMsg(menuMsg === m.id ? null : m.id)}
+                    onClick={(e) => {
+                      // Touch devices: no hover chevron — tapping the bubble
+                      // toggles the menu. Inner links/buttons keep their own tap.
+                      if (
+                        window.matchMedia('(hover: none)').matches &&
+                        !(e.target as HTMLElement).closest('a, button')
+                      ) {
+                        e.stopPropagation();
+                        setMenuMsg(menuMsg === m.id ? null : m.id);
+                      }
+                    }}
                   >
                     <button
                       class="ac-msg-mas"
@@ -1006,7 +1049,7 @@ export function Chat({
                         <span class="ac-reply-texto">{m.data.replyTo.texto}</span>
                       </button>
                     )}
-                    <Adjuntos m={m.data} />
+                    <Adjuntos m={m.data} onAbrir={abrirVisor} />
                     {m.data.texto && <div class="ac-msg-texto">{renderMarkdown(m.data.texto)}</div>}
                     {m.data.ticketRef &&
                       (onIrTicket ? (
@@ -1320,7 +1363,13 @@ export function Chat({
           value={draft}
           onInput={(e) => onInputDraft((e.target as HTMLTextAreaElement).value)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
+            // Touch devices: Enter inserts a newline; sending is the button
+            // (WhatsApp behavior). Desktop keeps Enter=send / Shift+Enter=newline.
+            if (
+              e.key === 'Enter' &&
+              !e.shiftKey &&
+              !window.matchMedia('(hover: none)').matches
+            ) {
               e.preventDefault();
               submit();
             }
@@ -1337,21 +1386,49 @@ export function Chat({
           </span>
         </button>
       </div>
+
+      {visorIdx !== null && galeria[visorIdx] && (
+        <Visor
+          items={galeria}
+          idx={visorIdx}
+          onIdx={setVisorIdx}
+          onClose={() => setVisorIdx(null)}
+        />
+      )}
     </div>
   );
 }
 
-function Adjuntos({ m }: { m: Message }) {
+/** PDF detection: `tipo` collapses every non-media file into 'archivo'. */
+function esPdf(a: Attachment): boolean {
+  return (
+    a.mimeType === 'application/pdf' ||
+    (a.nombre ?? a.storagePath ?? '').toLowerCase().endsWith('.pdf')
+  );
+}
+
+function Adjuntos({ m, onAbrir }: { m: Message; onAbrir?: (url: string) => void }) {
   if (!m.adjuntos?.length) return null;
   return (
     <div class="ac-adjuntos">
       {m.adjuntos.map((a, i) =>
         a.tipo === 'imagen' ? (
-          <a key={i} href={a.url} target="_blank" rel="noopener">
+          // Abre el visor in-app (no una pestaña nueva).
+          <button key={i} type="button" class="ac-adj-btn" onClick={() => a.url && onAbrir?.(a.url)}>
             <img class="ac-adj-img" src={a.url} alt={a.nombre ?? 'imagen'} />
-          </a>
+          </button>
         ) : a.tipo === 'video' ? (
           <video key={i} class="ac-adj-video" src={a.url} controls preload="metadata" />
+        ) : esPdf(a) ? (
+          <button
+            key={i}
+            type="button"
+            class="ac-adj-file"
+            onClick={() => a.url && onAbrir?.(a.url)}
+          >
+            <span class="ac-icon">picture_as_pdf</span>
+            {a.nombre ?? 'archivo'}
+          </button>
         ) : (
           <a key={i} class="ac-adj-file" href={a.url} target="_blank" rel="noopener">
             <span class="ac-icon">description</span>

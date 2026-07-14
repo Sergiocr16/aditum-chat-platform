@@ -13,7 +13,7 @@ import {
   where,
   type QueryConstraint,
 } from 'firebase/firestore';
-import type { Client, Contact, Conversation, DailyMetrics } from '@aditum-chat/shared';
+import type { Client, Contact, Conversation, CsatRating, DailyMetrics } from '@aditum-chat/shared';
 import { db } from './firebase';
 import type { Row } from './data';
 
@@ -81,9 +81,15 @@ export function useContactConversations(contactId: string | null) {
 
 // ---------------------------------------------------------------- métricas (1h)
 
-/** Métricas diarias para reportes. Colección top-level `metrics_daily`. */
+/** Métricas diarias para reportes. Colección top-level `metrics_daily`.
+ *  180 días: alcanza para comparar el rango de 90 con su período anterior. */
 export function useDailyMetrics() {
-  return useCollection<DailyMetrics>('metrics_daily', [orderBy('fecha', 'desc'), fsLimit(90)], []);
+  return useCollection<DailyMetrics>('metrics_daily', [orderBy('fecha', 'desc'), fsLimit(180)], []);
+}
+
+/** Valoraciones CSAT individuales (distribución, tendencia y por agente). */
+export function useCsatRatings() {
+  return useCollection<CsatRating>('csat', [orderBy('createdAt', 'desc'), fsLimit(1000)], []);
 }
 
 /** Mediana simple; null si la lista está vacía. */

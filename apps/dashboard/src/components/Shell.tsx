@@ -119,9 +119,15 @@ export function Shell({ children }: { children: React.ReactNode }) {
           }`}
         >
           <div className="px-4 py-4 pt-[max(1rem,env(safe-area-inset-top))]">
-            {/* Logo sobre fondo transparente: isotipo en su color + "ADITUM" en blanco */}
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/aditum-logo-menu.png" alt="Aditum" className="h-7 w-auto" />
+            {/* Lockup de marca: emblema (rounded recorta las esquinas del tile)
+                + wordmark como texto para nitidez en cualquier densidad. */}
+            <div className="flex items-center gap-2.5">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/aditum-chat-icon.png" alt="" className="h-7 w-7 rounded-lg" />
+              <span className="text-[13.5px] font-bold tracking-[0.12em] leading-none">
+                ADITUM <span className="text-white/60 font-semibold">CHAT</span>
+              </span>
+            </div>
           </div>
 
           <div className="px-3 pb-3">
@@ -225,8 +231,13 @@ export function Shell({ children }: { children: React.ReactNode }) {
                 <span className="absolute top-0.5 right-0.5 h-2 w-2 rounded-full bg-danger ring-2 ring-navy-deep" />
               )}
             </button>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/aditum-logo-menu.png" alt="Aditum" className="h-6 w-auto" />
+            <span className="flex items-center gap-2">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/aditum-chat-icon.png" alt="" className="h-6 w-6 rounded-md" />
+              <span className="text-[12.5px] font-bold tracking-[0.12em] leading-none">
+                ADITUM <span className="text-white/60 font-semibold">CHAT</span>
+              </span>
+            </span>
           </header>
           <main className="flex-1 min-w-0 overflow-hidden bg-cream-1">{children}</main>
         </div>

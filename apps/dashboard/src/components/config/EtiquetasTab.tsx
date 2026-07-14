@@ -64,7 +64,7 @@ export function EtiquetasTab() {
   const tags = useTags(siteId);
 
   const [nombre, setNombre] = useState('');
-  const [color, setColor] = useState('#123C68');
+  const [color, setColor] = useState('#5D3A5F');
   const [guardando, setGuardando] = useState(false);
 
   const agregar = async () => {
@@ -74,7 +74,7 @@ export function EtiquetasTab() {
     try {
       await crearTag(siteId, n, color, tags.length);
       setNombre('');
-      setColor('#123C68');
+      setColor('#5D3A5F');
     } finally {
       setGuardando(false);
     }

@@ -36,6 +36,7 @@ import { ConvertTicketModal } from './ConvertTicketModal';
 import { useMediaQuery } from './ResizeHandle';
 import { ResolveModal } from './ResolveModal';
 import { TicketDetailModal } from './TicketDetailModal';
+import { VisorAdjuntos, type VisorItem } from './VisorAdjuntos';
 
 export interface ConversationViewHandle {
   scrollToConversation(convId: string): void;
@@ -100,6 +101,26 @@ export const ConversationView = forwardRef<
   // lets the console close that one (registry hygiene).
   const convResolver = activaAgente ?? (activa.data.estado !== 'resolved' ? activa : null);
 
+  // Visor de adjuntos: galería con las imágenes y PDFs del hilo cargado.
+  const galeria = useMemo<VisorItem[]>(
+    () =>
+      filas.flatMap((f) =>
+        (f.msg.data.adjuntos ?? [])
+          .filter((a) => a.url && (a.tipo === 'imagen' || (a.tipo === 'archivo' && esPdf(a))))
+          .map((a) => ({
+            url: a.url!,
+            nombre: a.nombre ?? 'archivo',
+            esPdf: a.tipo !== 'imagen',
+          })),
+      ),
+    [filas],
+  );
+  const [visorIdx, setVisorIdx] = useState<number | null>(null);
+  const abrirVisor = (url: string) => {
+    const i = galeria.findIndex((g) => g.url === url);
+    if (i >= 0) setVisorIdx(i);
+  };
+
   const [tab, setTab] = useState<'responder' | 'nota'>('responder');
   const [draft, setDraft] = useState('');
   const [showConvert, setShowConvert] = useState(false);
@@ -147,6 +168,14 @@ export const ConversationView = forwardRef<
 
   const fileRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  // WhatsApp-style auto-grow: the textarea tracks its content height
+  // (the CSS max-height caps it; beyond that it scrolls).
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  }, [draft, tab]);
   const bodyRef = useRef<HTMLDivElement>(null);
   const ajusteScroll = useRef<number | null>(null);
   const enElFondoRef = useRef(true);
@@ -421,9 +450,9 @@ export const ConversationView = forwardRef<
 
   return (
     <div className="flex flex-col h-full">
-      {/* PWA standalone: franja navy tras el status bar del teléfono (reloj/batería
-          legibles y el header no queda debajo). En navegador env() = 0. */}
-      <div className="md:hidden flex-none bg-navy-deep h-[env(safe-area-inset-top)]" />
+      {/* PWA standalone: franja blanca tras el status bar del teléfono (el header
+          no queda debajo). Con status bar 'default' mide 0; es solo respaldo. */}
+      <div className="md:hidden flex-none bg-white h-[env(safe-area-inset-top)]" />
       <header className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-3 bg-white border-b border-warm-border">
         {onBack && (
           <button
@@ -570,6 +599,7 @@ export const ConversationView = forwardRef<
                   onIrMensaje={irAMensaje}
                   onResponder={responderA}
                   onEditar={() => editarMensaje(f.convId, f.msg.id, md.texto)}
+                  onAbrirAdjunto={abrirVisor}
                   onVerConvBot={
                     md.botConvRef && onOpenConversation
                       ? () => onOpenConversation(md.botConvRef!)
@@ -776,11 +806,17 @@ export const ConversationView = forwardRef<
           )}
           <textarea
             ref={inputRef}
-            rows={2}
+            rows={1}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
+              // Touch devices: Enter inserts a newline; sending is the button
+              // (WhatsApp behavior). Desktop keeps Enter=send.
+              if (
+                e.key === 'Enter' &&
+                !e.shiftKey &&
+                !window.matchMedia('(hover: none)').matches
+              ) {
                 e.preventDefault();
                 enviar();
               }
@@ -796,7 +832,7 @@ export const ConversationView = forwardRef<
                     ? t('inbox.placeholderRespuesta', { nombre: nombre.split(' ')[0] })
                     : t('inbox.placeholderRespuestaCorta')
             }
-            className="flex-1 bg-transparent resize-none outline-none text-[13px] px-1.5 py-1"
+            className="flex-1 bg-transparent resize-none outline-none text-[13px] leading-[1.45] px-1.5 py-1 min-h-[46px] max-h-40 overflow-y-auto"
           />
           <button
             onClick={enviar}
@@ -822,6 +858,14 @@ export const ConversationView = forwardRef<
       {showConvert && <ConvertTicketModal conv={activa} onClose={() => setShowConvert(false)} />}
       {showResolve && convResolver && (
         <ResolveModal convId={convResolver.id} onClose={() => setShowResolve(false)} />
+      )}
+      {visorIdx !== null && galeria[visorIdx] && (
+        <VisorAdjuntos
+          items={galeria}
+          idx={visorIdx}
+          onIdx={setVisorIdx}
+          onClose={() => setVisorIdx(null)}
+        />
       )}
       {verTicketId && (
         <TicketDetailModal ticketId={verTicketId} onClose={() => setVerTicketId(null)} />
@@ -945,6 +989,7 @@ function Burbuja({
   onResponder,
   onEditar,
   onVerConvBot,
+  onAbrirAdjunto,
 }: {
   m: Message;
   msgId?: string;
@@ -960,6 +1005,8 @@ function Burbuja({
   onEditar?(): void;
   /** Mensajes de sistema con botConvRef: abre la conversación del bot de origen. */
   onVerConvBot?(): void;
+  /** Abre el visor in-app de adjuntos (imágenes/PDF). */
+  onAbrirAdjunto?(url: string): void;
 }) {
   const t = useT();
   const own = m.sender.tipo === 'agent';
@@ -1031,7 +1078,18 @@ function Burbuja({
       </div>
       <div
         data-msgid={msgId}
-        onClick={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.stopPropagation();
+          // Touch devices have no hover (no chevron): tapping the bubble
+          // itself toggles the actions menu. Inner links/buttons keep their
+          // own behavior.
+          if (
+            window.matchMedia('(hover: none)').matches &&
+            !(e.target as HTMLElement).closest('a, button')
+          ) {
+            onMenu?.();
+          }
+        }}
         className={`relative rounded-xl px-3 py-2 shadow-card transition-shadow ${own ? 'bg-[#D9FDD3]' : 'bg-white'}`}
       >
         {/* Flechita: abre menú de acciones (reaccionar / responder / copiar). */}
@@ -1039,12 +1097,16 @@ function Burbuja({
           type="button"
           aria-label="Opciones"
           onClick={() => onMenu?.()}
-          className="absolute top-1 right-1 h-5 w-5 rounded-full text-[#8696a0] opacity-0 group-hover:opacity-100 hover:bg-black/5 flex items-center justify-center transition-opacity"
+          className="absolute top-1 right-1 h-5 w-5 rounded-full text-[#8696a0] opacity-0 group-hover:opacity-100 [@media(hover:none)]:hidden hover:bg-black/5 flex items-center justify-center transition-opacity"
         >
           <span className="msr text-[16px]">expand_more</span>
         </button>
         {menuAbierto && (
-          <div className="absolute z-20 top-6 right-1 w-40 bg-white border border-warm-border rounded-lg shadow-raised py-1">
+          <div
+            className={`absolute z-20 top-6 w-40 bg-white border border-warm-border rounded-lg shadow-raised py-1 ${
+              own ? 'right-1' : 'left-1'
+            }`}
+          >
             <div className="flex justify-around px-1 pb-1 mb-1 border-b border-cream-3">
               {EMOJIS.map((e2) => (
                 <button
@@ -1111,7 +1173,7 @@ function Burbuja({
             </div>
           </button>
         )}
-        <Adjuntos adjuntos={m.adjuntos} />
+        <Adjuntos adjuntos={m.adjuntos} onAbrir={onAbrirAdjunto} />
         {m.texto && (
           <div className="text-[13px] text-[#111B21] whitespace-pre-wrap break-words">
             {renderMarkdown(m.texto)}
@@ -1173,21 +1235,41 @@ function Burbuja({
 }
 
 /** Adjuntos de un mensaje: imagen, video o archivo (mismo formato que el widget). */
-function Adjuntos({ adjuntos }: { adjuntos?: Attachment[] }) {
+/** PDF detection: `tipo` collapses every non-media file into 'archivo'. */
+export function esPdf(a: Attachment): boolean {
+  return (
+    a.mimeType === 'application/pdf' ||
+    (a.nombre ?? a.storagePath ?? '').toLowerCase().endsWith('.pdf')
+  );
+}
+
+function Adjuntos({
+  adjuntos,
+  onAbrir,
+}: {
+  adjuntos?: Attachment[];
+  onAbrir?: (url: string) => void;
+}) {
   if (!adjuntos?.length) return null;
   return (
     <div className="flex flex-col gap-1.5 mb-1">
       {adjuntos.map((a, i) => {
         if (a.tipo === 'imagen' && a.url) {
           return (
-            <a key={i} href={a.url} target="_blank" rel="noopener noreferrer" className="block">
+            // Abre el visor in-app (no una pestaña nueva).
+            <button
+              key={i}
+              type="button"
+              onClick={() => a.url && onAbrir?.(a.url)}
+              className="block p-0 border-0 bg-transparent cursor-pointer text-left"
+            >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={a.url}
                 alt={a.nombre ?? 'imagen'}
                 className="max-w-[240px] max-h-[240px] rounded-lg block object-cover"
               />
-            </a>
+            </button>
           );
         }
         if (a.tipo === 'video' && a.url) {
@@ -1199,6 +1281,19 @@ function Adjuntos({ adjuntos }: { adjuntos?: Attachment[] }) {
               preload="metadata"
               className="max-w-[260px] rounded-lg block"
             />
+          );
+        }
+        if (esPdf(a) && a.url) {
+          return (
+            <button
+              key={i}
+              type="button"
+              onClick={() => a.url && onAbrir?.(a.url)}
+              className="inline-flex items-center gap-2 bg-cream-2 rounded-lg px-3 py-2 text-[12.5px] font-semibold text-navy hover:bg-cream-3 transition-colors max-w-[240px] cursor-pointer border-0"
+            >
+              <span className="msr text-[16px] flex-none">picture_as_pdf</span>
+              <span className="truncate">{a.nombre ?? 'archivo'}</span>
+            </button>
           );
         }
         return (

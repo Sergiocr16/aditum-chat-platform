@@ -38,11 +38,16 @@ export default function LoginPage() {
     <div className="min-h-screen grid lg:grid-cols-[1.05fr_1fr] bg-[#FDFCFA]">
       {/* Panel de marca: banda compacta en móvil, columna completa en escritorio */}
       <aside
-        className="relative bg-[#0A1D31] text-white overflow-hidden flex flex-col justify-center lg:justify-start px-6 py-5 pt-[max(1.25rem,env(safe-area-inset-top))] lg:p-12"
+        className="relative bg-[#2C1C2C] text-white overflow-hidden flex flex-col justify-center lg:justify-start px-6 py-5 pt-[max(1.25rem,env(safe-area-inset-top))] lg:p-12"
         style={{ backgroundImage: DOODLE_BLANCO, backgroundSize: '320px' }}
       >
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/aditum-logo-menu.png" alt="Aditum" className="h-7 w-auto self-start relative" />
+        <div className="flex items-center gap-3 self-start relative">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/aditum-chat-icon.png" alt="" className="h-9 w-9 rounded-[10px]" />
+          <span className="text-[16px] font-bold tracking-[0.14em] leading-none">
+            ADITUM <span className="text-white/60 font-semibold">CHAT</span>
+          </span>
+        </div>
 
         <div className="hidden lg:block mt-auto relative max-w-[460px]">
           {/* Vista en miniatura de una conversación real: el producto se presenta solo */}
@@ -85,7 +90,7 @@ export default function LoginPage() {
             <label className="block text-[11.5px] font-semibold text-[#6E675C] mb-1.5">
               Correo electrónico
             </label>
-            <div className="flex items-center gap-2.5 border border-[#E4DFD6] rounded-[10px] px-3 py-[11px] bg-[#FBFAF8] focus-within:border-[#123C68] focus-within:bg-white transition-colors">
+            <div className="flex items-center gap-2.5 border border-[#E4DFD6] rounded-[10px] px-3 py-[11px] bg-[#FBFAF8] focus-within:border-[#5D3A5F] focus-within:bg-white transition-colors">
               <span className="msr text-[17px] text-[#A9A294]">mail</span>
               <input
                 type="email"
@@ -102,7 +107,7 @@ export default function LoginPage() {
             <label className="block text-[11.5px] font-semibold text-[#6E675C] mb-1.5">
               Contraseña
             </label>
-            <div className="flex items-center gap-2.5 border border-[#E4DFD6] rounded-[10px] px-3 py-[11px] bg-[#FBFAF8] focus-within:border-[#123C68] focus-within:bg-white transition-colors">
+            <div className="flex items-center gap-2.5 border border-[#E4DFD6] rounded-[10px] px-3 py-[11px] bg-[#FBFAF8] focus-within:border-[#5D3A5F] focus-within:bg-white transition-colors">
               <span className="msr text-[17px] text-[#A9A294]">lock</span>
               <input
                 type={verClave ? 'text' : 'password'}
@@ -124,7 +129,7 @@ export default function LoginPage() {
           </div>
 
           <div className="flex justify-end mt-3">
-            <button type="button" className="text-[12px] font-semibold text-[#123C68] hover:underline">
+            <button type="button" className="text-[12px] font-semibold text-[#5D3A5F] hover:underline">
               ¿Olvidaste tu contraseña?
             </button>
           </div>
@@ -134,14 +139,14 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={busy}
-            className="w-full mt-6 bg-[#123C68] text-white rounded-[10px] py-3 text-[13.5px] font-semibold hover:bg-[#1A4E85] transition-colors disabled:opacity-50"
+            className="w-full mt-6 bg-[#5D3A5F] text-white rounded-[10px] py-3 text-[13.5px] font-semibold hover:bg-[#74497A] transition-colors disabled:opacity-50"
           >
             {busy ? 'Ingresando…' : 'Iniciar sesión'}
           </button>
 
           <p className="text-center text-[11.5px] text-[#8A8375] mt-5">
             ¿Problemas para ingresar?{' '}
-            <span className="text-[#123C68] font-semibold">Contactá al administrador</span>
+            <span className="text-[#5D3A5F] font-semibold">Contactá al administrador</span>
           </p>
         </form>
       </main>

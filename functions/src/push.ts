@@ -6,7 +6,7 @@ import { getDatabase } from 'firebase-admin/database';
 import { getMessaging, type Messaging } from 'firebase-admin/messaging';
 import type { Contact, Conversation, Message, Site } from '@aditum-chat/shared';
 import { db, messaging as defaultMessaging } from './lib/admin.js';
-import { markdownToPlain } from './lib/markdown.js';
+import { attachmentSummary, markdownToPlain } from './lib/markdown.js';
 import { getSiteServiceAccount } from './pushConfig.js';
 
 const configKek = defineSecret('CONFIG_KEK');
@@ -126,7 +126,9 @@ export const pushNotify = onDocumentCreated(
             ? `${msg.sender.nombre} te respondió`
             : `${msg.sender.nombre} replied`;
       // Plain text: bot replies carry markdown that reads as noise in a push.
-      const textoPlano = markdownToPlain(msg.texto);
+      // Attachment-only messages fall back to a "📷 Foto"-style summary.
+      const textoPlano =
+        markdownToPlain(msg.texto) || attachmentSummary(msg.adjuntos, idioma);
       const body =
         conv.tipo === 'grupo'
           ? `${msg.sender.nombre}: ${textoPlano}`.slice(0, 140)

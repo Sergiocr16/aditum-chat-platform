@@ -1,3 +1,26 @@
+import type { Attachment } from '@aditum-chat/shared';
+
+/**
+ * WhatsApp-style body for attachment-only messages ("📷 Foto",
+ * "📄 recibo.pdf"). Empty string when there are no attachments.
+ */
+export function attachmentSummary(
+  adjuntos: Attachment[] | undefined,
+  lang: 'es' | 'en',
+): string {
+  if (!adjuntos?.length) return '';
+  const a = adjuntos[0];
+  const label =
+    a.tipo === 'imagen'
+      ? lang === 'es'
+        ? '📷 Foto'
+        : '📷 Photo'
+      : a.tipo === 'video'
+        ? '🎥 Video'
+        : `📄 ${a.nombre ?? (lang === 'es' ? 'Archivo' : 'File')}`;
+  return adjuntos.length > 1 ? `${label} (+${adjuntos.length - 1})` : label;
+}
+
 /**
  * Markdown → plain text for surfaces that render raw strings (push
  * notifications). Keeps the words, drops the syntax.
