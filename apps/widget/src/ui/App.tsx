@@ -408,12 +408,8 @@ export function App({ settings, onReady, emit }: Props) {
           {!enChat && !enTicketDetalle && (
             <div class="ac-header">
               <span class="ac-header-brand">
-                {state.status === 'ready' && state.session.widgetConfig.logoUrl ? (
+                {state.status === 'ready' && state.session.widgetConfig.logoUrl && (
                   <img class="ac-logo-marca" src={state.session.widgetConfig.logoUrl} alt="" />
-                ) : (
-                  <span class="ac-logo ac-logo-letra">
-                    {(state.status === 'ready' ? state.session.widgetConfig.titulo : 'S')[0]}
-                  </span>
                 )}
               </span>
               <button class="ac-icon-btn" aria-label="Cerrar" onClick={cerrarPanel}>

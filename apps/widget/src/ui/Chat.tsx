@@ -671,20 +671,25 @@ export function Chat({
   }
 
   const estado = activa?.data.estado ?? modo;
+  // Canal del bot: el header muestra SIEMPRE nombre + avatar configurados del bot
+  // mientras el chat sea del bot, aunque el segmento activo ya esté 'resolved'.
+  // `subcanal` es la señal estable; `estado === 'bot'` cubre convs legacy sin
+  // subcanal y el modo inicial (antes de la primera conversación).
+  const esBot = !grupo && ((activa?.data.subcanal ?? 'agente') === 'bot' || estado === 'bot');
   // Título: el NOMBRE de quien atiende (agente asignado o bot), no la marca.
   const headerTitle = grupo
     ? (activa?.data.groupName ?? activa?.data.clientNombre ?? t('chat.equipoAdministrador'))
-    : estado === 'bot'
+    : esBot
       ? session.botConfig.nombre
       : (activa?.data.asignadoNombre ?? session.widgetConfig.titulo);
   const headerSub =
-    esperandoBot && estado === 'bot'
+    esperandoBot && esBot
       ? `${session.botConfig.nombre} ${t('chat.escribiendo')}`
       : typingNames.length > 0
       ? `${typingNames.join(', ')} ${t('chat.escribiendo')}`
       : grupo
         ? participantesResumen(activa)
-        : estado === 'bot' || activa?.data.asignadoNombre
+        : esBot || activa?.data.asignadoNombre
           ? t('chat.enLinea')
           : t('chat.soporte');
 
@@ -881,7 +886,7 @@ export function Chat({
         <div class="ac-chat-avatar">
           {grupo ? (
             <span class="ac-icon">groups</span>
-          ) : estado === 'bot' ? (
+          ) : esBot ? (
             session.botConfig.avatarUrl ? (
               <img class="ac-avatar-img" src={session.botConfig.avatarUrl} alt="" />
             ) : (
@@ -898,7 +903,7 @@ export function Chat({
         <div class="ac-chat-htxt">
           <div class="ac-chat-htitle">
             {headerTitle}
-            {!grupo && estado === 'bot' && <span class="ac-chip-ai">AI</span>}
+            {esBot && <span class="ac-chip-ai">AI</span>}
           </div>
           <div class="ac-chat-hsub">{headerSub}</div>
         </div>

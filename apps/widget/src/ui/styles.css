@@ -57,13 +57,18 @@
 .ac-bubble {
   position: relative;
   width: 56px; height: 56px;
-  border-radius: 99px; border: none;
+  /* Gota de chat: 3 esquinas redondas + punta hacia el rincón anclado
+     (abajo-izquierda por defecto). Ver `.ac-bottom-right` para el espejo. */
+  border-radius: 50% 50% 50% 8px; border: none;
   background: var(--ac-bubble, var(--ac-primary)); color: #fff;
   cursor: pointer;
   display: flex; align-items: center; justify-content: center;
   box-shadow: 0 8px 24px rgba(10,29,49,.24);
-  transition: transform .15s ease;
+  transition: transform .15s ease, border-radius .18s ease;
 }
+.ac-bottom-right .ac-bubble { border-radius: 50% 50% 8px 50%; }
+/* Al abrir (botón de cerrar, escritorio) vuelve a círculo. */
+.ac-abierto .ac-bubble { border-radius: 99px; }
 .ac-bubble:hover { transform: scale(1.06); }
 .ac-bubble-icon { font-size: 26px; font-variation-settings: 'FILL' 1, 'wght' 400; }
 .ac-badge {
@@ -86,6 +91,19 @@
   display: flex; flex-direction: column;
   overflow: hidden;
   transition: width .2s ease, height .2s ease;
+  /* Apertura/cierre: escala + sube desde la esquina de la burbuja (transform +
+     opacity, nunca layout). Ease-out expo al entrar, ease-in rápido al salir. */
+  transform-origin: bottom left;
+  /* Solo entrada (rápida). El cierre es inmediato: el panel se desmonta sin animación. */
+  animation: ac-panel-in 130ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.ac-bottom-right .ac-panel { transform-origin: bottom right; }
+@keyframes ac-panel-in {
+  from { opacity: 0; transform: translateY(12px) scale(.95); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ac-panel { animation: none; }
 }
 /* Vista amplia (chat/grupo/tickets): casi toda la pantalla, estilo WhatsApp Web. */
 .ac-panel-amplio {
@@ -140,57 +158,103 @@
 .ac-chip-prio-baja { background: var(--ac-cream2); color: var(--ac-gray); }
 
 /* ---------- Inicio ---------- */
-.ac-home { padding: 20px 16px; display: flex; flex-direction: column; gap: 16px; }
-/* Hero: marca discreta → saludo protagonista → rol como chip anclado. */
-.ac-home-hero { display: flex; flex-direction: column; }
+.ac-home { padding: 0 0 18px; display: flex; flex-direction: column; }
+/* Hero = banner navy a sangre (continúa el header): saludo protagonista en
+   blanco, marca como eyebrow, estado compacto. Las acciones flotan sobre su
+   borde inferior (welcome screen "drenched"). */
+.ac-home-hero {
+  position: relative;
+  overflow: hidden;
+  display: flex; flex-direction: column;
+  background: var(--ac-primary);
+  color: #fff;
+  padding: 4px 20px 42px;
+}
+/* Contenido por encima de las partículas. */
+.ac-home-hero > * { position: relative; z-index: 1; }
+/* Partículas flotantes: motas blancas sutiles que suben y cruzan el banner. */
+.ac-hero-particles {
+  position: absolute; inset: 0; z-index: 0;
+  overflow: hidden; pointer-events: none;
+}
+.ac-particle {
+  position: absolute; bottom: -8px;
+  border-radius: 50%;
+  background: rgba(255,255,255,.5);
+  animation-name: ac-particle-float;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+  will-change: transform, opacity;
+}
+@keyframes ac-particle-float {
+  0%   { transform: translate3d(0, 0, 0); opacity: 0; }
+  12%  { opacity: .65; }
+  88%  { opacity: .5; }
+  100% { transform: translate3d(var(--drift, 0), -210px, 0); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ac-hero-particles { display: none; }
+}
 .ac-home-marca {
   font-size: 10.5px;
   font-weight: 700;
-  letter-spacing: .09em;
+  letter-spacing: .1em;
   text-transform: uppercase;
-  color: var(--ac-gray2);
+  color: rgba(255,255,255,.6);
 }
 .ac-home-saludo {
-  margin-top: 6px;
-  font-size: 23px;
+  margin-top: 7px;
+  font-size: 26px;
   font-weight: 700;
-  letter-spacing: -.01em;
-  line-height: 1.2;
+  letter-spacing: -.015em;
+  line-height: 1.18;
+  color: #fff;
 }
 .ac-home-rol {
   align-self: flex-start;
-  margin-top: 8px;
-  padding: 3px 9px;
+  margin-top: 11px;
+  padding: 3px 10px;
   border-radius: 999px;
-  background: var(--ac-cream2);
+  background: rgba(255,255,255,.14);
   font-size: 11px;
   font-weight: 600;
-  color: var(--ac-ink2);
+  color: rgba(255,255,255,.9);
 }
 /* Bloque de estado: tinte semántico + jerarquía (estado > refuerzo > horario). */
+/* Grid de 2 columnas: [marcador 16px] [texto]. El punto y el reloj viven en la
+   columna 1 (centrados); label, sub y horario comparten la columna 2, así los
+   tres textos arrancan en la misma x. */
 .ac-home-status {
-  margin-top: 14px;
+  margin-top: 15px;
   padding: 11px 13px;
-  border-radius: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
+  border-radius: 11px;
+  display: grid;
+  grid-template-columns: 16px 1fr;
+  column-gap: 8px;
+  row-gap: 2px;
+  align-items: center;
+  background: rgba(255,255,255,.12);
 }
-.ac-home-status-on { background: var(--ac-green-bg); }
-.ac-home-status-off { background: var(--ac-amber-bg); }
+/* Sobre el navy el tinte semántico se vuelve translúcido; el color vive en el punto. */
+.ac-home-status-on, .ac-home-status-off { background: rgba(255,255,255,.12); }
+.ac-home-status-dot { grid-area: 1 / 1; justify-self: center; }
 .ac-home-status-head {
-  display: flex; align-items: center; gap: 8px;
+  grid-area: 1 / 2;
   font-size: 12.5px; font-weight: 700; letter-spacing: .01em;
+  color: #fff;
 }
-.ac-home-status-on .ac-home-status-head { color: var(--ac-green-deep); }
-.ac-home-status-off .ac-home-status-head { color: var(--ac-amber); }
-.ac-home-status-sub { font-size: 12px; color: var(--ac-ink2); padding-left: 16px; }
+.ac-home-status-sub {
+  grid-area: 2 / 2;
+  font-size: 12px; color: rgba(255,255,255,.82);
+}
+.ac-home-status-ico {
+  grid-area: 3 / 1; justify-self: center;
+  font-size: 15px; color: rgba(255,255,255,.72);
+}
 .ac-home-status-horario {
-  display: flex; align-items: center; gap: 5px;
-  margin-top: 4px; padding-left: 16px;
-  font-size: 11.5px; color: var(--ac-gray);
+  grid-area: 3 / 2;
+  font-size: 11.5px; color: rgba(255,255,255,.72);
 }
-.ac-home-status-horario .ac-icon { font-size: 14px; color: var(--ac-gray2); }
 .ac-dot { position: relative; width: 8px; height: 8px; border-radius: 99px; flex: none; }
 .ac-dot-on { background: var(--ac-green); }
 .ac-dot-off { background: var(--ac-amber); }
@@ -209,16 +273,30 @@
   }
 }
 
-.ac-home-acciones { display: flex; flex-direction: column; gap: 8px; }
-.ac-accion {
-  display: flex; align-items: center; gap: 10px;
-  background: #fff; border: 1px solid var(--ac-border); border-radius: 12px;
-  padding: 13px 14px; cursor: pointer;
-  font-family: inherit; font-size: 13.5px; font-weight: 600; color: var(--ac-ink);
-  box-shadow: 0 1px 2px rgba(10,29,49,.06);
-  text-align: left;
+/* Tarjeta flotante que solapa el borde del banner (una sola card; los botones
+   son FILAS con divisor, no mini-cards anidadas). */
+.ac-home-acciones {
+  /* Por encima del banner (que ahora es position:relative por las partículas),
+     si no el navy posicionado pinta sobre la tarjeta al solaparla. */
+  position: relative;
+  z-index: 2;
+  display: flex; flex-direction: column;
+  margin: -26px 16px 0;
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 12px 30px rgba(10,29,49,.16), 0 2px 6px rgba(10,29,49,.06);
+  overflow: hidden;
 }
-.ac-accion:hover { border-color: var(--ac-primary); }
+.ac-accion {
+  display: flex; align-items: center; gap: 11px;
+  background: #fff; border: none; border-bottom: 1px solid var(--ac-border);
+  padding: 15px 16px; cursor: pointer;
+  font-family: inherit; font-size: 13.5px; font-weight: 600; color: var(--ac-ink);
+  text-align: left;
+  transition: background .15s ease;
+}
+.ac-accion:last-child { border-bottom: none; }
+.ac-accion:hover { background: var(--ac-cream2); }
 .ac-accion-ico { color: var(--ac-primary); }
 .ac-accion-ico-img { width: 22px; height: 22px; object-fit: contain; flex: none; border-radius: 4px; }
 .ac-accion-txt { flex: 1; }
@@ -230,7 +308,7 @@
   padding: 2px 6px; border-radius: 99px;
 }
 
-.ac-home-tickets { display: flex; flex-direction: column; gap: 8px; }
+.ac-home-tickets { display: flex; flex-direction: column; gap: 8px; padding: 18px 16px 0; }
 .ac-home-tickets-head {
   display: flex; justify-content: space-between; align-items: baseline;
   font-size: 12px; font-weight: 700; color: var(--ac-gray); text-transform: uppercase; letter-spacing: .4px;
@@ -852,7 +930,7 @@
   font-weight: 700; font-size: 13px; color: #fff; text-transform: uppercase;
 }
 .ac-bubble-logo {
-  width: 100%; height: 100%; border-radius: 99px; object-fit: cover;
+  width: 100%; height: 100%; border-radius: inherit; object-fit: cover;
 }
 .ac-avatar-img { width: 100%; height: 100%; border-radius: 99px; object-fit: cover; }
 

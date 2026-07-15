@@ -16,6 +16,25 @@ interface Props {
   activo?: { view: WidgetView; modo: 'bot' | 'open'; ticket?: string | null };
 }
 
+// Partículas del banner: posición/tamaño/velocidad/deriva variados (delay
+// negativo = ya distribuidas al cargar, no todas saliendo juntas).
+const HERO_PARTICLES = [
+  { l: 6, s: 3, d: 15, delay: 0, x: 14 },
+  { l: 14, s: 2, d: 19, delay: 5, x: -10 },
+  { l: 23, s: 4, d: 13, delay: 2, x: 8 },
+  { l: 31, s: 2, d: 21, delay: 8, x: -16 },
+  { l: 40, s: 3, d: 16, delay: 3, x: 12 },
+  { l: 48, s: 2, d: 18, delay: 11, x: -6 },
+  { l: 56, s: 3, d: 14, delay: 6, x: 18 },
+  { l: 64, s: 2, d: 22, delay: 1, x: -12 },
+  { l: 71, s: 4, d: 17, delay: 9, x: 10 },
+  { l: 79, s: 2, d: 15, delay: 4, x: -8 },
+  { l: 86, s: 3, d: 20, delay: 7, x: 16 },
+  { l: 93, s: 2, d: 18, delay: 12, x: -14 },
+  { l: 18, s: 2, d: 24, delay: 10, x: 6 },
+  { l: 68, s: 3, d: 23, delay: 13, x: -10 },
+];
+
 export function Home({ fb, session, go, directaBot, directaAgente, grupo, activo }: Props) {
   const t = makeT(widgetMessages, session.idioma);
   const [tickets, setTickets] = useState<Doc<Ticket>[]>([]);
@@ -50,6 +69,15 @@ export function Home({ fb, session, go, directaBot, directaAgente, grupo, activo
   return (
     <div class="ac-home">
       <div class="ac-home-hero">
+        <div class="ac-hero-particles" aria-hidden="true">
+          {HERO_PARTICLES.map((p, i) => (
+            <span
+              key={i}
+              class="ac-particle"
+              style={`left:${p.l}%;width:${p.s}px;height:${p.s}px;animation-duration:${p.d}s;animation-delay:-${p.delay}s;--drift:${p.x}px`}
+            />
+          ))}
+        </div>
         <div class="ac-home-marca">{cfg.titulo}</div>
         <div class="ac-home-saludo">
           {cfg.saludo?.trim()
@@ -58,18 +86,18 @@ export function Home({ fb, session, go, directaBot, directaAgente, grupo, activo
         </div>
         {session.rol && <span class="ac-home-rol">{session.rol}</span>}
         <div class={`ac-home-status ${session.enHorario ? 'ac-home-status-on' : 'ac-home-status-off'}`}>
-          <div class="ac-home-status-head">
-            <span class={`ac-dot ${session.enHorario ? 'ac-dot-on' : 'ac-dot-off'}`} />
+          <span class={`ac-dot ac-home-status-dot ${session.enHorario ? 'ac-dot-on' : 'ac-dot-off'}`} />
+          <span class="ac-home-status-head">
             {session.enHorario ? t('inicio.enLinea') : t('inicio.fueraHorario')}
-          </div>
-          <div class="ac-home-status-sub">
+          </span>
+          <span class="ac-home-status-sub">
             {session.enHorario ? t('inicio.enLineaSub') : t('inicio.asistente247')}
-          </div>
+          </span>
           {session.scheduleText && (
-            <div class="ac-home-status-horario" title={t('inicio.horario')}>
-              <span class="ac-icon">schedule</span>
-              {session.scheduleText}
-            </div>
+            <>
+              <span class="ac-icon ac-home-status-ico" title={t('inicio.horario')}>schedule</span>
+              <span class="ac-home-status-horario">{session.scheduleText}</span>
+            </>
           )}
         </div>
       </div>

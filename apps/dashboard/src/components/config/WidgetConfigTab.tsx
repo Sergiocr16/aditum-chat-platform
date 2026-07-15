@@ -674,111 +674,99 @@ function WidgetPreview({
   idioma: Idioma;
 }) {
   const derecha = config.posicion === 'bottom-right';
-  const accent = config.accent ?? '#E8EEF5';
   const t = makeT(widgetMessages, idioma);
   const nombre = idioma === 'es' ? 'María' : 'Maria';
+  const botones: { icon: string; iconUrl?: string; label: string; ai?: boolean; badge?: number }[] = [];
+  if (config.botonBot)
+    botones.push({ icon: 'smart_toy', iconUrl: config.botonBotIcono, label: config.botonBotTexto || t('inicio.preguntasSistema'), ai: true });
+  if (config.botonAgente)
+    botones.push({ icon: 'support_agent', iconUrl: config.botonAgenteIcono, label: config.botonAgenteTexto || t('inicio.hablarAgente'), badge: 2 });
+  if (config.botonChatEquipo)
+    botones.push({ icon: 'groups', iconUrl: config.botonEquipoIcono, label: config.botonEquipoTexto || t('inicio.chatEquipo') });
+  // Partículas estáticas del banner (posición/tamaño variados).
+  const particulas = [
+    { l: 12, tp: 32, s: 3 }, { l: 30, tp: 64, s: 2 }, { l: 48, tp: 22, s: 3 }, { l: 66, tp: 72, s: 2 },
+    { l: 82, tp: 42, s: 3 }, { l: 90, tp: 80, s: 2 }, { l: 22, tp: 86, s: 2 }, { l: 74, tp: 16, s: 2 },
+  ];
   return (
     <div className="flex flex-col gap-3">
-      <div className="rounded-panel overflow-hidden border border-warm-border shadow-raised bg-white">
-        {/* Header real: solo la marca (logo o inicial) + cerrar */}
-        <div
-          className="px-4 py-3 text-white flex items-center justify-between"
-          style={{ background: config.color }}
-        >
-          {config.logoUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={config.logoUrl} alt="" className="h-7 w-auto max-w-[140px] object-contain" />
-          ) : (
-            <div className="h-7 w-7 rounded-full bg-white/20 flex items-center justify-center text-[12px] font-bold uppercase">
-              {config.titulo[0] ?? 'A'}
+      <div className="rounded-panel overflow-hidden border border-warm-border shadow-raised bg-cream-0">
+        {/* Banner navy a sangre: cerrar arriba + saludo grande + estado translúcido + partículas */}
+        <div className="relative overflow-hidden text-white" style={{ background: config.color }}>
+          <div className="pointer-events-none absolute inset-0">
+            {particulas.map((p, i) => (
+              <span
+                key={i}
+                className="absolute rounded-full bg-white/40"
+                style={{ left: `${p.l}%`, top: `${p.tp}%`, width: p.s, height: p.s }}
+              />
+            ))}
+          </div>
+          <div className="relative flex items-center justify-between px-4 pt-3">
+            {config.logoUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={config.logoUrl} alt="" className="h-7 w-auto max-w-[140px] object-contain" />
+            ) : (
+              <span />
+            )}
+            <span className="msr text-[18px] opacity-80">close</span>
+          </div>
+          <div className="relative px-5 pb-9 pt-1.5">
+            <div className="text-[10.5px] font-bold uppercase tracking-[.1em] text-white/60">{config.titulo}</div>
+            <div className="mt-1.5 text-[25px] font-bold leading-[1.15] tracking-[-.015em] text-white">
+              {config.saludo?.trim()
+                ? config.saludo.replaceAll('{nombre}', nombre)
+                : t('inicio.saludo', { nombre })}
             </div>
-          )}
-          <span className="msr text-[18px] opacity-80">close</span>
-        </div>
-
-        <div className="px-4 py-5 bg-cream-0 flex flex-col">
-          {/* Hero: marca discreta → saludo protagonista → rol como chip */}
-          <div className="text-[10.5px] font-bold tracking-[.09em] uppercase text-warm-gray-2">
-            {config.titulo}
-          </div>
-          <div className="mt-1.5 text-[21px] font-bold tracking-[-.01em] leading-tight text-ink">
-            {config.saludo?.trim()
-              ? config.saludo.replaceAll('{nombre}', nombre)
-              : t('inicio.saludo', { nombre })}
-          </div>
-          <span className="self-start mt-2 px-2.5 py-[3px] rounded-full bg-cream-2 text-[11px] font-semibold text-ink-2">
-            {idioma === 'es' ? 'Administradora' : 'Administrator'}
-          </span>
-
-          {/* Tarjeta de estado (en línea) */}
-          <div className="mt-3.5 px-3.5 py-3 rounded-xl bg-ok-bg flex flex-col gap-0.5">
-            <div className="flex items-center gap-2 text-[12.5px] font-bold text-ok-dark">
-              <span className="h-2 w-2 rounded-full bg-ok inline-block" />
-              {t('inicio.enLinea')}
+            <span className="mt-2.5 inline-flex self-start rounded-full bg-white/15 px-2.5 py-[3px] text-[11px] font-semibold text-white/90">
+              {idioma === 'es' ? 'Administradora' : 'Administrator'}
+            </span>
+            <div className="mt-3.5 grid grid-cols-[16px_1fr] items-center gap-x-2 gap-y-0.5 rounded-[11px] bg-white/12 px-3 py-2.5">
+              <span className="col-start-1 row-start-1 h-2 w-2 justify-self-center rounded-full bg-ok" />
+              <span className="col-start-2 row-start-1 text-[12.5px] font-bold text-white">{t('inicio.enLinea')}</span>
+              <span className="col-start-2 row-start-2 text-[12px] text-white/80">{t('inicio.enLineaSub')}</span>
+              {horarioTexto && (
+                <>
+                  <span className="msr col-start-1 row-start-3 justify-self-center text-[15px] text-white/70">schedule</span>
+                  <span className="col-start-2 row-start-3 text-[11.5px] text-white/70">{horarioTexto}</span>
+                </>
+              )}
             </div>
-            <div className="text-[12px] text-ink-2 pl-4">{t('inicio.enLineaSub')}</div>
-            {horarioTexto && (
-              <div className="flex items-center gap-1.5 mt-1 pl-4 text-[11.5px] text-warm-gray">
-                <span className="msr text-[14px] text-warm-gray-2">schedule</span>
-                {horarioTexto}
-              </div>
-            )}
-          </div>
-
-          {/* Acciones — la primera con el color de acento (estado activo) */}
-          <div className="flex flex-col gap-2 mt-4">
-            {config.botonBot && (
-              <PreviewBoton
-                icon="smart_toy"
-                iconUrl={config.botonBotIcono}
-                label={config.botonBotTexto || t('inicio.preguntasSistema')}
-                color={config.color}
-                accent={accent}
-                activo
-                ai
-              />
-            )}
-            {config.botonAgente && (
-              <PreviewBoton
-                icon="support_agent"
-                iconUrl={config.botonAgenteIcono}
-                label={config.botonAgenteTexto || t('inicio.hablarAgente')}
-                color={config.color}
-                badge={2}
-              />
-            )}
-            {config.botonChatEquipo && (
-              <PreviewBoton
-                icon="groups"
-                iconUrl={config.botonEquipoIcono}
-                label={config.botonEquipoTexto || t('inicio.chatEquipo')}
-                color={config.color}
-              />
-            )}
           </div>
         </div>
 
-        {/* Tab bar Inicio / Tickets */}
+        {/* Acciones: tarjeta blanca que solapa el banner (filas con divisor) */}
+        <div className="relative z-10 -mt-6 mx-4 overflow-hidden rounded-[14px] bg-white shadow-[0_12px_30px_rgba(10,29,49,.16)]">
+          {botones.map((b, i) => (
+            <PreviewBoton key={i} {...b} color={config.color} last={i === botones.length - 1} />
+          ))}
+        </div>
+
+        {/* Cuerpo (cream) + tab bar */}
+        <div className="h-5" />
         <div className="flex border-t border-cream-3 bg-white">
           <div
-            className="flex-1 flex flex-col items-center gap-0.5 py-2 text-[10px] font-semibold"
+            className="flex flex-1 flex-col items-center gap-0.5 py-2 text-[10px] font-semibold"
             style={{ color: config.color }}
           >
             <span className="msr msr-fill text-[18px]">home</span>
             {idioma === 'es' ? 'Inicio' : 'Home'}
           </div>
-          <div className="flex-1 flex flex-col items-center gap-0.5 py-2 text-[10px] font-semibold text-warm-gray-2">
+          <div className="flex flex-1 flex-col items-center gap-0.5 py-2 text-[10px] font-semibold text-warm-gray-2">
             <span className="msr text-[18px]">confirmation_number</span>
             Tickets
           </div>
         </div>
       </div>
-      {/* Burbuja según posición (réplica del LauncherIcon del widget) */}
+      {/* Launcher en gota (punta hacia el rincón anclado) */}
       {!config.ocultarBurbuja && (
         <div className={`flex ${derecha ? 'justify-end' : 'justify-start'}`}>
           <div
-            className="h-12 w-12 rounded-full flex items-center justify-center text-white shadow-raised"
-            style={{ background: config.colorBurbuja ?? config.color }}
+            className="flex h-12 w-12 items-center justify-center text-white shadow-raised"
+            style={{
+              background: config.colorBurbuja ?? config.color,
+              borderRadius: derecha ? '50% 50% 8px 50%' : '50% 50% 50% 8px',
+            }}
           >
             <LauncherIconPreview />
           </div>
@@ -793,47 +781,44 @@ function PreviewBoton({
   iconUrl,
   label,
   color,
-  accent,
-  activo,
   badge,
   ai,
+  last,
 }: {
   icon: string;
   iconUrl?: string;
   label: string;
   color: string;
-  accent?: string;
-  activo?: boolean;
   badge?: number;
   ai?: boolean;
+  last?: boolean;
 }) {
   return (
     <div
-      className="flex items-center gap-2 border border-warm-border rounded-lg px-3 py-2 text-[12px] font-semibold text-ink shadow-card"
-      style={{ background: activo ? accent : '#fff' }}
+      className={`flex items-center gap-2.5 bg-white px-4 py-3.5 text-[12.5px] font-semibold text-ink ${
+        last ? '' : 'border-b border-warm-border'
+      }`}
     >
       {iconUrl ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={iconUrl} alt="" className="h-[18px] w-[18px] object-contain rounded flex-none" />
+        <img src={iconUrl} alt="" className="h-[18px] w-[18px] flex-none rounded object-contain" />
       ) : (
-        <span className="msr text-[16px] flex-none" style={{ color }}>
+        <span className="msr flex-none text-[17px]" style={{ color }}>
           {icon}
         </span>
       )}
       <span className="flex-1 truncate">{label}</span>
       {ai && (
-        <span className="text-[8.5px] font-extrabold tracking-wide text-ai bg-ai-bg px-1.5 py-0.5 rounded-full flex-none">
+        <span className="flex-none rounded-full bg-ai-bg px-1.5 py-0.5 text-[8.5px] font-extrabold tracking-wide text-ai">
           AI
         </span>
       )}
       {badge != null && (
-        <span className="h-[17px] min-w-[17px] px-1 rounded-full bg-danger text-white text-[10px] font-bold flex items-center justify-center flex-none">
+        <span className="flex h-[17px] min-w-[17px] flex-none items-center justify-center rounded-full bg-danger px-1 text-[10px] font-bold text-white">
           {badge}
         </span>
       )}
-      <span className="msr text-[14px] text-warm-gray-2 flex-none">
-        {activo ? 'chevron_left' : 'chevron_right'}
-      </span>
+      <span className="msr flex-none text-[14px] text-warm-gray-2">chevron_right</span>
     </div>
   );
 }
