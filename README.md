@@ -378,6 +378,15 @@ only read/participate in their own conversations and tickets; internal notes are
 from the widget. All privileged writes go through Cloud Functions with the Admin SDK. See
 `firestore.rules`, `storage.rules`, and `database.rules.json`.
 
+**Client-write invariants** (hardened Jul 2026): a contact may update only
+`lastMessage`/`unread`/`updatedAt`/`silenciado` on a conversation — never `estado`/`botIntentos`
+(they gate bot escalation and API cost; `botReply` also hard-caps turns per conversation). Chat
+attachment paths carry an unguessable random token (`adjuntos/{convId}/{rand}_{file}`) because
+Storage rules can't read Firestore to check membership; the bot only downloads attachments under its
+own `adjuntos/{convId}/`. `widgetSession` stamps the owning `siteId` on `clients`/`groups` and
+rejects a host asserting another site's `clientId`/`groupId`. Agents are global Aditum staff **by
+design** — the per-agent "sites" field only routes push notifications, not data access.
+
 ---
 
 ## The Claude bot
@@ -399,8 +408,10 @@ from the widget. All privileged writes go through Cloud Functions with the Admin
   interpreted.
 - `testBot` ("Probar el bot" in `/bot`) is a **replica of the widget chat**: bot header + greeting,
   WhatsApp-style bubbles, **multi-turn history** and **image attachments** the model analyzes via
-  vision (JPG/PNG/GIF/WebP ≤ 4 MB). `aiAssist` drafts replies / ticket descriptions. Both are
-  agent-only callables.
+  vision (JPG/PNG/GIF/WebP ≤ 4 MB). `aiAssist` drafts a reply or a ticket title+description **from
+  the active conversation only** (that doc's messages, never the contact's stitched history); reply
+  suggestions are grounded on the bot KB via RAG, and the console surfaces them in an **editable
+  review modal** (edit / regenerate / confirm) — never auto-inserted. Both are agent-only callables.
 - **Knowledge base** (`/bot`): accepts **PDF, TXT and MD** — file picker or **drag & drop** (multi
   file), with a search box over the document list. `kbIngestPdf` (storage trigger) parses PDFs with
   `pdf-parse` and ingests text files as UTF-8; URLs re-sync daily.
@@ -462,17 +473,36 @@ All texts support `{nombre}`.
 
 ## Deployment
 
-Firebase Hosting targets (`.firebaserc` project `aditum-chat-1a5cd`):
+Production project `aditum-chat-1a5cd` (`.firebaserc`). Firebase Hosting targets:
 
 | Target | Public dir | Notes |
 |---|---|---|
-| `dashboard` | `apps/dashboard/out` | Next.js static export, `cleanUrls` |
-| `widget` | `apps/widget/dist` | `widget.js` served with `Access-Control-Allow-Origin: *`, `max-age=300` |
+| `dashboard` | `apps/dashboard/out` | Next.js static export, `cleanUrls` — **committed** to git |
+| `widget` | `apps/widget/dist` | `widget.js`, `Access-Control-Allow-Origin: *`, `max-age=300` — gitignored |
 
 Functions deploy on `nodejs22`, region `us-central1`.
 
-> **No automatic deploys.** Build and test locally against the emulators. Production deploys are a
-> deliberate, manual step.
+> **No automatic deploys.** Deploys are a deliberate, manual step — confirm the prod target first.
+
+**Manual deploy (verified procedure).** `firebase deploy` builds *functions* for you (predeploy
+`tsc + esbuild`) but **not hosting** — build those first. The dashboard **must** be built with
+`NEXT_PUBLIC_USE_EMULATORS=false` (compile-time inlined; without it the export ships an
+emulator-connected console):
+
+```sh
+export PATH=…/.nvm/versions/node/v20.20.2/bin:$PATH          # Node 20 for the build
+pnpm --filter @aditum-chat/widget build                       # → apps/widget/dist
+rm -rf apps/dashboard/.next                                    # don't run while `next dev` (:3000) is up
+NEXT_PUBLIC_USE_EMULATORS=false pnpm --filter @aditum-chat/dashboard build   # → apps/dashboard/out
+
+npx firebase deploy --project aditum-chat-1a5cd \
+  --only firestore:rules,storage,functions:<changed>,hosting:dashboard,hosting:widget
+```
+
+List explicit `functions:<name>` targets (e.g. `widgetSession,botReply,aiAssist`); with `--only` you
+don't need `--force` and Firebase won't prompt or delete other functions. Prod functions rely on
+their secrets already being set there (`ANTHROPIC_API_KEY`, `CONFIG_KEK`). A trailing "cleaning up
+build images" warning is harmless (minor GCR cost; self-corrects on the next deploy).
 
 ---
 

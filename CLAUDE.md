@@ -49,10 +49,38 @@ npx firebase emulators:start --project demo-aditum-chat \
 
 Ports: Auth `9101`, Functions `5201`, Firestore `8181`, RTDB `9102`, Storage `9103`, UI `4100`.
 
+## Deploy (manual, production)
+
+Production is `aditum-chat-1a5cd` (`.firebaserc`). Deploys are deliberate and manual — never
+automatic; confirm the prod target with the maintainer first. Verified procedure:
+
+1. Land the change on `main` (committed + pushed) with `pnpm typecheck` clean.
+2. **Build the hosting artifacts first** — `firebase deploy` does NOT build hosting (only
+   `functions` has a predeploy `tsc + esbuild` hook):
+   ```sh
+   pnpm --filter @aditum-chat/widget build                                    # → apps/widget/dist (gitignored)
+   rm -rf apps/dashboard/.next
+   NEXT_PUBLIC_USE_EMULATORS=false pnpm --filter @aditum-chat/dashboard build  # → apps/dashboard/out (committed)
+   ```
+   `NEXT_PUBLIC_USE_EMULATORS=false` is **mandatory** (compile-time inlined) — a build without it
+   ships an emulator-connected console. Don't build while `next dev` (:3000) is up (`rm -rf .next`
+   corrupts it).
+3. Deploy only the changed targets — no `--force` (with explicit `--only` targets Firebase neither
+   prompts nor deletes other functions):
+   ```sh
+   npx firebase deploy --project aditum-chat-1a5cd \
+     --only firestore:rules,storage,functions:<changed>,hosting:dashboard,hosting:widget
+   ```
+
+`apps/dashboard/out/` is committed; `apps/widget/dist/` + `functions/lib/` are gitignored. The
+trailing "cleaning up build images" warning is harmless (minor GCR cost, self-corrects next deploy).
+Functions need their prod secrets already set (`ANTHROPIC_API_KEY`, `CONFIG_KEK`).
+
 ## Hard rules
 
 - **No automatic commits or pushes.** Leave changes in the working tree; the maintainer decides.
-- **No automatic deploys.** Test locally against the emulators only.
+- **No automatic deploys.** Test locally against the emulators; a production deploy follows **Deploy
+  (manual, production)** above and is confirmed with the maintainer first.
 - Copy is **Costa Rican Spanish (voseo)** + English via `packages/shared/src/i18n.ts`. Default to
   Spanish when talking to the maintainer.
 - **Do not use teal.** Two brand palettes since the Jul 2026 rebrand: the **console** is plum
@@ -92,3 +120,15 @@ Ports: Auth `9101`, Functions `5201`, Firestore `8181`, RTDB `9102`, Storage `91
 - **Auto replies** live server-side (`functions/welcome.ts`): `welcomeOnConversation` (bot greeting)
   and `agentAutoReply` (agent channel, after the first user message, with an after-hours variant),
   both idempotent and marked `bienvenida:true` so SLA/push skip them.
+- **Client-write invariants (`firestore.rules`/`storage.rules`).** A contact may update only
+  `lastMessage`/`unread`/`updatedAt`/`silenciado` on a conversation — **never `estado` or
+  `botIntentos`** (they gate bot escalation/cost; `botReply` also hard-caps turns per conversation).
+  Chat attachment paths carry a random token (`adjuntos/{convId}/{rand}_{file}`) because Storage
+  rules can't check Firestore membership; `botReply` only downloads attachments under its own
+  `adjuntos/{convId}/`. `widgetSession` stamps the owning `siteId` on `clients`/`groups` and rejects
+  a host asserting another site's `clientId`/`groupId`. Agents are global Aditum staff by design —
+  the per-agent `sitios` field only routes push, not data access.
+- **`aiAssist`** (console "sugerir respuesta" + AI ticket draft) is scoped to the **current
+  conversation only** (that doc's messages, never the contact's stitched history), grounds reply
+  suggestions on the bot KB via RAG, and returns a structured title+description for AI tickets. The
+  console surfaces it in an **editable review modal** — never auto-inserted.
