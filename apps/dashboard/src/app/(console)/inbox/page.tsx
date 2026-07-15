@@ -59,13 +59,19 @@ export default function InboxPage() {
   // bot doc AND a live agent doc); registry-style filters stay one row per doc.
   const filas = useMemo<InboxRow[]>(() => {
     const colapsar = filtro === 'todas' || filtro === 'mias' || filtro === 'sin_asignar';
-    return colapsar
-      ? collapseByContact(convs)
-      : convs.map((c) => ({
-          conv: c,
-          unreadTotal: c.data.unread?.agentes ?? 0,
-          botVivo: false,
-        }));
+    if (colapsar) return collapseByContact(convs);
+    if (filtro === 'resueltas') {
+      // One row per chat, its most recent resolved segment: resolving again
+      // must not stack rows. Bot cycles live under the Bot filter (the
+      // context panel lists every segment anyway).
+      const sinBot = convs.filter((c) => (c.data.subcanal ?? 'agente') !== 'bot');
+      return collapseByContact(sinBot).map((r) => ({ ...r, botVivo: false }));
+    }
+    return convs.map((c) => ({
+      conv: c,
+      unreadTotal: c.data.unread?.agentes ?? 0,
+      botVivo: false,
+    }));
   }, [convs, filtro]);
 
   const abiertas = filas.filter((r) => r.conv.data.estado !== 'resolved').length;

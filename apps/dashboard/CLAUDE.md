@@ -41,7 +41,9 @@ src/lib/            firebase.ts (SDK + emulator wiring), auth.tsx, i18n.ts, soun
   (`useContactThread`) or a client's `grupo` segments (`useGroupThread`) into one scroll — a live
   listener on the most-recent conversation + static paginated history, deduped by `convId+msgId`.
   **Do not reopen resolved conversations** — writing (agent or contact) opens a NEW conversation;
-  resolved ones stay in the history. `refrescarConversacion(convId)` re-reads a non-active segment's
+  resolved ones stay in the history. Inbox filters collapse to ONE row per chat (actives by
+  contact; "Resueltas" shows the latest resolved segment only, excluding bot cycles — those live
+  under the Bot filter). `refrescarConversacion(convId)` re-reads a non-active segment's
   block (used after creating a ticket from an old conversation, via `ConversationView.refrescarYVer`).
 - **Message actions** (`ConversationView` `Burbuja`): the menu has react / reply (quote +
   `irAMensaje` jump) / copy / **edit** (own messages; `agentEditMessage` stores `textoAnterior`,

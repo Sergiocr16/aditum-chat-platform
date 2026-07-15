@@ -664,21 +664,43 @@ export const aiAssist = onCall(
       conversationId: string;
       modo: 'descripcion_ticket' | 'sugerir_respuesta';
     };
+    // Scoped to the CURRENT conversation only (this doc's messages), never the
+    // contact's whole stitched history.
+    const convSnap = await db.doc(`conversations/${conversationId}`).get();
+    const conv = convSnap.data() as Conversation | undefined;
     const msgsSnap = await db
       .collection(`conversations/${conversationId}/messages`)
       .orderBy('createdAt', 'asc')
       .limitToLast(30)
       .get();
-    const transcript = msgsSnap.docs
+    const mensajes = msgsSnap.docs
       .map((d) => d.data() as Message)
-      .filter((m) => !m.interno && m.sender.tipo !== 'sistema')
+      .filter((m) => !m.interno && m.sender.tipo !== 'sistema');
+    const transcript = mensajes
       .map((m) => `${m.sender.nombre} (${m.sender.tipo}): ${m.texto}`)
       .join('\n');
 
+    // Reply suggestions ground on the WHOLE bot knowledge base via RAG, keyed
+    // on the last user turn (fallback: the transcript).
+    let kbBloque = '';
+    if (modo === 'sugerir_respuesta' && conv?.siteId) {
+      const ultimaConsulta =
+        [...mensajes].reverse().find((m) => m.sender.tipo === 'user')?.texto || transcript;
+      const kbContext = await searchKb(anthropicApiKey.value(), conv.siteId, ultimaConsulta).catch(
+        (e) => {
+          logger.warn('aiAssist searchKb falló', { message: (e as Error).message });
+          return '';
+        },
+      );
+      if (kbContext) {
+        kbBloque = `\n\nBase de conocimiento del bot (usala solo si es pertinente; no inventes datos que no estén acá):\n${kbContext}`;
+      }
+    }
+
     const prompt =
       modo === 'descripcion_ticket'
-        ? `A partir de esta conversación de soporte, redactá la descripción de un ticket: qué reporta el usuario, pasos/contexto, e impacto. Español neutro, 3-6 líneas, sin encabezados.\n\n${transcript}`
-        : `A partir de esta conversación de soporte, sugerí la siguiente respuesta del agente. Voseo costarricense, breve, práctica.\n\n${transcript}`;
+        ? `A partir ÚNICAMENTE de esta conversación de soporte, generá el título y la descripción de un ticket. Respondé EXACTAMENTE en este formato, sin texto adicional:\nTÍTULO: <una línea, máx 80 caracteres, sin punto final>\nDESCRIPCIÓN:\n<qué reporta el usuario, pasos/contexto e impacto; español neutro, 3-6 líneas, sin encabezados>\n\nConversación:\n${transcript}`
+        : `Sos el asistente de un agente de soporte para administración de condominios. A partir ÚNICAMENTE de esta conversación y de la base de conocimiento, redactá la próxima respuesta del agente al usuario. Voseo costarricense, breve y práctica; no inventes datos que no estén en el contexto.\n\nConversación:\n${transcript}${kbBloque}`;
 
     const client = new Anthropic({ apiKey: anthropicApiKey.value() });
     const response = await client.messages.create({
@@ -686,10 +708,21 @@ export const aiAssist = onCall(
       max_tokens: 512,
       messages: [{ role: 'user', content: prompt }],
     });
-    const texto = response.content
+    const salida = response.content
       .filter((b): b is Anthropic.TextBlock => b.type === 'text')
       .map((b) => b.text)
-      .join('');
-    return { texto: texto.trim() };
+      .join('')
+      .trim();
+
+    if (modo === 'descripcion_ticket') {
+      // Parse "TÍTULO: … / DESCRIPCIÓN: …"; fall back to the whole text as
+      // description if the model didn't follow the format.
+      const mt = salida.match(/T[ÍI]TULO:\s*(.+)/i);
+      const md = salida.match(/DESCRIPCI[ÓO]N:\s*([\s\S]*)/i);
+      const asunto = (mt?.[1] ?? '').trim().replace(/^["']|["']$/g, '').slice(0, 90);
+      const texto = (md?.[1] ?? (mt ? '' : salida)).trim();
+      return { texto, asunto };
+    }
+    return { texto: salida };
   },
 );

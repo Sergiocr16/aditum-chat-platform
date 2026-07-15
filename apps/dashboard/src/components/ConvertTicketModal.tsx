@@ -48,17 +48,19 @@ export function ConvertTicketModal({
   const [generando, setGenerando] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Genera título + descripción a partir de la conversación activa (conv.id).
   async function generarConIA() {
     setGenerando(true);
     setError(null);
     try {
       const call = httpsCallable(fns, 'aiAssist');
       const { data } = (await call({ conversationId: conv.id, modo: 'descripcion_ticket' })) as {
-        data: { texto: string };
+        data: { texto: string; asunto?: string };
       };
+      if (data.asunto) setAsunto(data.asunto);
       setDescripcion(data.texto);
     } catch {
-      setError('No se pudo generar la descripción con IA.');
+      setError('No se pudo generar el ticket con IA.');
     } finally {
       setGenerando(false);
     }

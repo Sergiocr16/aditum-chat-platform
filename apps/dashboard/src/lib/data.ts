@@ -103,9 +103,9 @@ export interface InboxRow {
 }
 
 /**
- * Collapses directa conversations to one row per contact (rows must already be
- * ordered updatedAt desc, so the first doc per contact is the representative).
- * Group conversations and directas without contactId pass through 1:1.
+ * Collapses conversations to one row per CHAT (rows must already be ordered
+ * updatedAt desc, so the first doc per chat is the representative): directas
+ * by contact, grupos by client/group — segments never duplicate rows.
  */
 export function collapseByContact(rows: Row<Conversation>[]): InboxRow[] {
   const out: InboxRow[] = [];
@@ -114,11 +114,10 @@ export function collapseByContact(rows: Row<Conversation>[]): InboxRow[] {
     const d = conv.data;
     const esBotVivo = (d.subcanal ?? 'agente') === 'bot' && d.estado === 'bot';
     const unread = d.unread?.agentes ?? 0;
-    const key = d.tipo === 'directa' ? d.contactId : null;
-    if (!key) {
-      out.push({ conv, unreadTotal: unread, botVivo: false });
-      continue;
-    }
+    const key =
+      d.tipo === 'directa'
+        ? `d:${d.contactId ?? conv.id}`
+        : `g:${d.clientId ?? d.groupId ?? conv.id}`;
     const existente = porContacto.get(key);
     if (existente) {
       existente.unreadTotal += unread;

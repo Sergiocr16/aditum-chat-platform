@@ -613,7 +613,10 @@ export interface WidgetSessionResponse {
   groupName?: string;
   idioma: Idioma;
   widgetConfig: WidgetConfig;
-  botConfig: Pick<BotConfig, 'activo' | 'nombre' | 'avatarUrl' | 'saludo' | 'adjuntos'>;
+  botConfig: Pick<
+    BotConfig,
+    'activo' | 'nombre' | 'avatarUrl' | 'saludo' | 'adjuntos' | 'responderFueraDeHorario'
+  >;
   scheduleText: string;
   enHorario: boolean;
   grupoConversationId?: string;

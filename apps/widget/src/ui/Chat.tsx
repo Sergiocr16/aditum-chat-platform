@@ -721,6 +721,11 @@ export function Chat({
   );
 
   const esBotCanal = !grupo && session.botConfig.activo && modo === 'bot';
+  // The bot replies to EVERY user message in its channel (create-on-write
+  // includes the first message of a fresh segment, when the local estado is
+  // still resolved/undefined) — except out of hours when the site disabled it.
+  const botVaAResponder =
+    esBotCanal && (session.enHorario || session.botConfig.responderFueraDeHorario !== false);
   const bienvenida = (session.widgetConfig.mensajeAI?.trim() || session.botConfig.saludo || '')
     .replace(/\{nombre\}/g, session.nombre.split(' ')[0]);
   // Keep the virtual bubble through the first-message race: after the first send
@@ -799,7 +804,7 @@ export function Chat({
         setPendingFile(null);
         setReplyTo(null);
         // Solo si el bot sigue atendiendo (si un agente tomó el chat, no responde el bot).
-        if (esBotCanal && estado === 'bot') marcarEsperandoBot();
+        if (botVaAResponder) marcarEsperandoBot();
       } finally {
         setUploading(false);
       }
@@ -820,8 +825,7 @@ export function Chat({
     );
     setReplyTo(null);
     // El bot va a procesar este mensaje: mostrar el "escribiendo…" de una.
-    // Solo si el bot sigue atendiendo (si un agente tomó el chat, no responde el bot).
-    if (esBotCanal && estado === 'bot') marcarEsperandoBot();
+    if (botVaAResponder) marcarEsperandoBot();
   }
 
   /** Inserts an emoji at the caret position, keeping focus in the textarea. */

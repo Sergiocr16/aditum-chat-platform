@@ -128,6 +128,9 @@ export const ConversationView = forwardRef<
   const [showResolve, setShowResolve] = useState(false);
   const [verTicketId, setVerTicketId] = useState<string | null>(null);
   const [sugiriendo, setSugiriendo] = useState(false);
+  // Suggestion review modal: null = closed, '' with error flag = failed.
+  const [sugerencia, setSugerencia] = useState<string | null>(null);
+  const [sugerenciaError, setSugerenciaError] = useState(false);
   const [subiendo, setSubiendo] = useState(false);
   const [enElFondo, setEnElFondo] = useState(true);
   const [replyTo, setReplyTo] = useState<{
@@ -311,20 +314,32 @@ export const ConversationView = forwardRef<
     }
   }
 
+  // IA: genera una sugerencia (conversación actual + base de conocimiento) y la
+  // muestra en un modal de revisión — nunca se inserta sin confirmar.
   async function sugerirRespuesta() {
     setSugiriendo(true);
+    setSugerenciaError(false);
+    if (sugerencia === null) setSugerencia('');
     try {
       const call = httpsCallable(fns, 'aiAssist');
       const { data } = (await call({ conversationId: activa.id, modo: 'sugerir_respuesta' })) as {
         data: { texto: string };
       };
-      setDraft(data.texto);
-      setTab('responder');
+      setSugerencia(data.texto ?? '');
     } catch {
-      // sin API key u otro error: no bloquea el composer
+      setSugerencia('');
+      setSugerenciaError(true);
     } finally {
       setSugiriendo(false);
     }
+  }
+
+  function usarSugerencia() {
+    if (!sugerencia?.trim()) return;
+    setDraft(sugerencia);
+    setTab('responder');
+    setSugerencia(null);
+    requestAnimationFrame(() => inputRef.current?.focus());
   }
 
   /** Conversación destino para escribir: activa si sigue abierta, o una nueva. */
@@ -706,11 +721,13 @@ export const ConversationView = forwardRef<
           <button
             onClick={sugerirRespuesta}
             disabled={sugiriendo}
-            title="Sugerir respuesta con IA"
+            title={t('inbox.iaSugerir')}
             className="ml-auto flex items-center gap-1 text-[12px] font-semibold text-ai disabled:opacity-50 hover:underline"
           >
-            <span className="msr text-[14px]">auto_awesome</span>
-            {sugiriendo ? '…' : 'IA'}
+            <span className={`msr text-[14px] ${sugiriendo ? 'animate-spin' : ''}`}>
+              {sugiriendo ? 'progress_activity' : 'auto_awesome'}
+            </span>
+            IA
           </button>
         </div>
         {replyTo && tab === 'responder' && !editando && (
@@ -904,6 +921,62 @@ export const ConversationView = forwardRef<
       )}
       {verTicketId && (
         <TicketDetailModal ticketId={verTicketId} onClose={() => setVerTicketId(null)} />
+      )}
+
+      {/* Revisión de la sugerencia de IA: editable, se inserta solo al confirmar */}
+      {sugerencia !== null && (
+        <div
+          className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+          onClick={() => setSugerencia(null)}
+        >
+          <div
+            className="bg-white rounded-panel shadow-raised w-full max-w-lg p-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-2 text-[14px] font-bold text-ink">
+              <span className="msr text-[19px] text-ai">auto_awesome</span>
+              {t('inbox.iaTitulo')}
+            </div>
+            <p className="text-[12px] text-warm-gray mt-1.5 leading-relaxed">{t('inbox.iaSub')}</p>
+            {sugerenciaError ? (
+              <div className="text-danger text-[12.5px] mt-4">{t('inbox.iaError')}</div>
+            ) : (
+              <textarea
+                value={sugerencia}
+                onChange={(e) => setSugerencia(e.target.value)}
+                rows={6}
+                disabled={sugiriendo}
+                placeholder={sugiriendo ? '…' : undefined}
+                className="w-full mt-3 rounded-lg border border-warm-border bg-cream-0 text-[13px] text-ink px-3 py-2.5 outline-none resize-none focus:border-navy leading-relaxed disabled:opacity-60"
+              />
+            )}
+            <div className="flex items-center justify-end gap-1.5 mt-4">
+              <button
+                onClick={() => setSugerencia(null)}
+                className="text-[12.5px] font-semibold text-warm-gray px-3 py-2 rounded-lg hover:bg-cream-1"
+              >
+                {t('inbox.iaCancelar')}
+              </button>
+              <button
+                onClick={sugerirRespuesta}
+                disabled={sugiriendo}
+                className="flex items-center gap-1 text-[12.5px] font-semibold text-navy px-3 py-2 rounded-lg hover:bg-cream-1 disabled:opacity-50"
+              >
+                <span className={`msr text-[15px] ${sugiriendo ? 'animate-spin' : ''}`}>
+                  {sugiriendo ? 'progress_activity' : 'refresh'}
+                </span>
+                {t('inbox.iaRegenerar')}
+              </button>
+              <button
+                onClick={usarSugerencia}
+                disabled={sugiriendo || sugerenciaError || !sugerencia.trim()}
+                className="bg-navy text-white text-[12.5px] font-semibold px-4 py-2 rounded-lg hover:bg-navy-light disabled:opacity-40"
+              >
+                {t('inbox.iaUsar')}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
