@@ -81,8 +81,20 @@ export const widgetSession = onRequest({ cors: true, region: 'us-central1' }, as
     // Upsert del cliente/condominio: nombre + metadatos del panel de contexto
     // (solo los campos que el host declara — last-write-wins, preserva el resto).
     if (claims.clientId) {
+      const clientRef = db.doc(`clients/${claims.clientId}`);
+      // Seguridad: un clientId pertenece a UN solo sitio. Si ya existe con otro
+      // siteId, este host (aunque tenga clave válida) no puede reclamarlo ni
+      // leerlo/sobrescribirlo, y el contacto no obtiene claims de otro tenant.
+      const clientSnap = await clientRef.get();
+      const clientOwner = clientSnap.exists
+        ? (clientSnap.data() as { siteId?: string }).siteId
+        : undefined;
+      if (clientOwner && clientOwner !== siteId) {
+        throw new Error('El clientId pertenece a otro sitio.');
+      }
       const info = claims.clientInfo ?? {};
       const clientData: Record<string, unknown> = {
+        siteId,
         nombre: claims.clientName ?? claims.clientId,
       };
       if (info.location !== undefined) clientData.ubicacion = info.location;
@@ -90,7 +102,7 @@ export const widgetSession = onRequest({ cors: true, region: 'us-central1' }, as
       if (info.plan !== undefined) clientData.plan = info.plan;
       if (info.customerSince !== undefined) clientData.clienteDesde = info.customerSince;
       if (info.modules !== undefined) clientData.modulos = info.modules;
-      await db.doc(`clients/${claims.clientId}`).set(clientData, { merge: true });
+      await clientRef.set(clientData, { merge: true });
     }
 
     // Upsert del grupo (organización): nombre, flag de chat y lista de unidades
@@ -181,6 +193,11 @@ function esAdministrador(claims: EncryptedPayloadClaims): boolean {
 async function upsertGroup(siteId: string, claims: EncryptedPayloadClaims): Promise<void> {
   const ref = db.doc(`groups/${claims.groupId}`);
   const snap = await ref.get();
+  // Seguridad: un groupId pertenece a UN solo sitio (ver clientId arriba).
+  if (snap.exists) {
+    const owner = (snap.data() as { siteId?: string }).siteId;
+    if (owner && owner !== siteId) throw new Error('El groupId pertenece a otro sitio.');
+  }
   const data: Record<string, unknown> = {
     siteId,
     name: claims.groupName ?? claims.groupId,

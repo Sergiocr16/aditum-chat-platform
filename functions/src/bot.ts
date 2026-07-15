@@ -179,12 +179,24 @@ function attachmentPlaceholder(a: Attachment): string {
 async function attachmentBlock(
   a: Attachment,
   counters: { imagenes: number; pdfs: number; hojas: number },
+  convId: string,
 ): Promise<Anthropic.ContentBlockParam | null> {
   const mime = a.mimeType ?? '';
   const esImagen = (VISION_IMAGE_TYPES as readonly string[]).includes(mime);
   const esPdf = mime === 'application/pdf';
   const esHoja = (SPREADSHEET_TYPES as readonly string[]).includes(mime);
   if ((!esImagen && !esPdf && !esHoja) || !a.storagePath) return null;
+  // Seguridad: el bot descarga con Admin SDK (saltea storage.rules), así que
+  // solo debe tocar adjuntos de ESTA conversación. `storagePath` lo controla el
+  // cliente; sin este guardo, un contacto podría apuntar a kb/*.pdf o a adjuntos
+  // de otra conversación y filtrarlos vía el análisis del modelo.
+  if (!a.storagePath.startsWith(`adjuntos/${convId}/`)) {
+    logger.warn('Adjunto con storagePath fuera de la conversación — ignorado', {
+      convId,
+      path: a.storagePath,
+    });
+    return null;
+  }
   if (esImagen && counters.imagenes >= MAX_IMAGES_PER_TURN) return null;
   if (esPdf && counters.pdfs >= MAX_PDFS_PER_TURN) return null;
   if (esHoja && counters.hojas >= MAX_SHEETS_PER_TURN) return null;
@@ -233,7 +245,7 @@ async function attachmentBlock(
  * imagen/documento con topes de tamaño y cantidad; los de mensajes anteriores
  * quedan como texto para no re-pagar tokens de media en cada turno.
  */
-async function buildHistory(msgs: Message[]): Promise<Anthropic.MessageParam[]> {
+async function buildHistory(msgs: Message[], convId: string): Promise<Anthropic.MessageParam[]> {
   const relevantes = msgs.filter((m) => !m.interno && m.sender.tipo !== 'sistema');
 
   // El turno actual empieza después del último mensaje que no es del usuario.
@@ -263,7 +275,7 @@ async function buildHistory(msgs: Message[]): Promise<Anthropic.MessageParam[]> 
     const marcadores: string[] = [];
     if (role === 'user' && i >= inicioTurno) {
       for (const a of adjuntos) {
-        const bloque = await attachmentBlock(a, counters);
+        const bloque = await attachmentBlock(a, counters, convId);
         if (bloque) bloques.push(bloque);
         else marcadores.push(`[adjunto: ${a.nombre ?? a.tipo} — no se puede analizar]`);
       }
@@ -295,7 +307,7 @@ async function runBot(
     .orderBy('createdAt', 'asc')
     .limitToLast(30)
     .get();
-  const history = await buildHistory(msgsSnap.docs.map((d) => d.data() as Message));
+  const history = await buildHistory(msgsSnap.docs.map((d) => d.data() as Message), ctx.convId);
   if (history.length === 0) return { texto: '' };
 
   const messages: Anthropic.MessageParam[] = [...history];
@@ -428,9 +440,16 @@ export const botReply = onDocumentCreated(
       });
     }
 
+    // Tope duro anti-abuso: aunque un admin configure escalarTrasIntentos alto,
+    // el bot nunca responde más de HARD_MAX_BOT_TURNS veces por conversación.
+    // Con las rules que ya NO dejan al contacto resetear botIntentos, este
+    // contador acota el costo de API (Claude/Voyage) por conversación.
+    const HARD_MAX_BOT_TURNS = 12;
     const intentos = (conv.botIntentos ?? 0) + 1;
     const debeEscalar =
-      Boolean(result.escalar) || intentos >= (config.bot.escalarTrasIntentos || 2) * 2;
+      Boolean(result.escalar) ||
+      intentos >= (config.bot.escalarTrasIntentos || 2) * 2 ||
+      intentos >= HARD_MAX_BOT_TURNS;
 
     const update: Record<string, unknown> = {
       botIntentos: intentos,

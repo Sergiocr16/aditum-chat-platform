@@ -88,11 +88,15 @@ service cloud.firestore {
             myContactId() in request.resource.data.participantes)
         )
       );
-      // Contacto: solo campos de actividad (lastMessage/unread/updatedAt) vía su chat.
+      // Contacto: solo campos de actividad (lastMessage/unread/updatedAt/silenciado)
+      // vía su chat. NO puede tocar `estado` ni `botIntentos`: son estado de ciclo
+      // de vida que maneja el backend (botReply/handoff). Si el contacto pudiera
+      // resetearlos, evitaría el auto-escalamiento y mantendría al bot (Claude)
+      // respondiendo sin límite → costo de API sin techo.
       allow update: if isAgent() || (
         participaEnConv() &&
         request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['lastMessage', 'unread', 'updatedAt', 'estado', 'botIntentos', 'silenciado'])
+          .hasOnly(['lastMessage', 'unread', 'updatedAt', 'silenciado'])
       );
       allow delete: if isAdmin();
 

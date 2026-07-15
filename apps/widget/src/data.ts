@@ -558,6 +558,17 @@ export function subscribeMyBotFeedback(
   );
 }
 
+/** Segmento aleatorio no adivinable para la ruta del adjunto (ver storage.rules):
+ *  conocer el convId — incluso los ids determinísticos de grupo — no alcanza para
+ *  construir/descargar la ruta de adjuntos de otra conversación. */
+function randomFileToken(): string {
+  const c = globalThis.crypto;
+  if (c?.randomUUID) return c.randomUUID();
+  const b = new Uint8Array(16);
+  c.getRandomValues(b);
+  return Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+}
+
 export async function sendAttachment(
   fb: WidgetFirebase,
   session: WidgetSessionResponse,
@@ -568,7 +579,7 @@ export async function sendAttachment(
   caption?: string,
 ): Promise<void> {
   const { ref: sref, uploadBytes, getDownloadURL } = await import('firebase/storage');
-  const path = `adjuntos/${convId}/${Date.now()}_${file.name}`;
+  const path = `adjuntos/${convId}/${randomFileToken()}_${file.name}`;
   const fileRef = sref(fb.storage, path);
   await uploadBytes(fileRef, file, { contentType: file.type });
   const url = await getDownloadURL(fileRef);

@@ -686,6 +686,16 @@ function destinosNoLeidos(conv: Row<Conversation>): string[] {
       : [];
 }
 
+/** Segmento aleatorio no adivinable para la ruta del adjunto (ver storage.rules):
+ *  conocer el convId no alcanza para construir/descargar la ruta de otra conversación. */
+function randomFileToken(): string {
+  const c = globalThis.crypto;
+  if (c?.randomUUID) return c.randomUUID();
+  const b = new Uint8Array(16);
+  c.getRandomValues(b);
+  return Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+}
+
 /** El agente adjunta una imagen/video/archivo (con caption opcional) y lo envía al cliente (widget). */
 export async function agentSendAttachment(
   conv: Row<Conversation>,
@@ -695,7 +705,7 @@ export async function agentSendAttachment(
   caption?: string,
 ) {
   const { ref: sref, uploadBytes, getDownloadURL } = await import('firebase/storage');
-  const path = `adjuntos/${conv.id}/${Date.now()}_${file.name}`;
+  const path = `adjuntos/${conv.id}/${randomFileToken()}_${file.name}`;
   const fileRef = sref(storage, path);
   await uploadBytes(fileRef, file, { contentType: file.type });
   const url = await getDownloadURL(fileRef);

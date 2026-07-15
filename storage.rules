@@ -10,8 +10,15 @@ service firebase.storage {
     function isContact() { return signedIn() && request.auth.token.kind == 'contact'; }
 
     // Adjuntos por conversación: adjuntos/{convId}/{archivo}
-    // La pertenencia a la conversación se valida en Firestore; acá se exige
-    // sesión válida y límites de tamaño/tipo.
+    // Las reglas de Storage NO pueden leer Firestore, así que la pertenencia a
+    // la conversación no es verificable acá. La confidencialidad se apoya en:
+    //   (1) sesión válida (isAgent/isContact), y
+    //   (2) el nombre de archivo lleva un segmento ALEATORIO no adivinable
+    //       (ver sendAttachment/agentSendAttachment), de modo que conocer el
+    //       convId — incluso los ids determinísticos de grupo — no permite
+    //       construir/descargar la ruta de otra conversación.
+    // Migración más fuerte pendiente: servir descargas por Signed URL desde una
+    // Function que valide pertenencia y cerrar la lectura directa.
     match /adjuntos/{convId}/{file} {
       allow read: if isAgent() || isContact();
       allow write: if (isAgent() || isContact()) &&
