@@ -20,31 +20,37 @@ async function fetchFreshPayload(payloadUrl: string): Promise<string> {
   return body.payload;
 }
 
-/**
- * Intercambia el payload cifrado del host por una sesión del widget.
- * El payload embebido en la página vence a los 5 min, así que si el host
- * configuró `payloadUrl` se pide uno FRESCO en este momento (el embebido queda
- * de fallback si ese endpoint falla).
- */
-export async function openSession(settings: AditumChatSettings): Promise<WidgetSessionResponse> {
-  let payload = settings.payload;
-  if (settings.payloadUrl) {
-    try {
-      payload = await fetchFreshPayload(settings.payloadUrl);
-    } catch (err) {
-      if (!payload) throw err as Error;
-    }
-  }
-  if (!payload) throw new Error('AditumChatSettings necesita payload o payloadUrl.');
+type SessionResult =
+  | { ok: true; session: WidgetSessionResponse }
+  | { ok: false; status: number; message: string };
 
+async function postWidgetSession(settings: AditumChatSettings, payload: string): Promise<SessionResult> {
   const res = await fetch(`${apiUrl(settings)}/widgetSession`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ siteId: settings.siteId, payload }),
   });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.message ?? `widgetSession falló (${res.status})`);
+  if (res.ok) return { ok: true, session: (await res.json()) as WidgetSessionResponse };
+  const body = (await res.json().catch(() => ({}))) as { message?: string };
+  return { ok: false, status: res.status, message: body.message ?? `widgetSession falló (${res.status})` };
+}
+
+/**
+ * Intercambia el payload cifrado del host por una sesión del widget.
+ * Fast path: usa el payload EMBEBIDO (fresco al cargar la página) — evita un
+ * round-trip a `payloadUrl` en la carga inicial. Solo si el server lo rechaza
+ * (embebido vencido, p. ej. página cacheada) y el host configuró `payloadUrl`,
+ * pide uno fresco y reintenta.
+ */
+export async function openSession(settings: AditumChatSettings): Promise<WidgetSessionResponse> {
+  if (settings.payload) {
+    const r = await postWidgetSession(settings, settings.payload);
+    if (r.ok) return r.session;
+    if (!settings.payloadUrl) throw new Error(r.message);
   }
-  return (await res.json()) as WidgetSessionResponse;
+  if (!settings.payloadUrl) throw new Error('AditumChatSettings necesita payload o payloadUrl.');
+  const fresh = await fetchFreshPayload(settings.payloadUrl);
+  const r = await postWidgetSession(settings, fresh);
+  if (r.ok) return r.session;
+  throw new Error(r.message);
 }

@@ -132,6 +132,31 @@
 .ac-body > * { flex: 1; }
 
 .ac-loading, .ac-error, .ac-vacio { padding: 24px; font-size: 14px; color: var(--ac-gray); }
+
+/* ---------- Skeleton de carga del Inicio (evita el "blanco" durante el boot) ---------- */
+.ac-skel {
+  border-radius: 6px;
+  background: linear-gradient(90deg, rgba(10,29,49,.07) 25%, rgba(10,29,49,.13) 37%, rgba(10,29,49,.07) 63%);
+  background-size: 400% 100%;
+  animation: ac-shimmer 1.4s ease-in-out infinite;
+}
+/* Sobre el banner navy el skeleton es translúcido claro. */
+.ac-home-hero .ac-skel {
+  background: linear-gradient(90deg, rgba(255,255,255,.14) 25%, rgba(255,255,255,.26) 37%, rgba(255,255,255,.14) 63%);
+  background-size: 400% 100%;
+}
+.ac-skel-eyebrow { width: 92px; height: 10px; }
+.ac-skel-title { width: 66%; height: 24px; margin-top: 9px; }
+.ac-skel-status { width: 100%; height: 58px; margin-top: 15px; border-radius: 11px; }
+.ac-skel-ico { width: 22px; height: 22px; border-radius: 50%; flex: none; }
+.ac-skel-row { flex: 1; height: 13px; }
+@keyframes ac-shimmer {
+  from { background-position: 100% 0; }
+  to   { background-position: 0 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ac-skel { animation: none; }
+}
 .ac-error { color: var(--ac-red); }
 
 .ac-tabbar { display: flex; border-top: 1px solid var(--ac-border); background: #fff; }

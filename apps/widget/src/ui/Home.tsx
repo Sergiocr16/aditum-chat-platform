@@ -161,3 +161,25 @@ export function Home({ fb, session, go, directaBot, directaAgente, grupo, activo
     </div>
   );
 }
+
+/** Skeleton del Inicio mientras se arma la sesión (banner + tarjeta de acciones)
+ *  — evita que el panel se vea en blanco durante el boot. */
+export function HomeSkeleton() {
+  return (
+    <div class="ac-home">
+      <div class="ac-home-hero">
+        <div class="ac-skel ac-skel-eyebrow" />
+        <div class="ac-skel ac-skel-title" />
+        <div class="ac-skel ac-skel-status" />
+      </div>
+      <div class="ac-home-acciones">
+        {[0, 1, 2].map((i) => (
+          <div class="ac-accion" key={i}>
+            <span class="ac-skel ac-skel-ico" />
+            <span class="ac-skel ac-skel-row" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}

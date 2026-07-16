@@ -11,7 +11,7 @@ import {
   type Doc,
 } from '../data.js';
 import { playNotificationSound } from '../sound.js';
-import { Home } from './Home.js';
+import { Home, HomeSkeleton } from './Home.js';
 import { Chat } from './Chat.js';
 import { LauncherIcon } from './LauncherIcon.js';
 import { Tickets } from './Tickets.js';
@@ -264,7 +264,7 @@ export function App({ settings, onReady, emit }: Props) {
     <div class={`ac-root ac-${posicion} ${openPanel ? 'ac-abierto' : ''}`} style={`--ac-primary:${color};--ac-accent:${accent};--ac-bubble:${colorBurbuja};--ac-kb:${keyboardInset}px`}>
       {openPanel && esEscritorio && (
         <div class={`ac-panel ${amplio ? 'ac-panel-amplio' : ''}`}>
-          {state.status === 'loading' && <div class="ac-loading">…</div>}
+          {state.status === 'loading' && <HomeSkeleton />}
           {state.status === 'error' && <div class="ac-error">{state.message}</div>}
           {state.status === 'ready' && (
             <div class={view === 'inicio' ? 'ac-escritorio ac-escritorio-solo' : 'ac-escritorio'}>
@@ -418,7 +418,7 @@ export function App({ settings, onReady, emit }: Props) {
             </div>
           )}
           <div class="ac-body">
-            {state.status === 'loading' && <div class="ac-loading">…</div>}
+            {state.status === 'loading' && <HomeSkeleton />}
             {state.status === 'error' && <div class="ac-error">{state.message}</div>}
             {state.status === 'ready' && (
               <>
