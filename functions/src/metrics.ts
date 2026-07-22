@@ -40,6 +40,9 @@ export const metricsOnResolve = onDocumentUpdated(
     if (!antes || !despues) return;
     if (antes.estado === 'resolved' || despues.estado !== 'resolved') return;
     if (despues.tipo !== 'directa') return;
+    // Cierre de arrastre (se cerró el segmento bot al resolver el chat del
+    // contacto): no es una resolución propia — no cuenta ni pide CSAT.
+    if (despues.cierreArrastrado) return;
 
     // ¿La resolvió el bot (nunca hubo agente asignado) o un agente? Una conversación
     // bot ESCALADA (escaladoA) no cuenta para ninguno: el ciclo sigue en la

@@ -8,6 +8,7 @@ import {
   collection,
   deleteField,
   doc,
+  getDoc,
   getDocs,
   increment,
   limit as fsLimit,
@@ -175,14 +176,34 @@ export async function resolveConversation(
 ) {
   // El indicador "Conversación resuelta · categoría" se deriva del ESTADO de la
   // conversación (se muestra al instante en el hilo), sin un mensaje de sistema.
-  await updateDoc(doc(db, 'conversations', convId), {
+  const ref = doc(db, 'conversations', convId);
+  const cierre = {
     estado: 'resolved',
     categoria,
     resueltaPor: uid,
     resueltaNombre: nombre,
     resueltaAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
+  };
+  const snap = await getDoc(ref);
+  await updateDoc(ref, cierre);
+
+  // El contacto puede tener un segmento del canal BOT todavía vivo: el bot solo
+  // se cierra con 👍, handoff o resolución, así que si el usuario saltó al canal
+  // de agente por su cuenta, el del bot queda en `estado:'bot'` para siempre y
+  // el contacto sigue apareciendo en el inbox aunque el agente ya lo resolvió.
+  // Se cierran junto con este, marcados `cierreArrastrado` para que
+  // `metricsOnResolve` no los cuente como resoluciones propias.
+  const contactId = (snap.data() as Conversation | undefined)?.contactId;
+  if (!contactId) return;
+  const delContacto = await getDocs(
+    query(collection(db, 'conversations'), where('contactId', '==', contactId)),
+  );
+  const botsVivos = delContacto.docs.filter((d) => {
+    const c = d.data() as Conversation;
+    return d.id !== convId && c.estado === 'bot' && (c.subcanal ?? 'agente') === 'bot';
   });
+  await Promise.all(botsVivos.map((d) => updateDoc(d.ref, { ...cierre, cierreArrastrado: true })));
 }
 
 /** Valoración CSAT de una conversación (reactivo): permite mostrar en la consola

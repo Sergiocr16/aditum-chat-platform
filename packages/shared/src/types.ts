@@ -275,6 +275,12 @@ export interface Conversation {
   resueltaPor?: string;
   resueltaNombre?: string;
   resueltaAt?: unknown;
+  /**
+   * Cierre "de arrastre": el agente resolvió el chat del contacto y con él se
+   * cerró este segmento del canal bot que había quedado vivo. No es una
+   * resolución propia, así que `metricsOnResolve` no lo contabiliza.
+   */
+  cierreArrastrado?: boolean;
   /** Calificación CSAT recibida para esta conversación (1–5). La escribe `metricsOnCsat`. */
   csatRating?: 1 | 2 | 3 | 4 | 5;
   csatAt?: unknown;
