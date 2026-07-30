@@ -473,6 +473,8 @@ export function Chat({
   const [uploading, setUploading] = useState(false);
   const [attachError, setAttachError] = useState<string | null>(null);
   const attachErrorTimer = useRef<number | null>(null);
+  // Drag & drop de adjuntos sobre la ventana del chat.
+  const [dragging, setDragging] = useState(false);
   const pendingFileUrl = useMemo(
     () =>
       pendingFile && pendingFile.type.startsWith('image/')
@@ -726,6 +728,8 @@ export function Chat({
   );
 
   const esBotCanal = !grupo && session.botConfig.activo && modo === 'bot';
+  // El clip/drag se puede deshabilitar por sitio en el canal bot (botConfig.adjuntos).
+  const adjuntosHabilitados = !(esBotCanal && session.botConfig.adjuntos === false);
   // The bot replies to EVERY user message in its channel (create-on-write
   // includes the first message of a fresh segment, when the local estado is
   // still resolved/undefined) — except out of hours when the site disabled it.
@@ -848,22 +852,60 @@ export function Chat({
     });
   }
 
-  function onFile(e: Event) {
-    const file = (e.target as HTMLInputElement).files?.[0];
-    (e.target as HTMLInputElement).value = '';
+  function flashAttachError(msg: string) {
+    setAttachError(msg);
+    if (attachErrorTimer.current) window.clearTimeout(attachErrorTimer.current);
+    attachErrorTimer.current = window.setTimeout(() => setAttachError(null), 4000);
+  }
+
+  /** Tipos aceptados (mismo criterio que el `accept` del selector y storage.rules).
+   *  El drag & drop no pasa por `accept`, así que acá validamos explícitamente. */
+  function tipoPermitido(file: File): boolean {
+    return (
+      /^(image|video|text)\//.test(file.type) ||
+      file.type === 'application/pdf' ||
+      /(word|document|sheet|excel|officedocument|ms-excel)/.test(file.type) ||
+      /\.(pdf|docx?|txt|xlsx?|csv)$/i.test(file.name)
+    );
+  }
+
+  /** Valida (tipo + tamaño) y deja el archivo listo para enviar con caption.
+   *  Lo usan el selector de archivos y el drag & drop. */
+  function stageFile(file: File | null | undefined) {
     if (!file) return;
+    const es = session.idioma === 'es';
+    if (!tipoPermitido(file)) {
+      flashAttachError(es ? 'Tipo de archivo no permitido' : 'File type not allowed');
+      return;
+    }
     if (file.size > MAX_ATTACHMENT_BYTES) {
-      setAttachError(
-        session.idioma === 'es' ? 'El archivo supera los 25 MB' : 'File exceeds 25 MB',
-      );
-      if (attachErrorTimer.current) window.clearTimeout(attachErrorTimer.current);
-      attachErrorTimer.current = window.setTimeout(() => setAttachError(null), 4000);
+      flashAttachError(es ? 'El archivo supera los 25 MB' : 'File exceeds 25 MB');
       return;
     }
     setAttachError(null);
     // Stage it (replacing any previous pick); it is sent from submit() with the caption.
     setPendingFile(file);
     inputRef.current?.focus();
+  }
+
+  function onFile(e: Event) {
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    stageFile(file);
+  }
+
+  // --- Drag & drop: overlay "soltá aquí" que alimenta el mismo flujo staged.
+  function onDragOverChat(e: DragEvent) {
+    if (!adjuntosHabilitados || editando) return;
+    if (![...(e.dataTransfer?.types ?? [])].includes('Files')) return;
+    e.preventDefault();
+    setDragging(true);
+  }
+  function onDropChat(e: DragEvent) {
+    e.preventDefault();
+    setDragging(false);
+    if (adjuntosHabilitados && !editando) stageFile(e.dataTransfer?.files?.[0]);
   }
 
   async function onChipAgente() {
@@ -876,7 +918,24 @@ export function Chat({
   const mostrarChips = !grupo && estado === 'bot' && filas.length <= 1;
 
   return (
-    <div class="ac-chat">
+    <div class="ac-chat" onDragEnter={onDragOverChat} onDragOver={onDragOverChat}>
+      {dragging && (
+        <div
+          class="ac-dropzone"
+          onDragOver={(e) => e.preventDefault()}
+          onDragLeave={() => setDragging(false)}
+          onDrop={onDropChat}
+        >
+          <div class="ac-dropzone-card">
+            <span class="ac-icon ac-dropzone-ico">upload_file</span>
+            <div class="ac-dropzone-txt">
+              {session.idioma === 'es'
+                ? 'Soltá el archivo para adjuntarlo'
+                : 'Drop the file to attach it'}
+            </div>
+          </div>
+        </div>
+      )}
       <div class="ac-chat-header">
         {mostrarVolver && (
           <button class="ac-icon-btn" aria-label="Volver" onClick={onBack}>
@@ -1416,7 +1475,7 @@ export function Chat({
           <span class="ac-icon">{showEmoji ? 'keyboard' : 'mood'}</span>
         </button>
         {/* En el canal bot el clip es configurable por sitio (botConfig.adjuntos). */}
-        {!(esBotCanal && session.botConfig.adjuntos === false) && (
+        {adjuntosHabilitados && (
           <button class="ac-comp-btn" aria-label="Adjuntar" onClick={() => fileRef.current?.click()}>
             <span class="ac-icon">attach_file</span>
           </button>

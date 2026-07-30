@@ -148,6 +148,7 @@ export const ConversationView = forwardRef<
   // WhatsApp-style staged attachment: pick → preview + caption → send as one message.
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [attachError, setAttachError] = useState<string | null>(null);
+  const [dragging, setDragging] = useState(false);
   const attachErrorTimer = useRef<number | null>(null);
   const pendingFileUrl = useMemo(
     () =>
@@ -442,20 +443,59 @@ export const ConversationView = forwardRef<
     });
   }
 
-  function onFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    e.target.value = '';
+  function flashAttachError(msg: string) {
+    setAttachError(msg);
+    if (attachErrorTimer.current) window.clearTimeout(attachErrorTimer.current);
+    attachErrorTimer.current = window.setTimeout(() => setAttachError(null), 4000);
+  }
+
+  /** Tipos aceptados (mismo criterio que el `accept` del selector y storage.rules).
+   *  El drag & drop no pasa por `accept`, así que acá validamos explícitamente. */
+  function tipoPermitido(file: File): boolean {
+    return (
+      /^(image|video|text)\//.test(file.type) ||
+      file.type === 'application/pdf' ||
+      /(word|document|sheet|excel|officedocument|ms-excel)/.test(file.type) ||
+      /\.(pdf|docx?|txt|xlsx?|csv)$/i.test(file.name)
+    );
+  }
+
+  /** Valida (tipo + tamaño) y deja el archivo listo para enviar con caption.
+   *  Lo usan el selector de archivos y el drag & drop. */
+  function stageFile(file: File | null | undefined) {
     if (!file) return;
+    if (!tipoPermitido(file)) {
+      flashAttachError(idioma === 'es' ? 'Tipo de archivo no permitido' : 'File type not allowed');
+      return;
+    }
     if (file.size > MAX_ATTACHMENT_BYTES) {
-      setAttachError(idioma === 'es' ? 'El archivo supera los 25 MB' : 'File exceeds 25 MB');
-      if (attachErrorTimer.current) window.clearTimeout(attachErrorTimer.current);
-      attachErrorTimer.current = window.setTimeout(() => setAttachError(null), 4000);
+      flashAttachError(idioma === 'es' ? 'El archivo supera los 25 MB' : 'File exceeds 25 MB');
       return;
     }
     setAttachError(null);
     // Stage it (replacing any previous pick); it is sent from enviar() with the caption.
     setPendingFile(file);
     inputRef.current?.focus();
+  }
+
+  function onFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    stageFile(file);
+  }
+
+  // --- Drag & drop: overlay "soltá aquí" que alimenta el mismo flujo staged.
+  //     Solo en la pestaña "Responder" (los adjuntos van a la conversación, no a notas).
+  function onDragOverConv(e: React.DragEvent) {
+    if (tab !== 'responder' || editando) return;
+    if (![...(e.dataTransfer?.types ?? [])].includes('Files')) return;
+    e.preventDefault();
+    setDragging(true);
+  }
+  function onDropConv(e: React.DragEvent) {
+    e.preventDefault();
+    setDragging(false);
+    if (tab === 'responder' && !editando) stageFile(e.dataTransfer?.files?.[0]);
   }
 
   async function asignar(uid: string, nombreAgente: string, foto?: string) {
@@ -470,7 +510,26 @@ export const ConversationView = forwardRef<
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <div
+      className="relative flex flex-col h-full"
+      onDragEnter={onDragOverConv}
+      onDragOver={onDragOverConv}
+    >
+      {dragging && (
+        <div
+          className="absolute inset-0 z-30 flex items-center justify-center bg-navy/60 p-4"
+          onDragOver={(e) => e.preventDefault()}
+          onDragLeave={() => setDragging(false)}
+          onDrop={onDropConv}
+        >
+          <div className="pointer-events-none flex flex-col items-center gap-2.5 rounded-2xl border-2 border-dashed border-white/75 bg-white/10 px-8 py-6 text-center text-white">
+            <span className="msr text-[36px]">upload_file</span>
+            <div className="text-[14px] font-semibold leading-snug">
+              {idioma === 'es' ? 'Soltá el archivo para adjuntarlo' : 'Drop the file to attach it'}
+            </div>
+          </div>
+        </div>
+      )}
       {/* PWA standalone: franja blanca tras el status bar del teléfono (el header
           no queda debajo). Con status bar 'default' mide 0; es solo respaldo. */}
       {/* Plum status-bar strip: iOS renders white clock text over it. */}
