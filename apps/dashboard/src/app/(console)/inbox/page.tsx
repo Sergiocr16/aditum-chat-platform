@@ -95,6 +95,17 @@ export default function InboxPage() {
     localStorage.setItem('aditum-chat-sonido', next ? 'on' : 'off');
   }
 
+  // Colapsar el panel de contexto (escritorio) — preferencia persistida.
+  const [ctxColapsado, setCtxColapsado] = useState(false);
+  useEffect(() => {
+    setCtxColapsado(localStorage.getItem('aditum-chat-ctx-colapsado') === 'on');
+  }, []);
+  function toggleCtxColapsado() {
+    const next = !ctxColapsado;
+    setCtxColapsado(next);
+    localStorage.setItem('aditum-chat-ctx-colapsado', next ? 'on' : 'off');
+  }
+
   // Anchos redimensionables de las columnas (persistentes). Se aplican solo tras
   // montar para evitar mismatch de hidratación con el export estático.
   const [montado, setMontado] = useState(false);
@@ -215,6 +226,8 @@ export default function InboxPage() {
             onBack={() => setSelId(null)}
             onOpenConversation={setSelId}
             onOpenContext={mostrarCtx ? () => setCtxAbierto(true) : undefined}
+            ctxColapsado={ctxColapsado}
+            onToggleCtx={mostrarCtx ? toggleCtxColapsado : undefined}
           />
         ) : (
           <InboxVacio filas={filas} t={t} />
@@ -222,7 +235,7 @@ export default function InboxPage() {
       </section>
 
       {/* Divisor arrastrable conversación ↔ contexto (pantallas anchas) */}
-      {montado && esLg && mostrarCtx && (
+      {montado && esLg && mostrarCtx && !ctxColapsado && (
         <ResizeHandle
           className="hidden lg:block"
           onStart={(e) => contexto.startDrag(e, -1)}
@@ -248,6 +261,7 @@ export default function InboxPage() {
           width={montado && esLg ? contexto.width : undefined}
           abierto={ctxAbierto}
           onClose={() => setCtxAbierto(false)}
+          colapsado={ctxColapsado}
         />
       )}
       {esGrupoCtx && (
@@ -258,6 +272,7 @@ export default function InboxPage() {
           width={montado && esLg ? contexto.width : undefined}
           abierto={ctxAbierto}
           onClose={() => setCtxAbierto(false)}
+          colapsado={ctxColapsado}
         />
       )}
     </div>

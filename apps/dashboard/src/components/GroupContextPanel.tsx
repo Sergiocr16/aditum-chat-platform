@@ -31,6 +31,7 @@ export function GroupContextPanel({
   onTicketCreado,
   abierto,
   onClose,
+  colapsado,
 }: {
   conv: Row<Conversation>;
   width?: number;
@@ -39,6 +40,8 @@ export function GroupContextPanel({
   /** Mobile drawer: open state + close callback (below lg; static panel at lg+). */
   abierto?: boolean;
   onClose?(): void;
+  /** Escritorio: oculta el panel (el drawer móvil sigue funcionando). */
+  colapsado?: boolean;
 }) {
   const { agent } = useAuth();
   const t = useT();
@@ -77,7 +80,7 @@ export function GroupContextPanel({
 
   return (
     <aside
-      className={`${abierto ? 'flex' : 'hidden'} lg:flex fixed inset-y-0 right-0 z-40 w-full max-w-sm shadow-2xl lg:static lg:z-auto lg:w-[280px] lg:max-w-none lg:shadow-none flex-col flex-none bg-white overflow-y-auto`}
+      className={`${abierto ? 'flex' : 'hidden'} ${colapsado ? 'lg:hidden' : 'lg:flex'} fixed inset-y-0 right-0 z-40 w-full max-w-sm shadow-2xl lg:static lg:z-auto lg:w-[280px] lg:max-w-none lg:shadow-none flex-col flex-none bg-white overflow-y-auto`}
       style={width ? { width } : undefined}
     >
       {/* Franja plum tras el status bar del teléfono (texto iOS en blanco). */}

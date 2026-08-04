@@ -62,8 +62,15 @@ export const ConversationView = forwardRef<
     onOpenConversation?: (convId: string) => void;
     /** Opens the context panel as a mobile drawer (button only shows below lg). */
     onOpenContext?: () => void;
+    /** Estado del panel de contexto colapsado (escritorio). */
+    ctxColapsado?: boolean;
+    /** Toggle del panel de contexto (escritorio); si no viene, no hay panel. */
+    onToggleCtx?: () => void;
   }
->(function ConversationView({ conv, onBack, onOpenConversation, onOpenContext }, ref) {
+>(function ConversationView(
+  { conv, onBack, onOpenConversation, onOpenContext, ctxColapsado, onToggleCtx },
+  ref,
+) {
   const { agent } = useAuth();
   const t = useT();
   const esSm = useMediaQuery('(min-width: 640px)');
@@ -635,6 +642,19 @@ export const ConversationView = forwardRef<
             className="lg:hidden h-8 w-8 rounded-lg flex items-center justify-center border border-warm-border text-warm-gray hover:border-navy hover:text-navy flex-none"
           >
             <span className="msr text-[18px]">info</span>
+          </button>
+        )}
+        {/* Escritorio: colapsar/mostrar el panel de contexto (persistido en el inbox). */}
+        {onToggleCtx && (
+          <button
+            onClick={onToggleCtx}
+            title={ctxColapsado ? 'Mostrar panel de información' : 'Ocultar panel de información'}
+            aria-pressed={ctxColapsado}
+            className="hidden lg:flex h-8 w-8 rounded-lg items-center justify-center border border-warm-border text-warm-gray hover:border-navy hover:text-navy flex-none"
+          >
+            <span className="msr text-[18px]">
+              {ctxColapsado ? 'right_panel_open' : 'right_panel_close'}
+            </span>
           </button>
         )}
       </header>
