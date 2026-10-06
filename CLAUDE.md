@@ -117,6 +117,12 @@ Functions need their prod secrets already set (`ANTHROPIC_API_KEY`, `CONFIG_KEK`
   (context system message + `escaladoA`/`escaladoAt`). The widget jumps on a **growing
   `escaladoAt`**, baselined on the first loaded snapshot — don't "fix" that baseline to mount time
   or historical escalations will redirect users. The bot channel never shows the star CSAT survey.
+- **Waiting on customer = `estado:'pending'`.** The agent parks a conversation from the console
+  header (`setWaitingOnCustomer`, stamps `waitingSince`); it stays ACTIVE (same segment, still in
+  the `[bot,open,pending]` queries). The customer's next message reopens it via the
+  `reopenOnCustomerReply` trigger (`functions/waiting.ts`) — contacts can't write `estado`. With no
+  reply, `slaEngine` auto-resolves it after `settings/sla.autoResolveWaitingHours` (default 24,
+  0 = off; category `sin_respuesta`, `resueltaPor:'sistema'`); an agent message restarts the window.
 - **Auto replies** live server-side (`functions/welcome.ts`): `welcomeOnConversation` (bot greeting)
   and `agentAutoReply` (agent channel, after the first user message, with an after-hours variant),
   both idempotent and marked `bienvenida:true` so SLA/push skip them.

@@ -281,6 +281,11 @@ export interface Conversation {
    * resolución propia, así que `metricsOnResolve` no lo contabiliza.
    */
   cierreArrastrado?: boolean;
+  /**
+   * Set while estado is 'pending' ("waiting on customer"): when the agent parked
+   * the conversation. Cleared when the customer replies or the agent reopens it.
+   */
+  waitingSince?: unknown;
   /** Calificación CSAT recibida para esta conversación (1–5). La escribe `metricsOnCsat`. */
   csatRating?: 1 | 2 | 3 | 4 | 5;
   csatAt?: unknown;
@@ -451,6 +456,11 @@ export interface SlaPolicy {
   escalarAlAdminAlVencer: boolean;
   /** Reasignar si el agente no responde en N minutos (30). 0 = off. */
   reasignarTrasMin: number;
+  /**
+   * Auto-resolve conversations left "waiting on customer" (estado 'pending')
+   * after N hours without a customer reply (24). 0 = off.
+   */
+  autoResolveWaitingHours: number;
 }
 
 // ---------------------------------------------------------------------------

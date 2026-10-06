@@ -27,6 +27,7 @@ Secrets in `functions/.secret.local` (gitignored): `ANTHROPIC_API_KEY`, `VOYAGE_
 | Team / keys | `manageTeam`, `rotateSiteKey` (admin only) — `team.ts` |
 | SLA | `ticketSlaInit`, `firstResponseTracker`, `slaEngine` (runs every 1 min) — `sla.ts` |
 | Metrics | `metricsOnConversation`, `metricsOnResolve`, `metricsOnCsat` (also writes `csatRating` to the conversation), `metricsOnMessage` — `metrics.ts` |
+| Waiting on customer | `reopenOnCustomerReply` (a `user` message on an `estado:'pending'` conversation sets it back to `open`); `autoResolveWaiting` (called by `slaEngine`: resolves `pending` conversations older than `settings/sla.autoResolveWaitingHours`) — `waiting.ts` |
 | Auto replies | `welcomeOnConversation` (bot greeting on a new bot conversation), `agentAutoReply` (agent-channel reply after the user's first message; after-hours variant) — `welcome.ts` |
 | Push | `pushNotify` (to end user, host project), `notifyAgentsOnMessage` (to console agents), `setSiteFcmCredentials` — see push conventions below |
 

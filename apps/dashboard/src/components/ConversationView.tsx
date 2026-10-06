@@ -23,6 +23,7 @@ import {
   ensureAgentGroupConversation,
   fmtHora,
   iniciales,
+  setWaitingOnCustomer,
   toggleReaction,
   updateConversation,
   useContactThread,
@@ -107,6 +108,13 @@ export const ConversationView = forwardRef<
   // Resolve targets the live agent conversation; with only a live bot doc it
   // lets the console close that one (registry hygiene).
   const convResolver = activaAgente ?? (activa.data.estado !== 'resolved' ? activa : null);
+  // "Waiting on customer" only applies to agent-attended conversations (never
+  // the bot registry): toggles open <-> pending on the live one.
+  const convEspera =
+    convResolver && (convResolver.data.estado === 'open' || convResolver.data.estado === 'pending')
+      ? convResolver
+      : null;
+  const esperando = convEspera?.data.estado === 'pending';
 
   // Visor de adjuntos: galería con las imágenes y PDFs del hilo cargado.
   const galeria = useMemo<VisorItem[]>(
@@ -626,6 +634,21 @@ export const ConversationView = forwardRef<
             </div>
           )}
         </div>
+        {convEspera && (
+          <button
+            onClick={() => setWaitingOnCustomer(convEspera.id, !esperando)}
+            title={t(esperando ? 'inbox.esperandoQuitar' : 'inbox.esperandoMarcar')}
+            aria-pressed={esperando}
+            className={`h-8 rounded-lg flex items-center justify-center gap-1.5 border flex-none ${
+              esperando
+                ? 'px-2 sm:px-2.5 bg-warn-bg border-warn-bg text-warn-dark text-[12px] font-semibold'
+                : 'w-8 border-warm-border text-warm-gray hover:border-warn-dark hover:text-warn-dark'
+            }`}
+          >
+            <span className="msr text-[18px]">{esperando ? 'hourglass_top' : 'hourglass_empty'}</span>
+            {esperando && <span className="hidden sm:inline">{t('inbox.esperando')}</span>}
+          </button>
+        )}
         {convResolver && (
           <button
             onClick={() => setShowResolve(true)}

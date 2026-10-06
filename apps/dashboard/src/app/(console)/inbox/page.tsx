@@ -21,12 +21,13 @@ import { ContextPanel } from '@/components/ContextPanel';
 import { GroupContextPanel } from '@/components/GroupContextPanel';
 import { ResizeHandle, useColumnWidth, useMediaQuery } from '@/components/ResizeHandle';
 
-const FILTROS: { key: InboxFiltro; msg: 'inbox.filtro.todas' | 'inbox.filtro.mias' | 'inbox.filtro.bot' | 'inbox.filtro.equipos' | 'inbox.filtro.sinAsignar' | 'inbox.filtro.resueltas'; icon?: string }[] = [
+const FILTROS: { key: InboxFiltro; msg: 'inbox.filtro.todas' | 'inbox.filtro.mias' | 'inbox.filtro.bot' | 'inbox.filtro.equipos' | 'inbox.filtro.sinAsignar' | 'inbox.filtro.esperando' | 'inbox.filtro.resueltas'; icon?: string }[] = [
   { key: 'todas', msg: 'inbox.filtro.todas' },
   { key: 'mias', msg: 'inbox.filtro.mias' },
   { key: 'bot', msg: 'inbox.filtro.bot' },
   { key: 'equipos', msg: 'inbox.filtro.equipos', icon: 'groups' },
   { key: 'sin_asignar', msg: 'inbox.filtro.sinAsignar' },
+  { key: 'esperando', msg: 'inbox.filtro.esperando', icon: 'hourglass_empty' },
   { key: 'resueltas', msg: 'inbox.filtro.resueltas', icon: 'check_circle' },
 ];
 

@@ -19,6 +19,7 @@ const DEFAULT_SLA: SlaPolicy = {
   avisoPorcentaje: 25,
   escalarAlAdminAlVencer: true,
   reasignarTrasMin: 30,
+  autoResolveWaitingHours: 24,
 };
 
 const M = {
@@ -44,6 +45,11 @@ const M = {
     escalarHint: 'El admin recibe un aviso cuando un SLA se vence',
     reasignar: 'Reasignación automática (minutos)',
     reasignarHint: 'Reasignación automática si el agente no responde en N min · 0 = desactivado',
+    espera: 'Esperando respuesta',
+    esperaSub: 'Conversaciones que un agente dejó en espera del cliente',
+    esperaLabel: 'Resolver automáticamente tras (horas)',
+    esperaHint:
+      'Si el cliente no responde en ese tiempo, la conversación se resuelve sola con la categoría “Sin respuesta” · 0 = desactivado',
     guardar: 'Guardar cambios',
     guardando: 'Guardando…',
     sinGuardar: 'Cambios sin guardar',
@@ -71,6 +77,11 @@ const M = {
     escalarHint: 'The admin is notified when an SLA is breached',
     reasignar: 'Automatic reassignment (minutes)',
     reasignarHint: 'Automatic reassignment if the agent does not reply within N min · 0 = off',
+    espera: 'Waiting on customer',
+    esperaSub: 'Conversations an agent parked until the customer replies',
+    esperaLabel: 'Auto-resolve after (hours)',
+    esperaHint:
+      'If the customer does not reply within that time, the conversation resolves itself with the “No reply” category · 0 = off',
     guardar: 'Save changes',
     guardando: 'Saving…',
     sinGuardar: 'Unsaved changes',
@@ -230,6 +241,21 @@ export function SlaConfigTab() {
             </div>
           </Campo>
         </div>
+      </Card>
+
+      <Card icon="hourglass_empty" title={m.espera} subtitle={m.esperaSub}>
+        <Campo label={m.esperaLabel}>
+          <div className="flex items-center gap-3">
+            <input
+              type="number"
+              min={0}
+              value={policy.autoResolveWaitingHours}
+              onChange={(e) => set('autoResolveWaitingHours', Number(e.target.value))}
+              className={numCls}
+            />
+            <span className="text-[11px] text-warm-gray">{m.esperaHint}</span>
+          </div>
+        </Campo>
       </Card>
 
       <CategoriasConfig idioma={idioma} />

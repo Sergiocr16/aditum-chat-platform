@@ -33,6 +33,8 @@ export const conversationCategoryLabels: Record<Idioma, Record<string, string>> 
     facturacion: 'Facturación',
     consulta_general: 'Consulta general',
     otro: 'Otro',
+    // System-only: stamped by the waiting-on-customer auto-resolve (not in the picker).
+    sin_respuesta: 'Sin respuesta',
   },
   en: {
     cobros: 'Billing',
@@ -43,6 +45,7 @@ export const conversationCategoryLabels: Record<Idioma, Record<string, string>> 
     facturacion: 'Invoicing',
     consulta_general: 'General inquiry',
     otro: 'Other',
+    sin_respuesta: 'No reply',
   },
 };
 
@@ -53,8 +56,8 @@ export function categoryLabel(categoria: string | undefined, idioma: Idioma): st
 }
 
 export const conversationStatusLabels: Record<Idioma, Record<ConversationStatus, string>> = {
-  es: { bot: 'Bot atendiendo', open: 'Abierta', pending: 'Pendiente', resolved: 'Resuelta' },
-  en: { bot: 'Bot handling', open: 'Open', pending: 'Pending', resolved: 'Resolved' },
+  es: { bot: 'Bot atendiendo', open: 'Abierta', pending: 'Esperando respuesta', resolved: 'Resuelta' },
+  en: { bot: 'Bot handling', open: 'Open', pending: 'Waiting on customer', resolved: 'Resolved' },
 };
 
 export const ticketStatusLabels: Record<Idioma, Record<TicketStatus, string>> = {
@@ -293,6 +296,7 @@ const dashEs = {
   'inbox.filtro.bot': 'Bot',
   'inbox.filtro.equipos': 'Equipos',
   'inbox.filtro.sinAsignar': 'Sin asignar',
+  'inbox.filtro.esperando': 'En espera',
   'inbox.filtro.resueltas': 'Resueltas',
   'inbox.resueltaBar': 'Conversación resuelta · {categoria} · {fecha}',
   'inbox.reabrir': 'Reabrir conversación',
@@ -306,6 +310,9 @@ const dashEs = {
   'inbox.convertirTicket': 'Convertir en ticket',
   'inbox.asignar': 'Asignar',
   'inbox.resolver': 'Resolver',
+  'inbox.esperando': 'Esperando respuesta',
+  'inbox.esperandoMarcar': 'Marcar como esperando respuesta del cliente',
+  'inbox.esperandoQuitar': 'Esperando respuesta del cliente · tocá para volver a abierta',
   'inbox.tomar': 'Tomar conversación',
   'inbox.responder': 'Responder',
   'inbox.vacioTitulo': 'Elegí una conversación',
@@ -409,6 +416,7 @@ const dashEn: Record<keyof typeof dashEs, string> = {
   'inbox.filtro.bot': 'Bot',
   'inbox.filtro.equipos': 'Teams',
   'inbox.filtro.sinAsignar': 'Unassigned',
+  'inbox.filtro.esperando': 'Waiting',
   'inbox.filtro.resueltas': 'Resolved',
   'inbox.resueltaBar': 'Conversation resolved · {categoria} · {fecha}',
   'inbox.reabrir': 'Reopen conversation',
@@ -422,6 +430,9 @@ const dashEn: Record<keyof typeof dashEs, string> = {
   'inbox.convertirTicket': 'Convert to ticket',
   'inbox.asignar': 'Assign',
   'inbox.resolver': 'Resolve',
+  'inbox.esperando': 'Waiting on customer',
+  'inbox.esperandoMarcar': 'Mark as waiting on customer',
+  'inbox.esperandoQuitar': 'Waiting on customer · click to set back to open',
   'inbox.tomar': 'Take conversation',
   'inbox.responder': 'Reply',
   'inbox.vacioTitulo': 'Pick a conversation',

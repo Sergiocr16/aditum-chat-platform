@@ -11,6 +11,7 @@ import type {
 } from '@aditum-chat/shared';
 import { db, FieldValue, Timestamp } from './lib/admin.js';
 import { isWithinSchedule, resolveSiteConfig } from './lib/config.js';
+import { autoResolveWaiting } from './waiting.js';
 
 const DEFAULT_POLICY: SlaPolicy = {
   primeraRespuestaMin: 15,
@@ -20,6 +21,7 @@ const DEFAULT_POLICY: SlaPolicy = {
   avisoPorcentaje: 25,
   escalarAlAdminAlVencer: true,
   reasignarTrasMin: 30,
+  autoResolveWaitingHours: 24,
 };
 
 async function getPolicy(): Promise<SlaPolicy> {
@@ -84,7 +86,8 @@ export const firstResponseTracker = onDocumentCreated(
 
 /**
  * Motor de SLA (cada minuto): actualiza chips de estado de tickets,
- * escala al admin al vencer y reasigna conversaciones sin respuesta.
+ * escala al admin al vencer, reasigna conversaciones sin respuesta y
+ * auto-resuelve las que quedaron esperando al cliente.
  */
 export const slaEngine = onSchedule(
   { schedule: 'every 1 minutes', region: 'us-central1', timeoutSeconds: 120 },
@@ -174,5 +177,8 @@ export const slaEngine = onSchedule(
         }
       }
     }
+
+    // --- Conversations waiting on the customer past the configured window.
+    await autoResolveWaiting(policy.autoResolveWaitingHours, now);
   },
 );

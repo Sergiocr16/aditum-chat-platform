@@ -68,7 +68,14 @@ export function useDoc<T>(path: string | null): Row<T> | null {
 
 // ---------------------------------------------------------------- inbox
 
-export type InboxFiltro = 'todas' | 'mias' | 'bot' | 'equipos' | 'sin_asignar' | 'resueltas';
+export type InboxFiltro =
+  | 'todas'
+  | 'mias'
+  | 'bot'
+  | 'equipos'
+  | 'sin_asignar'
+  | 'esperando'
+  | 'resueltas';
 
 export function useConversations(siteId: string | null, filtro: InboxFiltro, uid: string) {
   const constraints = useMemo(() => {
@@ -77,6 +84,9 @@ export function useConversations(siteId: string | null, filtro: InboxFiltro, uid
     if (filtro === 'resueltas') {
       // Las resueltas viven en su propia pestaña — cerradas para el inbox activo.
       c.push(where('estado', '==', 'resolved'));
+    } else if (filtro === 'esperando') {
+      // Parked by an agent until the customer replies ("waiting on customer").
+      c.push(where('estado', '==', 'pending'));
     } else {
       if (filtro === 'mias') c.push(where('asignadoA', '==', uid));
       // Bot filter = the full bot-channel registry: attending AND resolved.
@@ -204,6 +214,21 @@ export async function resolveConversation(
     return d.id !== convId && c.estado === 'bot' && (c.subcanal ?? 'agente') === 'bot';
   });
   await Promise.all(botsVivos.map((d) => updateDoc(d.ref, { ...cierre, cierreArrastrado: true })));
+}
+
+/**
+ * Parks a conversation as "waiting on customer" (estado 'pending') or sets it
+ * back to open. It stays active (never a new segment); the customer's next
+ * message reopens it server-side (`reopenOnCustomerReply`). updatedAt is left
+ * untouched so the row keeps its place in the inbox.
+ */
+export async function setWaitingOnCustomer(convId: string, waiting: boolean) {
+  await updateDoc(
+    doc(db, 'conversations', convId),
+    waiting
+      ? { estado: 'pending', waitingSince: serverTimestamp() }
+      : { estado: 'open', waitingSince: deleteField() },
+  );
 }
 
 /** Valoración CSAT de una conversación (reactivo): permite mostrar en la consola
@@ -692,8 +717,15 @@ export async function agentSendMessage(
       updatedAt: serverTimestamp(),
       'unread.agentes': deleteField(),
       ...incrementos,
+      ...restartWaiting(conv),
     });
   }
+}
+
+/** An agent message on a waiting conversation (a nudge) restarts the
+ *  auto-resolve window instead of letting it close right after. */
+function restartWaiting(conv: Row<Conversation>): Record<string, unknown> {
+  return conv.data.estado === 'pending' ? { waitingSince: serverTimestamp() } : {};
 }
 
 /** Destinatarios del contador de no-leídos: el contacto (directa) o los
@@ -764,6 +796,7 @@ export async function agentSendAttachment(
     updatedAt: serverTimestamp(),
     'unread.agentes': deleteField(),
     ...incrementos,
+    ...restartWaiting(conv),
   });
 }
 
