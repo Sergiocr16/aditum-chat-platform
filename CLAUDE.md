@@ -119,7 +119,9 @@ Functions need their prod secrets already set (`ANTHROPIC_API_KEY`, `CONFIG_KEK`
   or historical escalations will redirect users. The bot channel never shows the star CSAT survey.
 - **Waiting on customer = `estado:'pending'`.** The agent parks a conversation from the console
   header (`setWaitingOnCustomer`, stamps `waitingSince`); it stays ACTIVE (same segment, still in
-  the `[bot,open,pending]` queries). The customer's next message reopens it via the
+  the thread/widget `[bot,open,pending]` queries) but leaves the inbox working filters (Todas/Mías/
+  Sin asignar/Equipos only list `[bot,open]`) — it shows only under "En espera" until the customer
+  replies. The customer's next message reopens it via the
   `reopenOnCustomerReply` trigger (`functions/waiting.ts`) — contacts can't write `estado`. With no
   reply, `slaEngine` auto-resolves it after `settings/sla.autoResolveWaitingHours` (default 24,
   0 = off; category `sin_respuesta`, `resueltaPor:'sistema'`); an agent message restarts the window.

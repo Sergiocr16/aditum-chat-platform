@@ -93,7 +93,9 @@ export function useConversations(siteId: string | null, filtro: InboxFiltro, uid
       if (filtro === 'bot') c.push(where('subcanal', '==', 'bot'));
       if (filtro === 'equipos') c.push(where('tipo', '==', 'grupo'));
       if (filtro === 'sin_asignar') c.push(where('asignadoA', '==', null));
-      if (filtro !== 'bot') c.push(where('estado', 'in', ['bot', 'open', 'pending']));
+      // Waiting-on-customer ('pending') rows leave the working queue: they only
+      // show under the "esperando" filter until the customer replies.
+      if (filtro !== 'bot') c.push(where('estado', 'in', ['bot', 'open']));
     }
     c.push(orderBy('updatedAt', 'desc'), fsLimit(100));
     return c;
