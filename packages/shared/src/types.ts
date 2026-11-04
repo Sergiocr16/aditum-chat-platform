@@ -90,6 +90,8 @@ export interface BotConfig {
   saludo: string;
   /** Permitir adjuntar archivos en el chat del bot (el bot analiza imágenes y PDF). */
   adjuntos?: boolean;
+  /** Let the bot use the private index of the production repository as evidence. Off by default. */
+  codeRagEnabled?: boolean;
 }
 
 export interface ScheduleConfig {
@@ -493,6 +495,70 @@ export interface KbChunk {
 }
 
 // ---------------------------------------------------------------------------
+// Code index (private RAG over the production repository)
+// ---------------------------------------------------------------------------
+
+/** code_chunks/{id} — Admin SDK only; clients are denied in firestore.rules. */
+export type CodeAudience = 'manager' | 'accountant';
+
+export interface CodeChunk {
+  path: string;
+  startLine: number;
+  endLine: number;
+  symbol: string | null;
+  language: string | null;
+  text: string;
+  commitSha: string;
+  /** Who may get answers built from this chunk; equality pre-filters of the vector search. */
+  forManager: boolean;
+  forAccountant: boolean;
+  /** FieldValue.vector(...) on write. */
+  embedding: unknown;
+}
+
+/** code_files/{sha1(path)} — manifest used to diff the repository against the index. */
+export interface CodeFileEntry {
+  path: string;
+  blobSha: string;
+  chunks: number;
+  /** Empty means nobody in the chat can reach this file, so it isn't indexed. */
+  audiences: CodeAudience[];
+  /** Secret-scan rule names that kept this file out of the index; empty if indexed. */
+  skipReasons: string[];
+}
+
+/** code_index/state — progress of the sync; readable by admins, no code content. */
+export interface CodeIndexState {
+  repo?: string;
+  targetSha?: string;
+  indexedSha?: string;
+  indexedAt?: number;
+  lastCheckAt?: number;
+  lastError?: string;
+  pendingFiles?: number;
+  failedFiles?: number;
+  files?: number;
+  chunks?: number;
+  skippedForSecrets?: string[];
+  lockUntil?: number;
+}
+
+/** bot_evidence/{messageId} — what backed a bot reply. References only, never source text. */
+export interface BotEvidence {
+  conversationId: string;
+  sources: { kind: 'kb' | 'code' | 'context'; ref: string }[];
+  createdAt: unknown;
+}
+
+/** bot_gate_events/{id} — a reply the evidence gate blocked, kept to measure over-blocking. */
+export interface BotGateEvent {
+  conversationId: string;
+  reason: string;
+  usedCode: boolean;
+  createdAt: unknown;
+}
+
+// ---------------------------------------------------------------------------
 // CSAT y métricas — pantalla 1h
 // ---------------------------------------------------------------------------
 
@@ -653,4 +719,175 @@ export interface ContactClaims {
 export interface AgentClaims {
   kind: 'agent';
   rol: TeamRole;
+}
+
+// ---------------------------------------------------------------------------
+// Investigations (agent console → analyzer on the Raspberry Pi)
+// ---------------------------------------------------------------------------
+
+export type InvestigationStatus = 'queued' | 'running' | 'done' | 'failed' | 'rate_limited' | 'cancelled';
+
+/** `confirmed` is only ever granted by the runner, after checking the evidence. */
+export type InvestigationConclusion = 'confirmed' | 'hypothesis' | 'undetermined';
+
+export interface InvestigationCodeEvidence {
+  path: string;
+  startLine: number;
+  endLine: number;
+  quote: string;
+}
+
+export interface InvestigationDataEvidence {
+  queryId: string;
+  values: string[];
+}
+
+export interface InvestigationReport {
+  conclusion: InvestigationConclusion;
+  /** What the model claimed before the check lowered it, when it did. */
+  downgradedFrom: InvestigationConclusion | null;
+  summary: string;
+  cause: string;
+  recommendation: string;
+  /** Only with a `confirmed` conclusion. Never sent by itself. */
+  suggestedReply: string | null;
+  /** What's left to find out. */
+  missing: string[];
+  codeEvidence: InvestigationCodeEvidence[];
+  dataEvidence: InvestigationDataEvidence[];
+  /** Why each evidence item the model gave didn't check out. */
+  rejectedEvidence: string[];
+}
+
+/** A selected message: conversations can span segments, so it carries its own. */
+export interface InvestigationMessageRef {
+  conversationId: string;
+  messageId: string;
+}
+
+/** investigations/{id}. Agents read, only functions write. */
+export interface Investigation {
+  /** `contact:{id}` or `group:{id}`: the chat this belongs to across segments. */
+  threadKey: string;
+  conversationId: string;
+  siteId: string;
+  question: string;
+  messageCount: number;
+  messageRefs: InvestigationMessageRef[];
+  /** SHA-256 of exactly what the analyzer received. */
+  contentHash: string;
+  requestedBy: { uid: string; nombre: string };
+  status: InvestigationStatus;
+  /** Commit of the production branch that was read. */
+  sha?: string | null;
+  report?: InvestigationReport | null;
+  error?: string | null;
+  usedDatabase?: boolean;
+  costUsd?: number | null;
+  createdAt: unknown;
+  startedAt?: unknown;
+  finishedAt?: unknown;
+  heartbeatAt?: unknown;
+}
+
+/** investigations/{id}/events/{eventId}: progress shown while it runs. */
+export interface InvestigationEvent {
+  kind: 'code' | 'database' | 'status';
+  text: string;
+  at: unknown;
+}
+
+/** investigations/{id}/queries/{queryId}: what was asked of production. Rows stay on the Pi. */
+export interface InvestigationQueryRecord {
+  dataQuestion: string;
+  purpose: string;
+  sql: string;
+  rowCount: number;
+  truncated: boolean;
+  ms: number;
+  error: string | null;
+  at: unknown;
+}
+
+/** investigator/runner: lets the console tell when the analyzer is offline. */
+export interface InvestigatorRunnerState {
+  lastSeenAt: unknown;
+  /** Days until the Claude Code token expires, when known. */
+  tokenDaysLeft?: number | null;
+}
+
+export interface InvestigatorDbCheck {
+  id: 'connect' | 'tls' | 'grants' | 'views' | 'read';
+  ok: boolean;
+  detail: string;
+}
+
+/** investigator/db: the production connection, admins only. The password is kept apart, encrypted. */
+export interface InvestigatorDbConfig {
+  host: string;
+  port: number;
+  user: string;
+  database: string;
+  /** Changes on every save, so the gateway knows when to reload. */
+  version: string;
+  updatedBy: string;
+  updatedAt: unknown;
+  test: {
+    status: 'pending' | 'ok' | 'failed';
+    requestedAt: unknown;
+    finishedAt?: unknown;
+    checks?: InvestigatorDbCheck[];
+  };
+}
+
+export interface InvestigatorPiCheck {
+  id: 'connect' | 'hostKey' | 'system' | 'claude';
+  ok: boolean;
+  detail: string;
+}
+
+/** investigator/pi: how to reach the Raspberry Pi over SSH, admins only. The password is kept apart, encrypted. */
+export interface InvestigatorPiConfig {
+  host: string;
+  port: number;
+  user: string;
+  /** Pinned on the first successful login. A different key stops the login before the password is sent. */
+  hostKeyFingerprint: string | null;
+  /** Changes on every save, so a test still running can't overwrite the result of a newer one. */
+  version: string;
+  updatedBy: string;
+  updatedAt: unknown;
+  test: {
+    status: 'pending' | 'ok' | 'failed';
+    requestedAt: unknown;
+    finishedAt?: unknown;
+    checks?: InvestigatorPiCheck[];
+  };
+  /** Whether a Claude Code token is saved, so the console doesn't ask for it again. */
+  hasClaudeToken?: boolean;
+  /** When the saved token was issued. It lasts a year and the runner warns before it expires. */
+  claudeTokenIssuedAt?: string;
+  install?: InvestigatorPiInstall;
+}
+
+export type InvestigatorPiInstallStep = 'connect' | 'prepare' | 'users' | 'node' | 'build' | 'claude' | 'config' | 'services' | 'verify';
+
+/** Progress of the last install or update. The log has secrets removed before it's stored. */
+export interface InvestigatorPiInstall {
+  status: 'running' | 'ok' | 'failed';
+  step: InvestigatorPiInstallStep;
+  /** Commit being installed. */
+  commit?: string;
+  log: string[];
+  detail?: string;
+  startedBy: string;
+  startedAt: unknown;
+  finishedAt?: unknown;
+}
+
+/** investigator/gateway: what the Pi's gateway last reported, admins only. */
+export interface InvestigatorGatewayState {
+  lastSeenAt: unknown;
+  /** The address production's firewall has to allow. */
+  publicIp: string | null;
 }

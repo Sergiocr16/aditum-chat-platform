@@ -1,0 +1,622 @@
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
+import { defineSecret } from 'firebase-functions/params';
+import { logger } from 'firebase-functions/v2';
+import { HttpsError, onCall, onRequest } from 'firebase-functions/v2/https';
+import type {
+  InvestigatorPiConfig,
+  Contact,
+  Conversation,
+  Investigation,
+  InvestigationEvent,
+  InvestigationMessageRef,
+  InvestigationQueryRecord,
+  InvestigationReport,
+  InvestigationStatus,
+  InvestigatorDbCheck,
+  InvestigatorDbConfig,
+  Message,
+} from '@aditum-chat/shared';
+import { db, FieldValue } from './lib/admin.js';
+import { decryptJson, encryptJson } from './lib/crypto.js';
+import { getKek } from './pushConfig.js';
+import { checkPi } from './piCheck.js';
+import { installOnPi, isCleanSetting } from './piInstall.js';
+
+/**
+ * Agents ask from the console, the analyzer on the Raspberry Pi does the work. The Pi
+ * only makes outbound calls to `investigationRunner`, so nothing on it is exposed.
+ *
+ * Agents can read investigations but nothing here accepts text from the client as the
+ * case itself: messages are read by id on the server, so what gets analyzed is what's
+ * really in the chat.
+ */
+
+const runnerSecret = defineSecret('RUNNER_SHARED_SECRET');
+
+const MAX_MESSAGES = 100;
+const MIN_QUESTION_CHARS = 10;
+const MAX_QUESTION_CHARS = 1000;
+const MAX_PER_AGENT_PER_DAY = 30;
+/** A running job reports every few seconds. This long without news means the Pi lost it. */
+const STALE_RUNNING_MS = 10 * 60_000;
+const MAX_REPORT_BYTES = 500_000;
+
+export interface TranscriptMessage {
+  at: string | null;
+  senderType: string;
+  senderName: string;
+  internalNote: boolean;
+  text: string;
+  attachments: { type: string; name: string | null; mimeType: string | null }[];
+}
+
+export function threadKeyOf(conv: Pick<Conversation, 'tipo' | 'contactId' | 'groupId'>): string | null {
+  if (conv.tipo === 'grupo') return conv.groupId ? `group:${conv.groupId}` : null;
+  return conv.contactId ? `contact:${conv.contactId}` : null;
+}
+
+export function validateRequest(question: unknown, messages: unknown): string | null {
+  if (typeof question !== 'string') return 'Falta la pregunta.';
+  const length = question.trim().length;
+  if (length < MIN_QUESTION_CHARS || length > MAX_QUESTION_CHARS) {
+    return `La pregunta debe tener entre ${MIN_QUESTION_CHARS} y ${MAX_QUESTION_CHARS} caracteres.`;
+  }
+  if (!Array.isArray(messages) || messages.length === 0) return 'Seleccioná al menos un mensaje.';
+  if (messages.length > MAX_MESSAGES) return `Se pueden analizar hasta ${MAX_MESSAGES} mensajes.`;
+  const valid = messages.every(
+    (m) => typeof m?.conversationId === 'string' && m.conversationId && typeof m?.messageId === 'string' && m.messageId,
+  );
+  return valid ? null : 'La selección de mensajes no es válida.';
+}
+
+export function contentHash(question: string, transcript: TranscriptMessage[]): string {
+  return createHash('sha256').update(JSON.stringify({ question, transcript })).digest('hex');
+}
+
+export function secretMatches(given: string, expected: string): boolean {
+  if (!expected) return false;
+  const a = createHash('sha256').update(given).digest();
+  const b = createHash('sha256').update(expected).digest();
+  return timingSafeEqual(a, b);
+}
+
+const toDate = (value: unknown): Date | null =>
+  typeof (value as { toDate?: unknown })?.toDate === 'function' ? (value as { toDate(): Date }).toDate() : null;
+
+/** Costa Rica's calendar day, since that's the day the limit resets for the team. */
+const dayKey = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Costa_Rica' }).format(new Date());
+
+export const requestInvestigation = onCall({ region: 'us-central1' }, async (req) => {
+  if (req.auth?.token.kind !== 'agent') throw new HttpsError('permission-denied', 'Solo agentes.');
+  const { conversationId, messages, question } = req.data as {
+    conversationId: string;
+    messages: InvestigationMessageRef[];
+    question: string;
+  };
+  const invalid = validateRequest(question, messages);
+  if (invalid || typeof conversationId !== 'string' || !conversationId) {
+    throw new HttpsError('invalid-argument', invalid ?? 'Falta la conversación.');
+  }
+
+  const anchor = (await db.doc(`conversations/${conversationId}`).get()).data() as Conversation | undefined;
+  const threadKey = anchor ? threadKeyOf(anchor) : null;
+  if (!anchor || !threadKey) throw new HttpsError('not-found', 'No existe la conversación.');
+
+  // Every message has to belong to this chat, whatever the client claims.
+  const conversationIds = [...new Set(messages.map((m) => m.conversationId))];
+  const conversations = await db.getAll(...conversationIds.map((id) => db.doc(`conversations/${id}`)));
+  for (const snap of conversations) {
+    const conv = snap.data() as Conversation | undefined;
+    if (!conv || threadKeyOf(conv) !== threadKey) {
+      throw new HttpsError('permission-denied', 'Hay mensajes que no son de este chat.');
+    }
+  }
+
+  const uniqueRefs = [...new Map(messages.map((m) => [`${m.conversationId}/${m.messageId}`, m])).values()];
+  const snaps = await db.getAll(...uniqueRefs.map((m) => db.doc(`conversations/${m.conversationId}/messages/${m.messageId}`)));
+  if (snaps.some((snap) => !snap.exists)) throw new HttpsError('not-found', 'Hay mensajes que ya no existen.');
+
+  const transcript = snaps
+    .map((snap) => ({ message: snap.data() as Message, at: toDate((snap.data() as Message).createdAt) }))
+    .sort((a, b) => (a.at?.getTime() ?? 0) - (b.at?.getTime() ?? 0))
+    .map(
+      ({ message, at }): TranscriptMessage => ({
+        at: at?.toISOString() ?? null,
+        senderType: message.sender.tipo,
+        senderName: message.sender.nombre,
+        internalNote: message.interno === true,
+        text: message.texto ?? '',
+        attachments: (message.adjuntos ?? []).map((a) => ({ type: a.tipo, name: a.nombre ?? null, mimeType: a.mimeType ?? null })),
+      }),
+    );
+
+  const contact = anchor.contactId
+    ? ((await db.doc(`contacts/${anchor.contactId}`).get()).data() as Contact | undefined)
+    : undefined;
+  const agent = (await db.doc(`team/${req.auth.uid}`).get()).data() as { nombre?: string } | undefined;
+  const trimmed = question.trim();
+
+  const ref = db.collection('investigations').doc();
+  const counterRef = db.doc(`counters/investigations_${req.auth.uid}_${dayKey()}`);
+  const data: Investigation = {
+    threadKey,
+    conversationId,
+    siteId: anchor.siteId,
+    question: trimmed,
+    messageCount: transcript.length,
+    messageRefs: uniqueRefs.map(({ conversationId: c, messageId }) => ({ conversationId: c, messageId })),
+    contentHash: contentHash(trimmed, transcript),
+    requestedBy: { uid: req.auth.uid, nombre: agent?.nombre ?? req.auth.token.email ?? 'Agente' },
+    status: 'queued',
+    createdAt: FieldValue.serverTimestamp(),
+  };
+
+  await db.runTransaction(async (tx) => {
+    const count = ((await tx.get(counterRef)).data()?.count as number | undefined) ?? 0;
+    if (count >= MAX_PER_AGENT_PER_DAY) {
+      throw new HttpsError('resource-exhausted', `Se alcanzó el límite de ${MAX_PER_AGENT_PER_DAY} investigaciones por día.`);
+    }
+    tx.set(counterRef, { count: count + 1 }, { merge: true });
+    tx.set(ref, data);
+    // What the analyzer reads. Kept apart so a later edit to the chat can't change a case
+    // after the fact, and denied to every client in the rules.
+    tx.set(db.doc(`investigation_inputs/${ref.id}`), {
+      question: trimmed,
+      transcript,
+      context: {
+        siteId: anchor.siteId,
+        clientNombre: anchor.clientNombre ?? anchor.groupName ?? null,
+        contactNombre: anchor.contactNombre ?? contact?.nombre ?? null,
+        contactRol: contact?.rol ?? null,
+      },
+    });
+  });
+  return { id: ref.id };
+});
+
+export const cancelInvestigation = onCall({ region: 'us-central1' }, async (req) => {
+  if (req.auth?.token.kind !== 'agent') throw new HttpsError('permission-denied', 'Solo agentes.');
+  const { id } = req.data as { id: string };
+  if (typeof id !== 'string' || !id) throw new HttpsError('invalid-argument', 'Falta la investigación.');
+  const ref = db.doc(`investigations/${id}`);
+  await db.runTransaction(async (tx) => {
+    const status = (await tx.get(ref)).data()?.status as InvestigationStatus | undefined;
+    if (status === 'queued' || status === 'running') {
+      tx.update(ref, { status: 'cancelled', finishedAt: FieldValue.serverTimestamp() });
+    }
+  });
+  return { ok: true };
+});
+
+async function failStaleJobs() {
+  const running = await db.collection('investigations').where('status', '==', 'running').get();
+  const cutoff = Date.now() - STALE_RUNNING_MS;
+  await Promise.all(
+    running.docs
+      .filter((doc) => (toDate(doc.get('heartbeatAt') ?? doc.get('startedAt'))?.getTime() ?? 0) < cutoff)
+      .map((doc) =>
+        doc.ref.update({
+          status: 'failed',
+          error: 'El analizador dejó de responder.',
+          finishedAt: FieldValue.serverTimestamp(),
+        }),
+      ),
+  );
+}
+
+async function claimNext() {
+  const queued = await db.collection('investigations').where('status', '==', 'queued').orderBy('createdAt', 'asc').limit(1).get();
+  const doc = queued.docs[0];
+  if (!doc) return null;
+  const claimed = await db.runTransaction(async (tx) => {
+    if ((await tx.get(doc.ref)).data()?.status !== 'queued') return false;
+    tx.update(doc.ref, {
+      status: 'running',
+      startedAt: FieldValue.serverTimestamp(),
+      heartbeatAt: FieldValue.serverTimestamp(),
+    });
+    return true;
+  });
+  if (!claimed) return null;
+  const input = (await db.doc(`investigation_inputs/${doc.id}`).get()).data();
+  return { id: doc.id, ...input };
+}
+
+interface ProgressBody {
+  id: string;
+  events?: Pick<InvestigationEvent, 'kind' | 'text'>[];
+  queries?: (Omit<InvestigationQueryRecord, 'at'> & { queryId: string })[];
+}
+
+async function saveProgress({ id, events = [], queries = [] }: ProgressBody) {
+  const ref = db.doc(`investigations/${id}`);
+  const batch = db.batch();
+  const at = FieldValue.serverTimestamp();
+  for (const { kind, text } of events) {
+    batch.set(ref.collection('events').doc(), { kind, text: String(text).slice(0, 500), at });
+  }
+  for (const { queryId, dataQuestion, purpose, sql, rowCount, truncated, ms, error } of queries) {
+    batch.set(ref.collection('queries').doc(queryId), { dataQuestion, purpose, sql, rowCount, truncated, ms, error, at });
+  }
+  const snap = await ref.get();
+  if (snap.data()?.status === 'running') batch.update(ref, { heartbeatAt: at });
+  await batch.commit();
+  return { cancel: snap.data()?.status === 'cancelled' };
+}
+
+const FINAL_STATUSES: InvestigationStatus[] = ['done', 'failed', 'rate_limited'];
+
+interface CompleteBody {
+  id: string;
+  status: InvestigationStatus;
+  sha?: string | null;
+  error?: string | null;
+  usedDatabase?: boolean;
+  costUsd?: number | null;
+  report?: InvestigationReport | null;
+}
+
+async function complete(body: CompleteBody) {
+  if (!FINAL_STATUSES.includes(body.status)) throw new Error('invalid status');
+  if (JSON.stringify(body.report ?? null).length > MAX_REPORT_BYTES) {
+    body = { ...body, status: 'failed', report: null, error: 'El reporte es demasiado grande.' };
+  }
+  const ref = db.doc(`investigations/${body.id}`);
+  await db.runTransaction(async (tx) => {
+    // A case the agent cancelled stays cancelled, even if the Pi finishes it.
+    if ((await tx.get(ref)).data()?.status !== 'running') return;
+    tx.update(ref, {
+      status: body.status,
+      sha: body.sha ?? null,
+      error: body.error ?? null,
+      usedDatabase: body.usedDatabase === true,
+      costUsd: body.costUsd ?? null,
+      report: body.report ?? null,
+      finishedAt: FieldValue.serverTimestamp(),
+    });
+  });
+  return { ok: true };
+}
+
+export const investigationRunner = onRequest(
+  { region: 'us-central1', secrets: [runnerSecret], timeoutSeconds: 60 },
+  async (req, res) => {
+    const bearer = (req.headers.authorization ?? '').replace(/^Bearer /, '');
+    if (req.method !== 'POST' || !secretMatches(bearer, runnerSecret.value())) {
+      res.status(401).json({ error: 'unauthorized' });
+      return;
+    }
+    try {
+      const body = req.body as { action?: string; heartbeat?: boolean; tokenDaysLeft?: number | null };
+      if (body.action === 'claim') {
+        if (body.heartbeat) {
+          await db.doc('investigator/runner').set({
+            lastSeenAt: FieldValue.serverTimestamp(),
+            tokenDaysLeft: body.tokenDaysLeft ?? null,
+          });
+          await failStaleJobs();
+        }
+        res.json({ job: await claimNext() });
+      } else if (body.action === 'progress') {
+        res.json(await saveProgress(req.body as ProgressBody));
+      } else if (body.action === 'complete') {
+        res.json(await complete(req.body as CompleteBody));
+      } else {
+        res.status(400).json({ error: 'unknown action' });
+      }
+    } catch (e) {
+      logger.error('investigationRunner', { message: (e as Error).message });
+      res.status(500).json({ error: 'internal' });
+    }
+  },
+);
+
+// ---------------------------------------------------------------------------
+// Production connection, set from the console and tested from the Pi
+// ---------------------------------------------------------------------------
+
+const gatewaySecret = defineSecret('GATEWAY_SHARED_SECRET');
+const configKek = defineSecret('CONFIG_KEK');
+const githubCodeToken = defineSecret('GITHUB_CODE_TOKEN');
+
+const DB_DOC = 'investigator/db';
+const DB_SECRET_DOC = 'investigator_secrets/db';
+const SYSTEM_SCHEMAS = ['mysql', 'sys', 'information_schema', 'performance_schema'];
+
+export interface DbSettingsInput {
+  host: unknown;
+  port: unknown;
+  user: unknown;
+  database: unknown;
+  password?: unknown;
+}
+
+export type PiSettingsInput = Omit<DbSettingsInput, 'database'>;
+
+export function piSettingsProblem(input: PiSettingsInput, hasStoredPassword: boolean): string | null {
+  if (typeof input.host !== 'string' || !/^[A-Za-z0-9.:-]{1,253}$/.test(input.host)) return 'La IP o el host no son válidos.';
+  if (!Number.isInteger(input.port) || (input.port as number) < 1 || (input.port as number) > 65535) return 'El puerto no es válido.';
+  if (typeof input.user !== 'string' || !/^[\w.-]{1,32}$/.test(input.user)) return 'El usuario no es válido.';
+  const password = input.password;
+  if (password !== undefined && password !== '' && (typeof password !== 'string' || password.length > 256)) return 'La contraseña no es válida.';
+  if (!password && !hasStoredPassword) return 'Falta la contraseña.';
+  return null;
+}
+
+export function dbSettingsProblem(input: DbSettingsInput, hasStoredPassword: boolean): string | null {
+  const problem = piSettingsProblem(input, hasStoredPassword);
+  if (problem) return problem;
+  if (typeof input.database !== 'string' || !/^\w{1,64}$/.test(input.database)) return 'La base no es válida.';
+  if (SYSTEM_SCHEMAS.includes(input.database.toLowerCase())) return 'Esa es una base del sistema.';
+  return null;
+}
+
+/** The token can outlive a demotion, and this guards production credentials. */
+async function requireActiveAdmin(auth: { uid: string; token: Record<string, unknown> } | undefined) {
+  if (auth?.token.kind !== 'agent') throw new HttpsError('permission-denied', 'Solo admins.');
+  const member = (await db.doc(`team/${auth.uid}`).get()).data() as { rol?: string; activo?: boolean; nombre?: string } | undefined;
+  if (member?.rol !== 'admin' || member.activo === false) throw new HttpsError('permission-denied', 'Solo admins.');
+  return member;
+}
+
+const pendingTest = () => ({ status: 'pending', requestedAt: FieldValue.serverTimestamp() });
+
+export const setInvestigatorDb = onCall({ region: 'us-central1', secrets: [configKek] }, async (req) => {
+  const admin = await requireActiveAdmin(req.auth);
+  const input = req.data as DbSettingsInput & { remove?: boolean };
+  if (input.remove) {
+    await Promise.all([db.doc(DB_DOC).delete(), db.doc(DB_SECRET_DOC).delete()]);
+    return { ok: true };
+  }
+  const stored = (await db.doc(DB_SECRET_DOC).get()).data() as { cipher?: string } | undefined;
+  const problem = dbSettingsProblem(input, Boolean(stored?.cipher));
+  if (problem) throw new HttpsError('invalid-argument', problem);
+
+  const cipher = input.password ? encryptJson(getKek(), { password: input.password }) : stored!.cipher!;
+  await db.doc(DB_SECRET_DOC).set({ cipher, enc: 'aes-256-gcm+kek' });
+  await db.doc(DB_DOC).set({
+    host: input.host,
+    port: input.port,
+    user: input.user,
+    database: input.database,
+    version: randomUUID(),
+    updatedBy: admin.nombre ?? req.auth!.uid,
+    updatedAt: FieldValue.serverTimestamp(),
+    test: pendingTest(),
+  });
+  return { ok: true };
+});
+
+export const testInvestigatorDb = onCall({ region: 'us-central1' }, async (req) => {
+  await requireActiveAdmin(req.auth);
+  const ref = db.doc(DB_DOC);
+  if (!(await ref.get()).exists) throw new HttpsError('failed-precondition', 'Primero guardá la conexión.');
+  await ref.update({ test: pendingTest() });
+  return { ok: true };
+});
+
+const PI_DOC = 'investigator/pi';
+const PI_SECRET_DOC = 'investigator_secrets/pi';
+
+/** Unlike the MySQL test, this one runs here: it's the server that logs in to the Pi. */
+async function testPi(version: string) {
+  const ref = db.doc(PI_DOC);
+  const config = (await ref.get()).data() as InvestigatorPiConfig;
+  const secret = (await db.doc(PI_SECRET_DOC).get()).data() as { cipher: string };
+  const { password } = decryptJson<{ password: string }>(getKek(), secret.cipher);
+  const result = await checkPi({ host: config.host, port: config.port, user: config.user, password }, config.hostKeyFingerprint);
+  await db.runTransaction(async (tx) => {
+    // A result for a connection that has since been replaced says nothing about the new one.
+    if ((await tx.get(ref)).data()?.version !== version) return;
+    tx.update(ref, {
+      ...(result.fingerprint && { hostKeyFingerprint: result.fingerprint }),
+      'test.status': result.connected ? 'ok' : 'failed',
+      'test.checks': result.checks,
+      'test.finishedAt': FieldValue.serverTimestamp(),
+    });
+  });
+}
+
+export const setInvestigatorPi = onCall({ region: 'us-central1', secrets: [configKek], timeoutSeconds: 90 }, async (req) => {
+  const admin = await requireActiveAdmin(req.auth);
+  const input = req.data as PiSettingsInput & { remove?: boolean };
+  if (input.remove) {
+    await Promise.all([db.doc(PI_DOC).delete(), db.doc(PI_SECRET_DOC).delete()]);
+    return { ok: true };
+  }
+  const stored = (await db.doc(PI_SECRET_DOC).get()).data() as { cipher?: string } | undefined;
+  const problem = piSettingsProblem(input, Boolean(stored?.cipher));
+  if (problem) throw new HttpsError('invalid-argument', problem);
+  const previous = (await db.doc(PI_DOC).get()).data() as InvestigatorPiConfig | undefined;
+  // Another address is another machine, whose key is unknown. A new password or user is the same machine.
+  const pinned = previous && previous.host === input.host && previous.port === input.port ? previous.hostKeyFingerprint : null;
+
+  const cipher = input.password ? encryptJson(getKek(), { password: input.password }) : stored!.cipher!;
+  const version = randomUUID();
+  await db.doc(PI_SECRET_DOC).set({ cipher, enc: 'aes-256-gcm+kek' }, { merge: true });
+  await db.doc(PI_DOC).set({
+    ...(previous?.hasClaudeToken && { hasClaudeToken: true }),
+    ...(previous?.claudeTokenIssuedAt && { claudeTokenIssuedAt: previous.claudeTokenIssuedAt }),
+    ...(previous?.install && { install: previous.install }),
+    host: input.host,
+    port: input.port,
+    user: input.user,
+    hostKeyFingerprint: pinned,
+    version,
+    updatedBy: admin.nombre ?? req.auth!.uid,
+    updatedAt: FieldValue.serverTimestamp(),
+    test: pendingTest(),
+  });
+  await testPi(version);
+  return { ok: true };
+});
+
+export const testInvestigatorPi = onCall({ region: 'us-central1', secrets: [configKek], timeoutSeconds: 90 }, async (req) => {
+  await requireActiveAdmin(req.auth);
+  const ref = db.doc(PI_DOC);
+  const config = (await ref.get()).data() as InvestigatorPiConfig | undefined;
+  if (!config) throw new HttpsError('failed-precondition', 'Primero guardá la conexión.');
+  await ref.update({ test: pendingTest() });
+  await testPi(config.version);
+  return { ok: true };
+});
+
+const INSTALL_STALE_MS = 30 * 60_000;
+
+/** The address the Pi calls back. The emulators have no public one, so it has to be set. */
+function functionsBaseUrl(): string {
+  const configured = process.env.INVESTIGATOR_PUBLIC_FUNCTIONS_URL;
+  if (configured) return configured.replace(/\/$/, '');
+  if (process.env.FUNCTIONS_EMULATOR === 'true') {
+    throw new HttpsError('failed-precondition', 'En el emulador falta INVESTIGATOR_PUBLIC_FUNCTIONS_URL en functions/.env.local.');
+  }
+  return `https://us-central1-${process.env.GCLOUD_PROJECT}.cloudfunctions.net`;
+}
+
+/** Long, but the Pi builds on its own and the script can run again if this one is cut short. */
+export const installInvestigatorOnPi = onCall(
+  {
+    region: 'us-central1',
+    secrets: [configKek, runnerSecret, gatewaySecret, githubCodeToken],
+    timeoutSeconds: 1500,
+  },
+  async (req) => {
+    const admin = await requireActiveAdmin(req.auth);
+    const claudeToken = (req.data as { claudeToken?: unknown }).claudeToken;
+    if (claudeToken !== undefined && claudeToken !== '' && !isCleanSetting(claudeToken)) {
+      throw new HttpsError('invalid-argument', 'El token de Claude Code no es válido.');
+    }
+    const ref = db.doc(PI_DOC);
+    const secretRef = db.doc(PI_SECRET_DOC);
+    const baseUrl = functionsBaseUrl();
+    const gitRef = process.env.INVESTIGATOR_GIT_REF || 'main';
+
+    await db.runTransaction(async (tx) => {
+      const config = (await tx.get(ref)).data() as InvestigatorPiConfig | undefined;
+      // Only a login that worked pins the key: this runs commands as root, so it needs a known machine.
+      if (!config?.hostKeyFingerprint) throw new HttpsError('failed-precondition', 'Primero probá la conexión a la Pi.');
+      const started = config.install?.startedAt as { toMillis?: () => number } | undefined;
+      if (config.install?.status === 'running' && Date.now() - (started?.toMillis?.() ?? 0) < INSTALL_STALE_MS) {
+        throw new HttpsError('failed-precondition', 'Ya hay una instalación corriendo.');
+      }
+      tx.update(ref, {
+        install: { status: 'running', step: 'connect', log: [], startedBy: admin.nombre ?? req.auth!.uid, startedAt: FieldValue.serverTimestamp() },
+      });
+    });
+
+    try {
+      if (claudeToken) {
+        await secretRef.set({ claudeCipher: encryptJson(getKek(), { token: claudeToken }) }, { merge: true });
+        await ref.update({ hasClaudeToken: true, claudeTokenIssuedAt: new Date().toISOString().slice(0, 10) });
+      }
+      const [config, secret] = await Promise.all([ref.get(), secretRef.get()]).then(
+        ([a, b]) => [a.data() as InvestigatorPiConfig, b.data() as { cipher: string; claudeCipher?: string }] as const,
+      );
+      if (!secret.claudeCipher) throw new HttpsError('failed-precondition', 'Falta el token de Claude Code.');
+      const { password } = decryptJson<{ password: string }>(getKek(), secret.cipher);
+      const { token } = decryptJson<{ token: string }>(getKek(), secret.claudeCipher);
+
+      const settings = {
+        RUNNER_FUNCTION_URL: `${baseUrl}/investigationRunner`,
+        GATEWAY_FUNCTION_URL: `${baseUrl}/investigationGateway`,
+        RUNNER_SHARED_SECRET: runnerSecret.value(),
+        GATEWAY_SHARED_SECRET: gatewaySecret.value(),
+        GITHUB_CODE_TOKEN: githubCodeToken.value(),
+        CLAUDE_CODE_OAUTH_TOKEN: token,
+        CLAUDE_TOKEN_ISSUED_AT: config.claudeTokenIssuedAt ?? new Date().toISOString().slice(0, 10),
+      };
+      const result = await installOnPi(
+        { host: config.host, port: config.port, user: config.user, password },
+        config.hostKeyFingerprint!,
+        { gitRef, settings },
+        (progress) => ref.update({ 'install.step': progress.step, 'install.log': progress.log, ...(progress.commit && { 'install.commit': progress.commit }) }),
+      );
+      await ref.update({
+        'install.status': result.ok ? 'ok' : 'failed',
+        'install.step': result.step,
+        'install.log': result.log,
+        ...(result.commit && { 'install.commit': result.commit }),
+        ...(result.detail && { 'install.detail': result.detail }),
+        'install.finishedAt': FieldValue.serverTimestamp(),
+      });
+      return { ok: result.ok };
+    } catch (e) {
+      await ref.update({
+        'install.status': 'failed',
+        'install.detail': e instanceof HttpsError ? e.message : 'La instalación se interrumpió.',
+        'install.finishedAt': FieldValue.serverTimestamp(),
+      });
+      if (e instanceof HttpsError) throw e;
+      logger.error('installInvestigatorOnPi', { message: (e as Error).message });
+      return { ok: false };
+    }
+  },
+);
+
+/** Behind the load balancer, the first forwarded address is the one that reached us. */
+const callerIp = (forwarded: string | string[] | undefined, fallback: string | undefined) =>
+  (Array.isArray(forwarded) ? forwarded[0] : forwarded)?.split(',')[0]?.trim() || fallback || null;
+
+/**
+ * Called by the gateway on the Pi, which is the only thing that needs the password and the
+ * machine production's firewall has to allow. It has its own secret, so the runner, which
+ * doesn't need the password, can't ask for it.
+ */
+export const investigationGateway = onRequest(
+  { region: 'us-central1', secrets: [gatewaySecret, configKek], timeoutSeconds: 60 },
+  async (req, res) => {
+    const bearer = (req.headers.authorization ?? '').replace(/^Bearer /, '');
+    if (req.method !== 'POST' || !secretMatches(bearer, gatewaySecret.value())) {
+      res.status(401).json({ error: 'unauthorized' });
+      return;
+    }
+    try {
+      const body = req.body as {
+        action?: string;
+        knownVersion?: string | null;
+        heartbeat?: boolean;
+        version?: string;
+        ok?: boolean;
+        checks?: InvestigatorDbCheck[];
+      };
+      const ref = db.doc(DB_DOC);
+      if (body.action === 'sync') {
+        if (body.heartbeat) {
+          await db.doc('investigator/gateway').set({
+            lastSeenAt: FieldValue.serverTimestamp(),
+            publicIp: callerIp(req.headers['x-forwarded-for'], req.ip),
+          });
+        }
+        const config = (await ref.get()).data() as InvestigatorDbConfig | undefined;
+        if (!config) {
+          res.json(body.knownVersion ? { config: null } : {});
+          return;
+        }
+        if (config.version === body.knownVersion && config.test.status !== 'pending') {
+          res.json({});
+          return;
+        }
+        const secret = (await db.doc(DB_SECRET_DOC).get()).data() as { cipher: string };
+        const { password } = decryptJson<{ password: string }>(getKek(), secret.cipher);
+        const { host, port, user, database, version } = config;
+        res.json({ config: { host, port, user, database, version, password } });
+      } else if (body.action === 'testResult') {
+        await db.runTransaction(async (tx) => {
+          // A result for a connection that has since been replaced says nothing about the new one.
+          if ((await tx.get(ref)).data()?.version !== body.version) return;
+          tx.update(ref, {
+            'test.status': body.ok === true ? 'ok' : 'failed',
+            'test.checks': body.checks ?? [],
+            'test.finishedAt': FieldValue.serverTimestamp(),
+          });
+        });
+        res.json({ ok: true });
+      } else {
+        res.status(400).json({ error: 'unknown action' });
+      }
+    } catch (e) {
+      logger.error('investigationGateway', { message: (e as Error).message });
+      res.status(500).json({ error: 'internal' });
+    }
+  },
+);

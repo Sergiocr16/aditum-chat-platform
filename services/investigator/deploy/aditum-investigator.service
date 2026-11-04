@@ -1,0 +1,25 @@
+[Unit]
+Description=Aditum investigator runner
+After=network-online.target aditum-mysql-gateway.service
+Wants=network-online.target
+
+[Service]
+User=investigator
+Group=investigator
+WorkingDirectory=/opt/aditum-investigator/current
+# Read by systemd as root, so this user can't open the file. It carries the runner's secrets.
+EnvironmentFile=/etc/aditum-investigator/runner.env
+ExecStart=/opt/aditum-investigator/node/bin/node dist/runner.js
+Restart=always
+RestartSec=10
+# Lets the runner start Claude as investigator-claude through setpriv, which drops these for Claude.
+AmbientCapabilities=CAP_SETUID CAP_SETGID
+CapabilityBoundingSet=CAP_SETUID CAP_SETGID
+ProtectSystem=strict
+ReadWritePaths=/var/lib/aditum-investigator /home/investigator-claude
+ProtectHome=tmpfs
+BindPaths=/home/investigator-claude
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -3,36 +3,19 @@ import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
 import { FieldValue as AdminFieldValue } from 'firebase-admin/firestore';
+import { defineSecret } from 'firebase-functions/params';
 import type { KbDoc } from '@aditum-chat/shared';
+import { embed, KB_EMBEDDINGS } from './embeddings.js';
+import type { EvidenceSource } from './evidence.js';
 import { db, storage } from './lib/admin.js';
 
-// Embeddings: Voyage AI (partner recomendado de Anthropic; Claude no genera
-// embeddings). El código lee VOYAGE_API_KEY de process.env y, si no está,
-// cae a búsqueda por keywords. Es OPCIONAL: para activar vector search, seteá
-// el secret (`firebase functions:secrets:set VOYAGE_API_KEY`) y volvé a agregar
-// `secrets: [defineSecret('VOYAGE_API_KEY')]` a kbIngestPdf/kbSyncHelpCenter/kbSyncNow.
-const VOYAGE_MODEL = 'voyage-3.5-lite';
-const EMBEDDING_DIM = 768; // debe coincidir con firestore.indexes.json (vectorConfig)
+// Embeddings via Voyage (Claude doesn't generate them). Without VOYAGE_API_KEY
+// (local dev) the KB falls back to keyword search.
+const voyageApiKey = defineSecret('VOYAGE_API_KEY');
 
 const CHUNK_SIZE = 1200;
 const CHUNK_OVERLAP = 150;
 const TOP_K = 4;
-
-async function embed(apiKey: string, texts: string[], inputType: 'document' | 'query'): Promise<number[][]> {
-  const res = await fetch('https://api.voyageai.com/v1/embeddings', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({
-      model: VOYAGE_MODEL,
-      input: texts,
-      input_type: inputType,
-      output_dimension: EMBEDDING_DIM,
-    }),
-  });
-  if (!res.ok) throw new Error(`Voyage embeddings ${res.status}: ${await res.text()}`);
-  const body = (await res.json()) as { data: { embedding: number[] }[] };
-  return body.data.map((d) => d.embedding);
-}
 
 function chunkText(text: string): string[] {
   const clean = text.replace(/\s+/g, ' ').trim();
@@ -49,39 +32,41 @@ async function indexDoc(docId: string, nombre: string, texto: string): Promise<n
   const ref = db.doc(`kb/${docId}`);
 
   // Limpia chunks previos.
-  const prev = await ref.collection('chunks').limit(500).get();
-  const batchDel = db.batch();
-  prev.docs.forEach((d) => batchDel.delete(d.ref));
-  await batchDel.commit();
+  const prev = await ref.collection('chunks').select().get();
+  for (let i = 0; i < prev.docs.length; i += 400) {
+    const batchDel = db.batch();
+    prev.docs.slice(i, i + 400).forEach((d) => batchDel.delete(d.ref));
+    await batchDel.commit();
+  }
 
   const apiKey = process.env.VOYAGE_API_KEY;
   let embeddings: number[][] | null = null;
   if (apiKey) {
     embeddings = [];
     for (let i = 0; i < chunks.length; i += 96) {
-      embeddings.push(...(await embed(apiKey, chunks.slice(i, i + 96), 'document')));
+      embeddings.push(...(await embed(apiKey, KB_EMBEDDINGS, chunks.slice(i, i + 96), 'document')));
     }
   }
 
-  let batch = db.batch();
-  chunks.forEach((texto, i) => {
-    const data: Record<string, unknown> = { texto, orden: i, fuente: nombre };
-    if (embeddings) data.embedding = AdminFieldValue.vector(embeddings[i]);
-    batch.set(ref.collection('chunks').doc(`c${String(i).padStart(4, '0')}`), data);
-    if ((i + 1) % 400 === 0) {
-      void batch.commit();
-      batch = db.batch();
-    }
-  });
-  await batch.commit();
+  for (let start = 0; start < chunks.length; start += 400) {
+    const batch = db.batch();
+    chunks.slice(start, start + 400).forEach((texto, offset) => {
+      const i = start + offset;
+      const data: Record<string, unknown> = { texto, orden: i, fuente: nombre };
+      if (embeddings) data.embedding = AdminFieldValue.vector(embeddings[i]);
+      batch.set(ref.collection('chunks').doc(`c${String(i).padStart(4, '0')}`), data);
+    });
+    await batch.commit();
+  }
   return chunks.length;
 }
 
 /**
- * Busca contexto relevante en la KB del sitio (docs con sitio == 'TODOS' o el siteId).
- * Vector search con Voyage + findNearest; fallback por keywords si no hay API key.
+ * Finds relevant KB fragments for a site (docs with sitio == 'TODOS' or the siteId).
+ * A doc whose chunks have no embedding yet (indexed before Voyage was enabled) is
+ * searched by keyword, so turning vectors on doesn't hide it until it's reindexed.
  */
-export async function searchKb(_anthropicKey: string, siteId: string, query: string): Promise<string> {
+export async function searchKbSources(siteId: string, query: string): Promise<EvidenceSource[]> {
   const docsSnap = await db.collection('kb').where('estado', '==', 'indexado').get();
   const docIds = docsSnap.docs
     .filter((d) => {
@@ -89,52 +74,61 @@ export async function searchKb(_anthropicKey: string, siteId: string, query: str
       return kd.sitio === 'TODOS' || kd.sitio === siteId;
     })
     .map((d) => d.id);
-  if (docIds.length === 0) return '';
+  if (docIds.length === 0) return [];
 
   const apiKey = process.env.VOYAGE_API_KEY;
-  const resultados: { texto: string; fuente: string; score: number }[] = [];
+  const queryVec = apiKey ? (await embed(apiKey, KB_EMBEDDINGS, [query], 'query'))[0] : null;
+  const terms = query.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((t) => t.length > 3);
+  const resultados: (EvidenceSource & { score: number })[] = [];
 
-  if (apiKey) {
-    const [queryVec] = await embed(apiKey, [query], 'query');
-    for (const docId of docIds) {
-      const vq = db
-        .collection(`kb/${docId}/chunks`)
+  const push = (docId: string, chunkId: string, data: FirebaseFirestore.DocumentData, score: number) => {
+    const fuente = (data.fuente as string) ?? 'KB';
+    resultados.push({
+      id: `kb:${docId}/${chunkId}`,
+      kind: 'kb',
+      title: fuente,
+      text: (data.texto as string) ?? '',
+      ref: fuente,
+      score,
+    });
+  };
+
+  for (const docId of docIds) {
+    const chunks = db.collection(`kb/${docId}/chunks`);
+    if (queryVec) {
+      const snap = await chunks
         .findNearest({
           vectorField: 'embedding',
           queryVector: queryVec,
           limit: TOP_K,
           distanceMeasure: 'COSINE',
           distanceResultField: 'distancia',
-        });
-      const snap = await vq.get();
-      snap.docs.forEach((d) => {
-        const data = d.data();
-        resultados.push({
-          texto: data.texto as string,
-          fuente: data.fuente as string,
-          score: 1 - ((data.distancia as number) ?? 1),
-        });
-      });
+        })
+        .get();
+      if (!snap.empty) {
+        snap.docs.forEach((d) => push(docId, d.id, d.data(), 1 - ((d.data().distancia as number) ?? 1)));
+        continue;
+      }
     }
-  } else {
-    // Fallback dev: scoring simple por keywords.
-    const terms = query.toLowerCase().split(/\W+/).filter((t) => t.length > 3);
-    for (const docId of docIds) {
-      const snap = await db.collection(`kb/${docId}/chunks`).limit(200).get();
-      snap.docs.forEach((d) => {
-        const texto = (d.data().texto as string) ?? '';
-        const lower = texto.toLowerCase();
-        const score = terms.reduce((acc, t) => acc + (lower.includes(t) ? 1 : 0), 0);
-        if (score > 0) resultados.push({ texto, fuente: d.data().fuente as string, score });
-      });
-    }
+    const snap = await chunks.limit(200).get();
+    snap.docs.forEach((d) => {
+      const lower = ((d.data().texto as string) ?? '').toLowerCase();
+      const hits = terms.reduce((acc, t) => acc + (lower.includes(t) ? 1 : 0), 0);
+      // Normalized to 0-1 so keyword hits rank alongside vector similarity.
+      if (hits > 0) push(docId, d.id, d.data(), hits / Math.max(terms.length, 1));
+    });
   }
 
   return resultados
     .sort((a, b) => b.score - a.score)
     .slice(0, TOP_K)
-    .map((r) => `[${r.fuente}] ${r.texto}`)
-    .join('\n---\n');
+    .map(({ score: _score, ...source }) => source);
+}
+
+/** Plain-text form for callers that don't cite (`aiAssist`). */
+export async function searchKb(siteId: string, query: string): Promise<string> {
+  const sources = await searchKbSources(siteId, query);
+  return sources.map((s) => `[${s.title}] ${s.text}`).join('\n---\n');
 }
 
 /**
@@ -143,51 +137,60 @@ export async function searchKb(_anthropicKey: string, siteId: string, query: str
  * la function desplegada.
  */
 export const kbIngestPdf = onObjectFinalized(
-  { region: 'us-central1', memory: '1GiB', timeoutSeconds: 300 },
+  { region: 'us-central1', memory: '1GiB', timeoutSeconds: 300, secrets: [voyageApiKey] },
   async (event) => {
     const filePath = event.data.name;
     const match = filePath?.match(/^kb\/(.+)\.(pdf|txt|md)$/i);
     if (!match) return;
-    const docId = match[1];
-    const ext = match[2].toLowerCase();
-
-    // kb/{docId}.{ext} → doc kb/{docId} debe existir (lo crea la consola al subir).
-    const ref = db.doc(`kb/${docId}`);
-    const snap = await ref.get();
-    if (!snap.exists) {
-      logger.warn('Archivo sin doc kb correspondiente', { filePath });
-      return;
-    }
-    await ref.update({ estado: 'sincronizando', updatedAt: AdminFieldValue.serverTimestamp() });
-    try {
-      const [buffer] = await storage.bucket(event.data.bucket).file(filePath!).download();
-      let texto: string;
-      let paginas: number | undefined;
-      if (ext === 'pdf') {
-        const pdfParse = (await import('pdf-parse')).default;
-        const parsed = await pdfParse(buffer);
-        texto = parsed.text;
-        paginas = parsed.numpages;
-      } else {
-        texto = buffer.toString('utf8');
-      }
-      const chunks = await indexDoc(docId, (snap.data() as KbDoc).nombre, texto);
-      await ref.update({
-        estado: 'indexado',
-        chunks,
-        ...(paginas !== undefined ? { paginas } : {}),
-        updatedAt: AdminFieldValue.serverTimestamp(),
-      });
-    } catch (err) {
-      logger.error('kbIngestPdf falló', { filePath, message: (err as Error).message });
-      await ref.update({ estado: 'error', updatedAt: AdminFieldValue.serverTimestamp() });
-    }
+    await ingestStoredFile(match[1], filePath!, match[2].toLowerCase(), event.data.bucket);
   },
 );
 
+/** Indexes a file already in Storage; the kb/{docId} doc must exist (the console creates it on upload). */
+async function ingestStoredFile(docId: string, filePath: string, ext: string, bucket?: string): Promise<void> {
+  const ref = db.doc(`kb/${docId}`);
+  const snap = await ref.get();
+  if (!snap.exists) {
+    logger.warn('Archivo sin doc kb correspondiente', { filePath });
+    return;
+  }
+  await ref.update({ estado: 'sincronizando', updatedAt: AdminFieldValue.serverTimestamp() });
+  try {
+    const target = bucket ? storage.bucket(bucket) : storage.bucket();
+    const [buffer] = await target.file(filePath).download();
+    let texto: string;
+    let paginas: number | undefined;
+    if (ext === 'pdf') {
+      const pdfParse = (await import('pdf-parse')).default;
+      const parsed = await pdfParse(buffer);
+      texto = parsed.text;
+      paginas = parsed.numpages;
+    } else {
+      texto = buffer.toString('utf8');
+    }
+    const chunks = await indexDoc(docId, (snap.data() as KbDoc).nombre, texto);
+    await ref.update({
+      estado: 'indexado',
+      chunks,
+      ...(paginas !== undefined ? { paginas } : {}),
+      updatedAt: AdminFieldValue.serverTimestamp(),
+    });
+  } catch (err) {
+    logger.error('kbIngestPdf falló', { filePath, message: (err as Error).message });
+    await ref.update({ estado: 'error', updatedAt: AdminFieldValue.serverTimestamp() });
+  }
+}
+
 /** Re-indexa las URLs (centro de ayuda) a diario. */
 export const kbSyncHelpCenter = onSchedule(
-  { schedule: 'every day 03:00', timeZone: 'America/Costa_Rica', region: 'us-central1', memory: '1GiB', timeoutSeconds: 540 },
+  {
+    schedule: 'every day 03:00',
+    timeZone: 'America/Costa_Rica',
+    region: 'us-central1',
+    memory: '1GiB',
+    timeoutSeconds: 540,
+    secrets: [voyageApiKey],
+  },
   async () => {
     const snap = await db.collection('kb').where('tipo', '==', 'url').get();
     for (const d of snap.docs) {
@@ -200,7 +203,7 @@ export const kbSyncHelpCenter = onSchedule(
 
 /** Callable para forzar la sincronización de una URL desde la consola. */
 export const kbSyncNow = onCall(
-  { region: 'us-central1', timeoutSeconds: 300 },
+  { region: 'us-central1', memory: '1GiB', timeoutSeconds: 300, secrets: [voyageApiKey] },
   async (req) => {
     if (req.auth?.token.kind !== 'agent' || req.auth.token.rol !== 'admin') {
       throw new HttpsError('permission-denied', 'Solo admins.');
@@ -208,10 +211,39 @@ export const kbSyncNow = onCall(
     const { docId } = req.data as { docId: string };
     const snap = await db.doc(`kb/${docId}`).get();
     if (!snap.exists) throw new HttpsError('not-found', 'Documento no encontrado.');
-    await syncUrlDoc(docId, snap.data() as KbDoc);
+    await reindexDoc(docId, snap.data() as KbDoc);
     return { ok: true };
   },
 );
+
+/**
+ * Reindexes every KB doc, needed once after enabling Voyage: chunks stored before
+ * that have no embedding. Each doc is isolated, so one failure doesn't stop the rest.
+ */
+export const kbReindexAll = onCall(
+  { region: 'us-central1', memory: '1GiB', timeoutSeconds: 540, secrets: [voyageApiKey] },
+  async (req) => {
+    if (req.auth?.token.kind !== 'agent' || req.auth.token.rol !== 'admin') {
+      throw new HttpsError('permission-denied', 'Solo admins.');
+    }
+    const snap = await db.collection('kb').get();
+    let failed = 0;
+    for (const d of snap.docs) {
+      await reindexDoc(d.id, d.data() as KbDoc).catch((err) => {
+        failed += 1;
+        logger.error('kbReindexAll doc falló', { docId: d.id, message: (err as Error).message });
+      });
+    }
+    return { total: snap.size, failed };
+  },
+);
+
+async function reindexDoc(docId: string, doc: KbDoc): Promise<void> {
+  if (doc.tipo === 'url') return syncUrlDoc(docId, doc);
+  if (!doc.storagePath) return;
+  const ext = doc.storagePath.split('.').pop()?.toLowerCase() ?? '';
+  await ingestStoredFile(docId, doc.storagePath, ext);
+}
 
 async function syncUrlDoc(docId: string, doc: KbDoc): Promise<void> {
   if (doc.tipo !== 'url' || !doc.url) return;

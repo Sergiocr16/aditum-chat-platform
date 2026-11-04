@@ -197,6 +197,32 @@ service cloud.firestore {
       }
     }
 
+    // ---------------------------------------------------------------- Code index
+    // Private source code of the production repository: Admin SDK only, for every
+    // client, agents and admins included.
+    match /code_chunks/{chunkId} {
+      allow read, write: if false;
+    }
+    match /code_files/{fileId} {
+      allow read, write: if false;
+    }
+    // Sync progress; holds commit SHAs and counts, no code.
+    match /code_index/{docId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    // ------------------------------------------------------------- Bot evidence
+    // References behind each bot reply; never readable by contacts.
+    match /bot_evidence/{messageId} {
+      allow read: if isAgent();
+      allow write: if false;
+    }
+    match /bot_gate_events/{eventId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
     // --------------------------------------------------------------------- CSAT
     match /csat/{id} {
       // Agentes leen todo; un contacto solo sus propias valoraciones (para que el
@@ -234,6 +260,24 @@ service cloud.firestore {
     match /notifications/{id} {
       allow read: if isAgent();
       allow write: if false; // solo slaEngine (Admin SDK)
+    }
+
+    // ------------------------------------------------------------ investigations
+    // Lectura para agentes; solo functions escribe. `investigation_inputs` (lo que recibe
+    // el analizador) no tiene regla, así que queda negado a todo cliente.
+    match /investigations/{id} {
+      allow read: if isAgent();
+      allow write: if false;
+      match /{sub}/{subId} {
+        allow read: if isAgent();
+        allow write: if false;
+      }
+    }
+    // Estado del analizador: todos los agentes; la conexión a producción, solo admins.
+    // `investigation_inputs` e `investigator_secrets` no tienen regla: negados a todo cliente.
+    match /investigator/{doc} {
+      allow read: if isAgent() && (doc == 'runner' || isAdmin());
+      allow write: if false;
     }
 
     // ----------------------------------------------------------------- counters

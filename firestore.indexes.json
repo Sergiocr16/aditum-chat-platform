@@ -1,6 +1,49 @@
 {
   "indexes": [
     {
+      "collectionGroup": "chunks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "embedding",
+          "vectorConfig": {
+            "dimension": 1024,
+            "flat": {}
+          }
+        }
+      ]
+    },
+    {
+      "collectionGroup": "code_chunks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "forManager", "order": "ASCENDING" },
+        { "fieldPath": "language", "order": "ASCENDING" },
+        {
+          "fieldPath": "embedding",
+          "vectorConfig": {
+            "dimension": 1024,
+            "flat": {}
+          }
+        }
+      ]
+    },
+    {
+      "collectionGroup": "code_chunks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "forAccountant", "order": "ASCENDING" },
+        { "fieldPath": "language", "order": "ASCENDING" },
+        {
+          "fieldPath": "embedding",
+          "vectorConfig": {
+            "dimension": 1024,
+            "flat": {}
+          }
+        }
+      ]
+    },
+    {
       "collectionGroup": "conversations",
       "queryScope": "COLLECTION",
       "fields": [
@@ -204,17 +247,39 @@
         { "fieldPath": "clientId", "order": "ASCENDING" },
         { "fieldPath": "lastActivity", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "investigations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "investigations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "threadKey", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": [
     {
       "collectionGroup": "chunks",
       "fieldPath": "embedding",
-      "indexes": [],
-      "vectorConfig": {
-        "dimension": 768,
-        "flat": {}
-      }
+      "indexes": []
+    },
+    {
+      "collectionGroup": "code_chunks",
+      "fieldPath": "embedding",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "code_chunks",
+      "fieldPath": "text",
+      "indexes": []
     }
   ]
 }

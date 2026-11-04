@@ -16,7 +16,8 @@ by Firebase custom claims + Firestore rules. See `README.md` for the full pictur
 ```
 apps/widget      Embeddable widget (Preact + Vite → IIFE widget.js, Shadow DOM)
 apps/dashboard   Agent console (Next.js 15 App Router + Tailwind 4, static export)
-functions        Cloud Functions v2 (bot, tickets, SLA, KB/RAG, push, team, widgetSession)
+functions        Cloud Functions v2 (bot, tickets, SLA, KB/RAG, push, team, widgetSession, investigations)
+services/investigator  Runs on the Raspberry Pi: investigations over production code and masked data
 packages/shared  Types (source of truth), design tokens, i18n (es/en) — consumed as raw TS
 ```
 
@@ -74,7 +75,8 @@ automatic; confirm the prod target with the maintainer first. Verified procedure
 
 `apps/dashboard/out/` is committed; `apps/widget/dist/` + `functions/lib/` are gitignored. The
 trailing "cleaning up build images" warning is harmless (minor GCR cost, self-corrects next deploy).
-Functions need their prod secrets already set (`ANTHROPIC_API_KEY`, `CONFIG_KEK`).
+Functions need their prod secrets already set (`ANTHROPIC_API_KEY`, `CONFIG_KEK`, `VOYAGE_API_KEY`,
+`GITHUB_CODE_TOKEN`, `RUNNER_SHARED_SECRET`, `GATEWAY_SHARED_SECRET`); a deploy fails if a declared secret doesn't exist.
 
 ## Hard rules
 
@@ -101,8 +103,11 @@ Functions need their prod secrets already set (`ANTHROPIC_API_KEY`, `CONFIG_KEK`
   composers) — test touch behavior with that media query, not by narrowing the window.
 - **React StrictMode** double-invokes effects in dev — expect transient states in the console.
 - **Secrets** live in `functions/.secret.local` (gitignored): `ANTHROPIC_API_KEY`,
-  `VOYAGE_API_KEY` (optional), `CONFIG_KEK`. Never commit them. Bot models are **fixed in code**
-  (`bot.ts`): `claude-haiku-4-5` (widget bot + testBot), `claude-sonnet-5` (aiAssist).
+  `VOYAGE_API_KEY`, `GITHUB_CODE_TOKEN`, `RUNNER_SHARED_SECRET`, `GATEWAY_SHARED_SECRET`, `CONFIG_KEK`. Never commit them. Bot models are **fixed in
+  code** (`bot.ts`): `claude-haiku-5-5` (widget bot + testBot), `claude-sonnet-5` (aiAssist).
+- **The bot answers only with evidence** (`functions/src/evidence.ts`): a reply without a valid
+  quoted source, or one exposing code, is replaced by a fixed "couldn't confirm" message. It can use a
+  private index of the production repo but has no access to the production database.
 - All privileged writes (tickets, keys, team, KB chunks, metrics, bot feedback stamping/handoff)
   go through Cloud Functions with the Admin SDK — client SDK writes are constrained by
   `firestore.rules`.
@@ -140,3 +145,8 @@ Functions need their prod secrets already set (`ANTHROPIC_API_KEY`, `CONFIG_KEK`
   conversation only** (that doc's messages, never the contact's stitched history), grounds reply
   suggestions on the bot KB via RAG, and returns a structured title+description for AI tickets. The
   console surfaces it in an **editable review modal** — never auto-inserted.
+- **This repo is public.** Don't commit anything that describes production's internals:
+  `services/investigator/deploy/pii-map.yml` and the generated SQL are gitignored for that reason.
+- **Investigations** (`services/investigator`, `functions/investigations.ts`, `InvestigationPanel`) are
+  separate from the bot: the bot never touches production data, and an investigation only reads
+  masked views, after showing code evidence. See `services/investigator/README.md`.

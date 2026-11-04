@@ -10,7 +10,7 @@ import {
   useState,
 } from 'react';
 import { httpsCallable } from 'firebase/functions';
-import type { Attachment, Conversation, Idioma, Message } from '@aditum-chat/shared';
+import type { Attachment, Conversation, Idioma, InvestigationMessageRef, Message } from '@aditum-chat/shared';
 import { categoryLabel, EMOJI_CATEGORIES, formatTicketNumber } from '@aditum-chat/shared';
 import { fns } from '@/lib/firebase';
 import { useAuth } from '@/lib/auth';
@@ -43,6 +43,8 @@ export interface ConversationViewHandle {
   scrollToConversation(convId: string): void;
   /** Refresca el bloque de una conversación (mensaje nuevo, p. ej. ticket) y salta a ella. */
   refrescarYVer(convId: string): Promise<void>;
+  /** Pone un texto en el editor para que el agente lo revise; nunca lo envía. */
+  usarComoBorrador(texto: string): void;
 }
 
 const EMOJIS = ['👍', '❤️', '😂', '😮', '🙏'];
@@ -67,9 +69,11 @@ export const ConversationView = forwardRef<
     ctxColapsado?: boolean;
     /** Toggle del panel de contexto (escritorio); si no viene, no hay panel. */
     onToggleCtx?: () => void;
+    /** Abre el panel de investigaciones; con `seed`, solo con ese mensaje marcado. */
+    onInvestigate?: (seed?: InvestigationMessageRef) => void;
   }
 >(function ConversationView(
-  { conv, onBack, onOpenConversation, onOpenContext, ctxColapsado, onToggleCtx },
+  { conv, onBack, onOpenConversation, onOpenContext, ctxColapsado, onToggleCtx, onInvestigate },
   ref,
 ) {
   const { agent } = useAuth();
@@ -306,6 +310,11 @@ export const ConversationView = forwardRef<
           await refrescarConversacion(convId);
           await new Promise((r) => setTimeout(r, 80)); // dejar commitear el DOM
           await irA(convId);
+        },
+        usarComoBorrador(texto: string) {
+          setDraft(texto);
+          setTab('responder');
+          requestAnimationFrame(() => inputRef.current?.focus());
         },
       };
     },
@@ -634,6 +643,16 @@ export const ConversationView = forwardRef<
             </div>
           )}
         </div>
+        {onInvestigate && (
+          <button
+            onClick={() => onInvestigate()}
+            title={t('inv.abrir')}
+            aria-label={t('inv.abrir')}
+            className="h-8 w-8 rounded-lg flex items-center justify-center border border-warm-border text-ai hover:border-ai flex-none"
+          >
+            <span className="msr text-[18px]">troubleshoot</span>
+          </button>
+        )}
         {convEspera && (
           <button
             onClick={() => setWaitingOnCustomer(convEspera.id, !esperando)}
@@ -750,6 +769,11 @@ export const ConversationView = forwardRef<
                   onVerTicket={setVerTicketId}
                   onIrMensaje={irAMensaje}
                   onResponder={responderA}
+                  onInvestigar={
+                    onInvestigate
+                      ? () => onInvestigate({ conversationId: f.convId, messageId: f.msg.id })
+                      : undefined
+                  }
                   onEditar={() => editarMensaje(f.convId, f.msg.id, md.texto)}
                   onAbrirAdjunto={abrirVisor}
                   onVerConvBot={
@@ -1197,6 +1221,7 @@ function Burbuja({
   onVerTicket,
   onIrMensaje,
   onResponder,
+  onInvestigar,
   onEditar,
   onVerConvBot,
   onAbrirAdjunto,
@@ -1212,6 +1237,7 @@ function Burbuja({
   onVerTicket?(ticketId: string): void;
   onIrMensaje?(messageId: string): void;
   onResponder?(r: { messageId: string; texto: string; senderNombre: string }): void;
+  onInvestigar?(): void;
   onEditar?(): void;
   /** Mensajes de sistema con botConvRef: abre la conversación del bot de origen. */
   onVerConvBot?(): void;
@@ -1414,6 +1440,18 @@ function Burbuja({
               >
                 <span className="msr text-[15px] text-warm-gray">content_copy</span>
                 Copiar
+              </button>
+            )}
+            {onInvestigar && (
+              <button
+                onClick={() => {
+                  onMenu?.();
+                  onInvestigar();
+                }}
+                className="w-full text-left px-3 py-1.5 text-[12.5px] hover:bg-cream-1 flex items-center gap-2"
+              >
+                <span className="msr text-[15px] text-ai">troubleshoot</span>
+                {t('inv.investigarMensaje')}
               </button>
             )}
             {onEditar && !!selfId && m.sender.id === selfId && m.texto && (
