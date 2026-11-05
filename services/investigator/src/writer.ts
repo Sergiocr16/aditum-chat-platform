@@ -118,11 +118,15 @@ async function checks(conn: mysql.Connection, connection: DbConnection) {
   // Roles don't exist before MySQL 8, and there this function doesn't either.
   const [roles] = await bounded(conn, conn.query<mysql.RowDataPacket[]>('SELECT CURRENT_ROLE() AS role_name')).catch(() => [[{ role_name: 'NONE' }]] as unknown as [mysql.RowDataPacket[]]);
   let grants: WriteGrants = parseWriteGrants(grantRows.map((row) => String(Object.values(row)[0])), connection.database);
-  if (roles[0]?.role_name !== 'NONE') grants = { tables: {}, problem: 'El usuario tiene un rol activo, y solo se aceptan permisos directos por tabla.' };
+  if (roles[0]?.role_name !== 'NONE') grants = { tables: {}, problem: 'El usuario tiene un rol activo, y solo se aceptan permisos directos.' };
   list.push({
     id: 'grants',
     ok: grants.problem === null,
-    detail: grants.problem ?? `Solo tiene SELECT, INSERT o UPDATE en ${Object.keys(grants.tables).length} tablas.`,
+    detail:
+      grants.problem ??
+      (grants.database
+        ? `Tiene ${grants.database.join(', ')} sobre toda la base ${connection.database}, y nada más.`
+        : `Solo tiene SELECT, INSERT o UPDATE en ${Object.keys(grants.tables).length} tablas.`),
   });
   return { list, grants: encrypted ? grants : { tables: {}, problem: 'La conexión no está cifrada.' } };
 }

@@ -71,7 +71,7 @@ const M = {
     escrituras: {
       titulo: 'Escrituras en producción',
       subtitulo: 'Con esta conexión se aplican los cambios que un admin aprueba en una investigación',
-      aviso: 'Creá este usuario con los GRANT por tabla de create-write-user.sql: esas tablas son todo lo que puede tocar. Se rechaza si tiene algo más que SELECT, INSERT o UPDATE por tabla.',
+      aviso: 'Creá este usuario con create-write-user.sql. Solo puede tener SELECT, INSERT o UPDATE, sobre toda esta base o tabla por tabla: con cualquier otro permiso se rechaza.',
       contrasenaGuardada: 'Guardada. Hay que volver a escribirla si cambiás el host, el usuario o el certificado.',
       host: 'Host',
       ca: 'Certificado del servidor (PEM)',
@@ -208,7 +208,7 @@ const M = {
     escrituras: {
       titulo: 'Production writes',
       subtitulo: 'This connection applies the changes an admin approves in an investigation',
-      aviso: 'Create this user with the per-table GRANTs in create-write-user.sql: those tables are all it can touch. It is refused if it has anything beyond SELECT, INSERT or UPDATE per table.',
+      aviso: 'Create this user with create-write-user.sql. It may only have SELECT, INSERT or UPDATE, on this whole database or table by table: any other privilege gets it refused.',
       contrasenaGuardada: 'Saved. Type it again if you change the host, the user or the certificate.',
       host: 'Host',
       ca: 'Server certificate (PEM)',

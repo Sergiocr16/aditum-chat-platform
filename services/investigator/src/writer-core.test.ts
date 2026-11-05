@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { WriteOperation, WriteRowResult } from '@aditum-chat/shared';
-import { CommitUncertain, execute, operationProblem, parseWriteGrants, recover, reversalFrom, rowHash, type Db } from './writer-core.js';
+import { CommitUncertain, execute, operationProblem, parseWriteGrants, privilegesOn, recover, reversalFrom, rowHash, type Db } from './writer-core.js';
 
 const TO = "TO `aditum_writer`@`1.2.3.4`";
 const info = {
@@ -19,7 +19,10 @@ describe('parseWriteGrants', () => {
   });
   it.each([
     ['global privileges', `GRANT SELECT ON *.* ${TO}`],
-    ['all of a database', `GRANT SELECT, UPDATE ON \`app\`.* ${TO}`],
+    ['DELETE on all of a database', `GRANT SELECT, UPDATE, DELETE ON \`app\`.* ${TO}`],
+    ['ALL on all of a database', `GRANT ALL PRIVILEGES ON \`app\`.* ${TO}`],
+    ['all of another database', `GRANT SELECT, UPDATE ON \`other\`.* ${TO}`],
+    ['databases by pattern', `GRANT SELECT, UPDATE ON \`ap%\`.* ${TO}`],
     ['DELETE', `GRANT SELECT, DELETE ON \`app\`.\`charge\` ${TO}`],
     ['ALL', `GRANT ALL PRIVILEGES ON \`app\`.\`charge\` ${TO}`],
     ['grant option', `GRANT SELECT ON \`app\`.\`charge\` ${TO} WITH GRANT OPTION`],
@@ -32,6 +35,25 @@ describe('parseWriteGrants', () => {
     const grants = parseWriteGrants([`GRANT USAGE ON *.* ${TO}`, `GRANT SELECT, UPDATE ON \`app\`.\`ok\` ${TO}`, grant], 'app');
     expect(grants.problem).toMatch(/más permisos/);
     expect(grants.tables).toEqual({});
+  });
+  it('accepts SELECT, INSERT and UPDATE on the whole database, so new tables need no grant', () => {
+    const grants = parseWriteGrants([`GRANT USAGE ON *.* ${TO}`, `GRANT SELECT, INSERT, UPDATE ON \`app\`.* ${TO}`], 'app');
+    expect(grants).toEqual({ tables: {}, database: ['SELECT', 'INSERT', 'UPDATE'], problem: null });
+    expect(privilegesOn(grants, 'a_table_added_later')).toEqual(['SELECT', 'INSERT', 'UPDATE']);
+  });
+  it('reads a database name MySQL shows escaped', () => {
+    const grants = parseWriteGrants([`GRANT SELECT, UPDATE ON \`primary\\_app\\_db\`.* ${TO}`], 'primary_app_db');
+    expect(grants.database).toEqual(['SELECT', 'UPDATE']);
+  });
+  it('adds what a table has to what the whole database has', () => {
+    const grants = parseWriteGrants([`GRANT SELECT, UPDATE ON \`app\`.* ${TO}`, `GRANT INSERT ON \`app\`.\`note\` ${TO}`], 'app');
+    expect(privilegesOn(grants, 'note')).toEqual(['SELECT', 'UPDATE', 'INSERT']);
+    expect(privilegesOn(grants, 'charge')).toEqual(['SELECT', 'UPDATE']);
+  });
+  it('gives nothing on a table that was not granted, whatever its name', () => {
+    const grants = parseWriteGrants([`GRANT SELECT, UPDATE ON \`app\`.\`charge\` ${TO}`], 'app');
+    expect(privilegesOn(grants, 'note')).toBeUndefined();
+    expect(privilegesOn(grants, 'constructor')).toBeUndefined();
   });
   it('refuses a user with nothing to work on', () => {
     expect(parseWriteGrants([`GRANT USAGE ON *.* ${TO}`], 'app').problem).toMatch(/ninguna tabla/);

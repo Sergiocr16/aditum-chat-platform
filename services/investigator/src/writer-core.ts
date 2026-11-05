@@ -33,28 +33,44 @@ export class CommitUncertain extends Error {
 export interface WriteGrants {
   /** Table name to its privileges. */
   tables: Record<string, string[]>;
+  /** Privileges over every table of the database, for a user granted the whole of it. */
+  database?: string[];
   problem: string | null;
+}
+
+/** What the user may do on one table: what it has on the whole database plus what it has on that table. */
+export function privilegesOn(grants: WriteGrants, table: string): string[] | undefined {
+  const own = Object.hasOwn(grants.tables, table) ? grants.tables[table] : undefined;
+  if (!own && !grants.database) return undefined;
+  return [...new Set([...(grants.database ?? []), ...(own ?? [])])];
 }
 
 const ALLOWED_PRIVILEGES = new Set(['SELECT', 'INSERT', 'UPDATE']);
 
 /**
- * Table by table, and only SELECT, INSERT and UPDATE. Anything broader is refused rather than used
- * carefully, since the connection is typed into the console and could be an admin.
+ * Only SELECT, INSERT and UPDATE, on single tables or on the whole configured database, so new tables
+ * need no new grant. Anything broader is refused rather than used carefully, since the connection is
+ * typed into the console and could be an admin: no DELETE, no other database, nothing global.
  */
 export function parseWriteGrants(grants: string[], database: string): WriteGrants {
   const tables: Record<string, string[]> = {};
+  let whole: string[] | undefined;
   const refuse = (grant: string) => ({ tables: {}, problem: `El usuario tiene más permisos de los permitidos: ${grant.replace(/ TO .*/i, '')}` });
   for (const grant of grants) {
     if (/^GRANT USAGE ON \*\.\* TO /i.test(grant)) continue;
-    const match = grant.match(/^GRANT (.+?) ON `([^`]+)`\.`([^`]+)` TO /i);
-    if (!match || /WITH GRANT OPTION/i.test(grant) || match[2] !== database) return refuse(grant);
+    const match = grant.match(/^GRANT (.+?) ON `([^`]+)`\.(\*|`([^`]+)`) TO /i);
+    if (!match || /WITH GRANT OPTION/i.test(grant)) return refuse(grant);
+    const onDatabase = match[3] === '*';
+    // In a grant on a whole database MySQL shows `_` and `%` escaped when they are meant literally.
+    const named = onDatabase ? match[2].replace(/\\([_%])/g, '$1') : match[2];
+    if (named !== database) return refuse(grant);
     const privileges = match[1].split(',').map((privilege) => privilege.trim().toUpperCase());
     if (!privileges.every((privilege) => ALLOWED_PRIVILEGES.has(privilege))) return refuse(grant);
-    tables[match[3]] = privileges;
+    if (onDatabase) whole = [...new Set([...(whole ?? []), ...privileges])];
+    else tables[match[4]] = privileges;
   }
-  if (Object.keys(tables).length === 0) return { tables, problem: `El usuario no tiene permisos sobre ninguna tabla de ${database}.` };
-  return { tables, problem: null };
+  if (!whole && Object.keys(tables).length === 0) return { tables, problem: `El usuario no tiene permisos sobre ninguna tabla de ${database}.` };
+  return { tables, ...(whole && { database: whole }), problem: null };
 }
 
 const quote = (identifier: string) => {
@@ -260,10 +276,10 @@ async function prepared(db: Db, database: string, operations: WriteOperation[], 
     quote(operation.table);
     assertPlainValues(operation);
     if (!infos.has(operation.table)) {
-      if (!grants.tables[operation.table]) throw new WriteAbort(`El usuario no tiene permisos sobre ${operation.table}.`);
+      if (!privilegesOn(grants, operation.table)) throw new WriteAbort(`El usuario no tiene permisos sobre ${operation.table}.`);
       infos.set(operation.table, await loadTableInfo(db, database, operation.table));
     }
-    const problem = operationProblem(operation, infos.get(operation.table)!, grants.tables[operation.table]);
+    const problem = operationProblem(operation, infos.get(operation.table)!, privilegesOn(grants, operation.table));
     if (problem) throw new WriteAbort(problem);
   }
   return infos;

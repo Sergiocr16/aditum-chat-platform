@@ -13,7 +13,7 @@ Pi: runner ──── claude -p (Read, Grep, Glob + MCP) ── checkout of on
 
 Console → rehearse, 3 confirmations → writer_jobs (Firestore)
                                        ↑ outbound HTTPS, no open ports, its own secret
-Pi: writer (own OS user) ── write user with per-table GRANTs, password only for the length of a job
+Pi: writer (own OS user) ── write user limited by its GRANTs, password only for the length of a job
 ```
 
 ## Safeguards, and what enforces each one
@@ -24,7 +24,7 @@ Pi: writer (own OS user) ── write user with per-table GRANTs, password only 
 | Claude can't write | MySQL: its user only has `SELECT`. It has no tool to reach the writer, and its proposal is data that a person reviews |
 | A proposal can't be broad | Operations are structured, one row each by its full primary key, checked against the catalog. There's no SQL text, no condition and no delete |
 | Only approved work gets the write password | It isn't on the Pi: `investigationWriter` hands it over with a job an admin asked for |
-| A writer can only touch what its GRANTs say | The writer refuses a user with anything but `SELECT`, `INSERT` or `UPDATE` per table, and rereads the grants on every job |
+| A writer can only touch what its GRANTs say | The writer refuses a user with anything but `SELECT`, `INSERT` or `UPDATE`, on single tables or on the whole configured database, and rereads the grants on every job |
 | A rehearsal leaves nothing | Runs in a transaction that rolls back, only on InnoDB tables |
 | An approval covers exactly what was reviewed | Three ordered steps in `stepProblem`, same admin, 10 minutes, a hash of operations and rehearsal, typed phrase and a fresh login |
 | The password only reaches the real server | A verified certificate and host name, always. Changing the host, user or certificate needs the password typed again |
@@ -98,8 +98,8 @@ must match `functions/.secret.local`.
    port to it. Once installed, the services only make outbound calls: you can remove the connection and
    close the port until the next update.
 
-6. **Writes (optional, off by default).** Run `deploy/create-write-user.sql` by hand, listing only the
-   tables it may touch. Under Configuración → Investigador → Escrituras an admin saves that connection with
+6. **Writes (optional, off by default).** Run `deploy/create-write-user.sql` by hand: either the whole
+   database, so tables added later are covered, or only the tables it may touch. Under Configuración → Investigador → Escrituras an admin saves that connection with
    the server's CA certificate (on RDS, the region's bundle) and turns on the switch once its check
    passes. Without a certificate it refuses to connect, and it checks the host name too, so use the
    name on the certificate and not an IP. Before granting a table, find out what cache the app
