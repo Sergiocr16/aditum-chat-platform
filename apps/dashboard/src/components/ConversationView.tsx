@@ -34,10 +34,13 @@ import {
 import { threadKeyOf, useActiveInvestigations } from '@/lib/data-investigations';
 import { ConvertTicketModal } from './ConvertTicketModal';
 import { InvestigationPanel, type InvestigationSeed } from './InvestigationPanel';
-import { useMediaQuery } from './ResizeHandle';
+import { ResizeHandle, useColumnWidth, useMediaQuery } from './ResizeHandle';
 import { ResolveModal } from './ResolveModal';
 import { TicketDetailModal } from './TicketDetailModal';
 import { VisorAdjuntos, type VisorItem } from './VisorAdjuntos';
+
+/** What the side panel always leaves for the chat. */
+const CHAT_MIN_WIDTH = 320;
 
 export interface ConversationViewHandle {
   scrollToConversation(convId: string): void;
@@ -69,9 +72,11 @@ export const ConversationView = forwardRef<
     onToggleCtx?: () => void;
     /** Abre directo en la pestaña Investigar, mostrando esta investigación. */
     investigacionId?: string | null;
+    /** Tells the inbox when the side panel opens, since it takes the context panel's place. */
+    onInvestigarChange?: (open: boolean) => void;
   }
 >(function ConversationView(
-  { conv, onBack, onOpenConversation, onOpenContext, ctxColapsado, onToggleCtx, investigacionId },
+  { conv, onBack, onOpenConversation, onOpenContext, ctxColapsado, onToggleCtx, investigacionId, onInvestigarChange },
   ref,
 ) {
   const { agent } = useAuth();
@@ -138,7 +143,7 @@ export const ConversationView = forwardRef<
     if (i >= 0) setVisorIdx(i);
   };
 
-  const [tab, setTab] = useState<'responder' | 'nota' | 'investigar'>(investigacionId ? 'investigar' : 'responder');
+  const [tab, setTab] = useState<'responder' | 'nota'>('responder');
   const [draft, setDraft] = useState('');
   const [showConvert, setShowConvert] = useState(false);
   const [showAsignar, setShowAsignar] = useState(false);
@@ -146,6 +151,13 @@ export const ConversationView = forwardRef<
   const [verTicketId, setVerTicketId] = useState<string | null>(null);
   // Mounted on first use and then only hidden, so a half-written question survives switching tabs.
   const [investigacionAbierta, setInvestigacionAbierta] = useState(!!investigacionId);
+  const [investigarVisible, setInvestigarVisible] = useState(!!investigacionId);
+  // Below this there isn't room for both, so the panel covers the chat until it's closed.
+  const investigarAlLado = useMediaQuery('(min-width: 1280px)');
+  const raizRef = useRef<HTMLDivElement>(null);
+  // With the panel open the header is short on room, and the contact's name matters more.
+  const etiquetaBoton = investigarVisible ? 'hidden' : 'hidden sm:inline';
+  const anchoInvestigar = useColumnWidth('aditum-inbox-investigar', 440, 360, 760);
   const [investigacionSeed, setInvestigacionSeed] = useState<InvestigationSeed | null>(null);
   const threadKey = threadKeyOf(conv.data);
   const investigacionesActivas = useActiveInvestigations(threadKey);
@@ -153,15 +165,19 @@ export const ConversationView = forwardRef<
   const [resultadoNuevo, setResultadoNuevo] = useState(false);
   const activasAntes = useRef(0);
   useEffect(() => {
-    if (activasAntes.current > 0 && investigacionesActivas === 0 && tab !== 'investigar') setResultadoNuevo(true);
+    if (activasAntes.current > 0 && investigacionesActivas === 0 && !investigarVisible) setResultadoNuevo(true);
     activasAntes.current = investigacionesActivas;
-  }, [investigacionesActivas, tab]);
+  }, [investigacionesActivas, investigarVisible]);
   function abrirInvestigaciones(seed?: InvestigationMessageRef) {
     if (seed) setInvestigacionSeed({ ref: seed, nonce: Date.now() });
     setInvestigacionAbierta(true);
     setResultadoNuevo(false);
-    setTab('investigar');
+    setInvestigarVisible(true);
   }
+  useEffect(() => {
+    onInvestigarChange?.(investigarVisible);
+    return () => onInvestigarChange?.(false);
+  }, [investigarVisible, onInvestigarChange]);
   const [subiendo, setSubiendo] = useState(false);
   const [enElFondo, setEnElFondo] = useState(true);
   const [replyTo, setReplyTo] = useState<{
@@ -513,551 +529,585 @@ export const ConversationView = forwardRef<
   }
 
   return (
-    <div
-      className="relative flex flex-col h-full"
-      onDragEnter={onDragOverConv}
-      onDragOver={onDragOverConv}
-    >
-      {dragging && (
-        <div
-          className="absolute inset-0 z-30 flex items-center justify-center bg-navy/60 p-4"
-          onDragOver={(e) => e.preventDefault()}
-          onDragLeave={() => setDragging(false)}
-          onDrop={onDropConv}
-        >
-          <div className="pointer-events-none flex flex-col items-center gap-2.5 rounded-2xl border-2 border-dashed border-white/75 bg-white/10 px-8 py-6 text-center text-white">
-            <span className="msr text-[36px]">upload_file</span>
-            <div className="text-[14px] font-semibold leading-snug">
-              {idioma === 'es' ? 'Soltá el archivo para adjuntarlo' : 'Drop the file to attach it'}
-            </div>
-          </div>
-        </div>
-      )}
-      {/* PWA standalone: franja blanca tras el status bar del teléfono (el header
-          no queda debajo). Con status bar 'default' mide 0; es solo respaldo. */}
-      {/* Plum status-bar strip: iOS renders white clock text over it. */}
-      <div className="md:hidden flex-none bg-navy-deep h-[env(safe-area-inset-top)]" />
-      <header className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-3 bg-white border-b border-warm-border">
-        {onBack && (
-          <button
-            onClick={onBack}
-            className="md:hidden -ml-1 p-1 text-warm-gray hover:text-ink flex-none"
-            aria-label="Volver"
-          >
-            <span className="msr text-[22px]">arrow_back</span>
-          </button>
-        )}
-        <div className="h-9 w-9 rounded-full bg-cream-3 flex items-center justify-center text-[11px] font-bold text-ink-2 flex-none">
-          {grupo ? <span className="msr text-[18px]">groups</span> : iniciales(nombre)}
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="text-[13.5px] font-bold truncate">{nombre}</div>
-          <div className="text-[11px] text-warm-gray truncate">
-            {grupo
-              ? Object.values(c.participantesInfo ?? {})
-                  .map((p) => p.nombre.split(' ')[0])
-                  .join(', ')
-              : `${c.clientNombre ?? ''}${(activaAgente ?? activa).data.asignadoNombre ? ` · ${(activaAgente ?? activa).data.asignadoNombre}` : ''}`}
-          </div>
-        </div>
-        <button
-          onClick={() => setShowConvert(true)}
-          className="flex items-center gap-1.5 bg-navy text-white text-[12px] font-semibold px-2.5 sm:px-3 py-1.5 rounded-lg hover:bg-navy-light flex-none"
-        >
-          <span className="msr text-[15px]">confirmation_number</span>
-          <span className="hidden sm:inline">{t('inbox.convertirTicket')}</span>
-        </button>
-        <div className="relative">
-          {/* Asignada: el botón muestra al agente (avatar/inicial + nombre);
-              sin asignar conserva el "Asignar" genérico. Siempre abre el menú. */}
-          <button
-            onClick={() => setShowAsignar(!showAsignar)}
-            title={(activaAgente ?? activa).data.asignadoNombre ?? t('inbox.asignar')}
-            className="flex items-center gap-1.5 border border-warm-border text-ink-2 text-[12px] font-semibold px-2.5 sm:px-3 py-1.5 rounded-lg hover:border-navy flex-none"
-          >
-            {(activaAgente ?? activa).data.asignadoNombre ? (
-              <>
-                {(activaAgente ?? activa).data.asignadoFoto ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={(activaAgente ?? activa).data.asignadoFoto!}
-                    alt=""
-                    className="h-5 w-5 rounded-full object-cover -ml-0.5"
-                  />
-                ) : (
-                  <span className="h-5 w-5 rounded-full bg-navy text-white text-[9px] font-bold flex items-center justify-center -ml-0.5">
-                    {iniciales((activaAgente ?? activa).data.asignadoNombre!)}
-                  </span>
-                )}
-                <span className="hidden sm:inline max-w-24 truncate">
-                  {(activaAgente ?? activa).data.asignadoNombre!.split(' ')[0]}
-                </span>
-              </>
-            ) : (
-              <>
-                <span className="msr text-[15px]">person_add</span>
-                <span className="hidden sm:inline">{t('inbox.asignar')}</span>
-              </>
-            )}
-          </button>
-          {showAsignar && (
-            <div className="absolute right-0 top-full mt-1 bg-white border border-warm-border rounded-lg shadow-raised z-20 w-48 py-1">
-              {team
-                .filter((m) => m.data.activo)
-                .map((m) => (
-                  <button
-                    key={m.id}
-                    onClick={() => asignar(m.id, m.data.nombre, m.data.fotoUrl)}
-                    className="w-full text-left px-3 py-2 text-[12.5px] hover:bg-cream-1 flex items-center gap-2"
-                  >
-                    <span className="h-6 w-6 rounded-full bg-cream-3 text-[9px] font-bold flex items-center justify-center">
-                      {iniciales(m.data.nombre)}
-                    </span>
-                    <span className="flex-1 truncate">{m.data.nombre}</span>
-                    {(activaAgente ?? activa).data.asignadoA === m.id && (
-                      <span className="msr text-[15px] text-ok">check</span>
-                    )}
-                  </button>
-                ))}
-            </div>
-          )}
-        </div>
-        {convEspera && (
-          <button
-            onClick={() => setWaitingOnCustomer(convEspera.id, !esperando)}
-            title={t(esperando ? 'inbox.esperandoQuitar' : 'inbox.esperandoMarcar')}
-            aria-pressed={esperando}
-            className={`h-8 rounded-lg flex items-center justify-center gap-1.5 border flex-none ${
-              esperando
-                ? 'px-2 sm:px-2.5 bg-warn-bg border-warn-bg text-warn-dark text-[12px] font-semibold'
-                : 'w-8 border-warm-border text-warm-gray hover:border-warn-dark hover:text-warn-dark'
-            }`}
-          >
-            <span className="msr text-[18px]">{esperando ? 'hourglass_top' : 'hourglass_empty'}</span>
-            {esperando && <span className="hidden sm:inline">{t('inbox.esperando')}</span>}
-          </button>
-        )}
-        {convResolver && (
-          <button
-            onClick={() => setShowResolve(true)}
-            title={t('inbox.resolver')}
-            className="h-8 w-8 rounded-lg flex items-center justify-center border border-warm-border text-warm-gray hover:border-ok hover:text-ok"
-          >
-            <span className="msr text-[18px]">check_circle</span>
-          </button>
-        )}
-        {onOpenContext && (
-          <button
-            onClick={onOpenContext}
-            title="Información"
-            className="lg:hidden h-8 w-8 rounded-lg flex items-center justify-center border border-warm-border text-warm-gray hover:border-navy hover:text-navy flex-none"
-          >
-            <span className="msr text-[18px]">info</span>
-          </button>
-        )}
-        {/* Escritorio: colapsar/mostrar el panel de contexto (persistido en el inbox). */}
-        {onToggleCtx && (
-          <button
-            onClick={onToggleCtx}
-            title={ctxColapsado ? 'Mostrar panel de información' : 'Ocultar panel de información'}
-            aria-pressed={ctxColapsado}
-            className="hidden lg:flex h-8 w-8 rounded-lg items-center justify-center border border-warm-border text-warm-gray hover:border-navy hover:text-navy flex-none"
-          >
-            <span className="msr text-[18px]">
-              {ctxColapsado ? 'right_panel_open' : 'right_panel_close'}
-            </span>
-          </button>
-        )}
-      </header>
-
-      <div className="relative flex-1 min-h-0">
-        <div
-          ref={bodyRef}
-          onScroll={onScrollBody}
-          onClick={() => setMenuMsg(null)}
-          className="chat-doodle-bg absolute inset-0 overflow-y-auto px-5 py-4 flex flex-col gap-2.5 [&>*:first-child]:mt-auto"
-        >
-          {/* Skeleton del primer load: burbujas fantasma en vez del brinco. */}
-          {!listo && (
-            <div className="flex flex-col gap-2.5" aria-hidden>
-              <div className="h-11 w-[46%] rounded-xl bg-white/70 animate-pulse" />
-              <div className="h-11 w-[32%] rounded-xl bg-[#D9FDD3]/60 animate-pulse self-end" />
-              <div className="h-11 w-[54%] rounded-xl bg-white/70 animate-pulse" />
-              <div className="h-11 w-[38%] rounded-xl bg-[#D9FDD3]/60 animate-pulse self-end" />
-            </div>
-          )}
-          {listo && cargando && (
-            <div className="self-center text-[11px] text-warm-gray-2 py-1 animate-pulse">···</div>
-          )}
-          {filas.flatMap((f, i) => {
-            const prev = filas[i - 1];
-            const next = filas[i + 1];
-            const primeraFila = i === 0;
-            // Grupo y directa son hilos segmentados: separadores por límite de
-            // conversación en ambos.
-            const cambioConv = !!prev && prev.convId !== f.convId;
-            const finDeConv = !next || next.convId !== f.convId;
-            const convActual = convPorId.get(f.convId);
-            const dataConvId = primeraFila || cambioConv ? f.convId : undefined;
-            const md = f.msg.data;
-            // Mensajes de sistema de resolución viejos: se ocultan (el marcador
-            // ahora se deriva del estado, sin duplicar).
-            const esResueltaSistema =
-              md.tipoContenido === 'sistema' &&
-              /^(Conversación resuelta|Conversation resolved)/.test(md.texto ?? '');
-            const nodes: React.ReactNode[] = [];
-
-            if (md.tipoContenido === 'csat') {
-              nodes.push(
-                <CsatIndicator
-                  key={`${f.convId}_${f.msg.id}`}
-                  convId={f.convId}
-                  idioma={idioma}
-                  dataConvId={dataConvId}
-                />,
-              );
-            } else if (esResueltaSistema) {
-              // Se oculta el mensaje pero se conserva el ancla para scrollToConversation.
-              if (dataConvId) {
-                nodes.push(<div key={`anchor_${f.msg.id}`} data-convid={dataConvId} className="h-0" />);
-              }
-            } else {
-              nodes.push(
-                <Burbuja
-                  key={`${f.convId}_${f.msg.id}`}
-                  m={md}
-                  msgId={f.msg.id}
-                  grupo={grupo}
-                  dataConvId={dataConvId}
-                  selfId={agent?.uid ?? ''}
-                  menuAbierto={menuMsg === f.msg.id}
-                  onMenu={() => setMenuMsg((prev) => (prev === f.msg.id ? null : f.msg.id))}
-                  onReaccion={(emoji) =>
-                    agent && toggleReaction(f.convId, f.msg.id, emoji, agent.uid, md.reacciones)
-                  }
-                  onVerTicket={setVerTicketId}
-                  onIrMensaje={irAMensaje}
-                  onResponder={responderA}
-                  onInvestigar={() => abrirInvestigaciones({ conversationId: f.convId, messageId: f.msg.id })}
-                  onEditar={() => editarMensaje(f.convId, f.msg.id, md.texto)}
-                  onAbrirAdjunto={abrirVisor}
-                  onVerConvBot={
-                    md.botConvRef && onOpenConversation
-                      ? () => onOpenConversation(md.botConvRef!)
-                      : undefined
-                  }
-                />,
-              );
-            }
-
-            // Marcador al final de una conversación cerrada — se muestra al
-            // instante (derivado del estado). Un segmento escalado al agente
-            // se marca distinto de uno resuelto.
-            if (finDeConv && convActual?.data.estado === 'resolved') {
-              const escalada = Boolean(convActual.data.escaladoA);
-              const cat = convActual.data.categoria
-                ? categoryLabel(convActual.data.categoria, idioma)
-                : '';
-              nodes.push(
-                <div key={`res_${f.convId}_${f.msg.id}`} className="self-stretch my-1 flex justify-center">
-                  <span
-                    className={`inline-flex items-center gap-1.5 text-[10px] font-bold tracking-wide rounded-full px-3 py-1 ${
-                      escalada ? 'bg-ai-bg text-ai' : 'bg-ok-bg text-ok-dark'
-                    }`}
-                  >
-                    <span className="msr text-[13px]">
-                      {escalada ? 'support_agent' : 'check_circle'}
-                    </span>
-                    {escalada ? t('inbox.convEscalada') : t('inbox.convResuelta')}
-                    {!escalada && cat ? ` · ${cat}` : ''}
-                  </span>
-                </div>,
-              );
-            }
-            return nodes;
-          })}
-        </div>
-
-        {!enElFondo && filas.length > 0 && (
-          <button
-            onClick={irAlFondo}
-            title={t('inbox.irAlFinal')}
-            aria-label={t('inbox.irAlFinal')}
-            className="absolute right-4 bottom-4 z-10 h-10 w-10 rounded-full bg-navy text-white shadow-raised flex items-center justify-center hover:bg-navy-light transition-colors"
-          >
-            <span className="msr text-[22px]">arrow_downward</span>
-          </button>
-        )}
-      </div>
-
-      <footer
-        className={`bg-white border-t border-warm-border px-4 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] ${
-          tab === 'investigar' ? 'flex flex-col flex-none h-[78%] sm:h-[70%]' : ''
-        }`}
+    <div ref={raizRef} className="relative flex h-full">
+      <div
+        className="relative flex h-full min-w-0 flex-1 flex-col"
+        onDragEnter={onDragOverConv}
+        onDragOver={onDragOverConv}
       >
-        <div className="flex gap-4 mb-2">
-          <button
-            onClick={() => setTab('responder')}
-            className={`text-[12px] font-semibold pb-1 border-b-2 ${
-              tab === 'responder' ? 'border-navy text-navy' : 'border-transparent text-warm-gray'
-            }`}
+        {dragging && (
+          <div
+            className="absolute inset-0 z-30 flex items-center justify-center bg-navy/60 p-4"
+            onDragOver={(e) => e.preventDefault()}
+            onDragLeave={() => setDragging(false)}
+            onDrop={onDropConv}
           >
-            {t('inbox.responder')}
-          </button>
-          <button
-            onClick={() => setTab('nota')}
-            className={`flex items-center gap-1 text-[12px] font-semibold pb-1 border-b-2 ${
-              tab === 'nota' ? 'border-gold text-warn-dark' : 'border-transparent text-warm-gray'
-            }`}
-          >
-            <span className="msr text-[13px]">lock</span>
-            {t('inbox.notaInterna')}
-          </button>
-          <button
-            onClick={() => abrirInvestigaciones()}
-            className={`flex items-center gap-1 text-[12px] font-semibold pb-1 border-b-2 ${
-              tab === 'investigar' ? 'border-ai text-ai' : 'border-transparent text-warm-gray'
-            }`}
-          >
-            <span className="msr text-[14px]">troubleshoot</span>
-            {t('inv.tab')}
-            {investigacionesActivas > 0 ? (
-              <span
-                className="w-1.5 h-1.5 rounded-full bg-ai motion-safe:animate-pulse"
-                role="status"
-                aria-label={t('inv.tabTrabajando')}
-                title={t('inv.tabTrabajando')}
-              />
-            ) : (
-              resultadoNuevo && (
-                <span
-                  className="w-1.5 h-1.5 rounded-full bg-gold"
-                  role="status"
-                  aria-label={t('inv.tabResultado')}
-                  title={t('inv.tabResultado')}
-                />
-              )
-            )}
-          </button>
-        </div>
-        {investigacionAbierta && (
-          <div className={tab === 'investigar' ? 'min-h-0 flex-1' : 'hidden'}>
-            <InvestigationPanel
-              conv={conv}
-              threadKey={threadKey}
-              seed={investigacionSeed}
-              openId={investigacionId}
-              onOpenConversation={onOpenConversation}
-              onUseReply={(texto) => {
-                setDraft(texto);
-                setTab('responder');
-                requestAnimationFrame(() => inputRef.current?.focus());
-              }}
-              onNotifyClient={async (texto) => {
-                const target = await convDestino();
-                if (!target || !agent) throw new Error('No conversation to write to');
-                const nombreChat = agent.perfil?.nombreChat ?? agent.perfil?.nombre ?? 'Soporte';
-                await agentSendMessage(target, agent.uid, nombreChat, texto, false);
-                anclarAlFondo();
-              }}
-            />
-          </div>
-        )}
-        {tab !== 'investigar' && (
-          <>
-        {replyTo && tab === 'responder' && !editando && (
-          <div className="flex items-start gap-2 mb-2 rounded-lg bg-cream-1 border-l-2 border-navy px-2.5 py-1.5">
-            <div className="flex-1 min-w-0">
-              <div className="text-[10.5px] font-bold text-navy">{replyTo.senderNombre}</div>
-              <div className="text-[11.5px] text-warm-gray truncate">{replyTo.texto}</div>
-            </div>
-            <button
-              type="button"
-              onClick={() => setReplyTo(null)}
-              className="flex-none text-warm-gray hover:text-ink"
-              aria-label="Cancelar"
-            >
-              <span className="msr text-[16px]">close</span>
-            </button>
-          </div>
-        )}
-        {editando && (
-          <div className="flex items-center gap-2 mb-2 rounded-lg bg-cream-1 border-l-2 border-navy px-2.5 py-1.5">
-            <span className="msr text-[15px] text-navy flex-none">edit</span>
-            <div className="text-[11.5px] font-semibold text-navy flex-1">Editando mensaje</div>
-            <button
-              type="button"
-              onClick={() => {
-                setEditando(null);
-                setDraft('');
-              }}
-              className="flex-none text-warm-gray hover:text-ink"
-              aria-label="Cancelar"
-            >
-              <span className="msr text-[16px]">close</span>
-            </button>
-          </div>
-        )}
-        {pendingFile && tab === 'responder' && !editando && (
-          <div className="flex items-center gap-2.5 mb-2 rounded-lg bg-cream-1 border border-warm-border px-2.5 py-2">
-            {pendingFileUrl ? (
-              <img
-                src={pendingFileUrl}
-                alt=""
-                className="h-10 w-10 rounded-lg object-cover flex-none border border-warm-border"
-              />
-            ) : (
-              <span className="msr text-[20px] text-navy flex-none h-10 w-10 rounded-lg bg-white border border-warm-border flex items-center justify-center">
-                {pendingFile.type.startsWith('video/') ? 'movie' : 'description'}
-              </span>
-            )}
-            <div className="flex-1 min-w-0">
-              <div className="text-[11.5px] font-semibold text-ink truncate">
-                {pendingFile.name}
+            <div className="pointer-events-none flex flex-col items-center gap-2.5 rounded-2xl border-2 border-dashed border-white/75 bg-white/10 px-8 py-6 text-center text-white">
+              <span className="msr text-[36px]">upload_file</span>
+              <div className="text-[14px] font-semibold leading-snug">
+                {idioma === 'es' ? 'Soltá el archivo para adjuntarlo' : 'Drop the file to attach it'}
               </div>
-              <div className="text-[10.5px] text-warm-gray">{formatBytes(pendingFile.size)}</div>
             </div>
-            <button
-              type="button"
-              onClick={() => setPendingFile(null)}
-              disabled={subiendo}
-              className="flex-none text-warm-gray hover:text-ink disabled:opacity-40"
-              aria-label="Quitar adjunto"
-            >
-              <span className="msr text-[16px]">close</span>
-            </button>
           </div>
         )}
-        {attachError && <div className="text-[11px] text-danger mb-1.5">{attachError}</div>}
-        {showEmoji && (
-          <div className="h-52 overflow-y-auto mb-2 rounded-xl border border-warm-border bg-white px-2.5 pb-2.5 pt-1">
-            {EMOJI_CATEGORIES.map((cat) => (
-              <div key={cat.label.es}>
-                <div className="text-[10px] font-bold tracking-wide uppercase text-warm-gray-2 mt-2 mb-1 px-0.5">
-                  {cat.label[idioma]}
-                </div>
-                <div className="grid grid-cols-10">
-                  {cat.emojis.map((emoji) => (
+        {/* PWA standalone: franja blanca tras el status bar del teléfono (el header
+            no queda debajo). Con status bar 'default' mide 0; es solo respaldo. */}
+        {/* Plum status-bar strip: iOS renders white clock text over it. */}
+        <div className="md:hidden flex-none bg-navy-deep h-[env(safe-area-inset-top)]" />
+        <header className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-3 bg-white border-b border-warm-border">
+          {onBack && (
+            <button
+              onClick={onBack}
+              className="md:hidden -ml-1 p-1 text-warm-gray hover:text-ink flex-none"
+              aria-label="Volver"
+            >
+              <span className="msr text-[22px]">arrow_back</span>
+            </button>
+          )}
+          <div className="h-9 w-9 rounded-full bg-cream-3 flex items-center justify-center text-[11px] font-bold text-ink-2 flex-none">
+            {grupo ? <span className="msr text-[18px]">groups</span> : iniciales(nombre)}
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="text-[13.5px] font-bold truncate">{nombre}</div>
+            <div className="text-[11px] text-warm-gray truncate">
+              {grupo
+                ? Object.values(c.participantesInfo ?? {})
+                    .map((p) => p.nombre.split(' ')[0])
+                    .join(', ')
+                : `${c.clientNombre ?? ''}${(activaAgente ?? activa).data.asignadoNombre ? ` · ${(activaAgente ?? activa).data.asignadoNombre}` : ''}`}
+            </div>
+          </div>
+          <button
+            onClick={() => setShowConvert(true)}
+            aria-label={t('inbox.convertirTicket')}
+            title={t('inbox.convertirTicket')}
+            className="flex items-center gap-1.5 bg-navy text-white text-[12px] font-semibold px-2.5 sm:px-3 py-1.5 rounded-lg hover:bg-navy-light flex-none"
+          >
+            <span className="msr text-[15px]">confirmation_number</span>
+            <span className={etiquetaBoton}>{t('inbox.convertirTicket')}</span>
+          </button>
+          <div className="relative">
+            {/* Asignada: el botón muestra al agente (avatar/inicial + nombre);
+                sin asignar conserva el "Asignar" genérico. Siempre abre el menú. */}
+            <button
+              onClick={() => setShowAsignar(!showAsignar)}
+              title={(activaAgente ?? activa).data.asignadoNombre ?? t('inbox.asignar')}
+              className="flex items-center gap-1.5 border border-warm-border text-ink-2 text-[12px] font-semibold px-2.5 sm:px-3 py-1.5 rounded-lg hover:border-navy flex-none"
+            >
+              {(activaAgente ?? activa).data.asignadoNombre ? (
+                <>
+                  {(activaAgente ?? activa).data.asignadoFoto ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={(activaAgente ?? activa).data.asignadoFoto!}
+                      alt=""
+                      className="h-5 w-5 rounded-full object-cover -ml-0.5"
+                    />
+                  ) : (
+                    <span className="h-5 w-5 rounded-full bg-navy text-white text-[9px] font-bold flex items-center justify-center -ml-0.5">
+                      {iniciales((activaAgente ?? activa).data.asignadoNombre!)}
+                    </span>
+                  )}
+                  <span className={`${etiquetaBoton} max-w-24 truncate`}>
+                    {(activaAgente ?? activa).data.asignadoNombre!.split(' ')[0]}
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span className="msr text-[15px]">person_add</span>
+                  <span className={etiquetaBoton}>{t('inbox.asignar')}</span>
+                </>
+              )}
+            </button>
+            {showAsignar && (
+              <div className="absolute right-0 top-full mt-1 bg-white border border-warm-border rounded-lg shadow-raised z-20 w-48 py-1">
+                {team
+                  .filter((m) => m.data.activo)
+                  .map((m) => (
                     <button
-                      key={emoji}
-                      type="button"
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => insertEmoji(emoji)}
-                      className="text-[20px] leading-none py-1 rounded-lg hover:bg-cream-1 transition-colors"
+                      key={m.id}
+                      onClick={() => asignar(m.id, m.data.nombre, m.data.fotoUrl)}
+                      className="w-full text-left px-3 py-2 text-[12.5px] hover:bg-cream-1 flex items-center gap-2"
                     >
-                      {emoji}
+                      <span className="h-6 w-6 rounded-full bg-cream-3 text-[9px] font-bold flex items-center justify-center">
+                        {iniciales(m.data.nombre)}
+                      </span>
+                      <span className="flex-1 truncate">{m.data.nombre}</span>
+                      {(activaAgente ?? activa).data.asignadoA === m.id && (
+                        <span className="msr text-[15px] text-ok">check</span>
+                      )}
                     </button>
                   ))}
-                </div>
               </div>
-            ))}
+            )}
           </div>
-        )}
-        <div
-          className={`flex items-end gap-2 rounded-xl border p-2 ${
-            tab === 'nota' ? 'bg-gold-bg border-gold' : 'bg-cream-0 border-warm-border'
-          }`}
-        >
-          <button
-            type="button"
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => setShowEmoji((v) => !v)}
-            title="Emoji"
-            aria-label="Emoji"
-            className={`flex-none self-end p-1.5 transition-colors ${
-              showEmoji ? 'text-navy' : 'text-warm-gray hover:text-navy'
-            }`}
+          {convEspera && (
+            <button
+              onClick={() => setWaitingOnCustomer(convEspera.id, !esperando)}
+              title={t(esperando ? 'inbox.esperandoQuitar' : 'inbox.esperandoMarcar')}
+              aria-pressed={esperando}
+              className={`h-8 rounded-lg flex items-center justify-center gap-1.5 border flex-none ${
+                esperando
+                  ? 'px-2 sm:px-2.5 bg-warn-bg border-warn-bg text-warn-dark text-[12px] font-semibold'
+                  : 'w-8 border-warm-border text-warm-gray hover:border-warn-dark hover:text-warn-dark'
+              }`}
+            >
+              <span className="msr text-[18px]">{esperando ? 'hourglass_top' : 'hourglass_empty'}</span>
+              {esperando && <span className="hidden sm:inline">{t('inbox.esperando')}</span>}
+            </button>
+          )}
+          {convResolver && (
+            <button
+              onClick={() => setShowResolve(true)}
+              title={t('inbox.resolver')}
+              className="h-8 w-8 rounded-lg flex items-center justify-center border border-warm-border text-warm-gray hover:border-ok hover:text-ok"
+            >
+              <span className="msr text-[18px]">check_circle</span>
+            </button>
+          )}
+          {onOpenContext && (
+            <button
+              onClick={onOpenContext}
+              title="Información"
+              className="lg:hidden h-8 w-8 rounded-lg flex items-center justify-center border border-warm-border text-warm-gray hover:border-navy hover:text-navy flex-none"
+            >
+              <span className="msr text-[18px]">info</span>
+            </button>
+          )}
+          {/* Escritorio: colapsar/mostrar el panel de contexto (persistido en el inbox). */}
+          {onToggleCtx && (
+            <button
+              onClick={onToggleCtx}
+              title={ctxColapsado ? 'Mostrar panel de información' : 'Ocultar panel de información'}
+              aria-pressed={ctxColapsado}
+              className="hidden lg:flex h-8 w-8 rounded-lg items-center justify-center border border-warm-border text-warm-gray hover:border-navy hover:text-navy flex-none"
+            >
+              <span className="msr text-[18px]">
+                {ctxColapsado ? 'right_panel_open' : 'right_panel_close'}
+              </span>
+            </button>
+          )}
+        </header>
+
+        <div className="relative flex-1 min-h-0">
+          <div
+            ref={bodyRef}
+            onScroll={onScrollBody}
+            onClick={() => setMenuMsg(null)}
+            className="chat-doodle-bg absolute inset-0 overflow-y-auto px-5 py-4 flex flex-col gap-2.5 [&>*:first-child]:mt-auto"
           >
-            <span className="msr text-[20px]">{showEmoji ? 'keyboard' : 'mood'}</span>
-          </button>
-          {tab === 'responder' && (
-            <>
+            {/* Skeleton del primer load: burbujas fantasma en vez del brinco. */}
+            {!listo && (
+              <div className="flex flex-col gap-2.5" aria-hidden>
+                <div className="h-11 w-[46%] rounded-xl bg-white/70 animate-pulse" />
+                <div className="h-11 w-[32%] rounded-xl bg-[#D9FDD3]/60 animate-pulse self-end" />
+                <div className="h-11 w-[54%] rounded-xl bg-white/70 animate-pulse" />
+                <div className="h-11 w-[38%] rounded-xl bg-[#D9FDD3]/60 animate-pulse self-end" />
+              </div>
+            )}
+            {listo && cargando && (
+              <div className="self-center text-[11px] text-warm-gray-2 py-1 animate-pulse">···</div>
+            )}
+            {filas.flatMap((f, i) => {
+              const prev = filas[i - 1];
+              const next = filas[i + 1];
+              const primeraFila = i === 0;
+              // Grupo y directa son hilos segmentados: separadores por límite de
+              // conversación en ambos.
+              const cambioConv = !!prev && prev.convId !== f.convId;
+              const finDeConv = !next || next.convId !== f.convId;
+              const convActual = convPorId.get(f.convId);
+              const dataConvId = primeraFila || cambioConv ? f.convId : undefined;
+              const md = f.msg.data;
+              // Mensajes de sistema de resolución viejos: se ocultan (el marcador
+              // ahora se deriva del estado, sin duplicar).
+              const esResueltaSistema =
+                md.tipoContenido === 'sistema' &&
+                /^(Conversación resuelta|Conversation resolved)/.test(md.texto ?? '');
+              const nodes: React.ReactNode[] = [];
+
+              if (md.tipoContenido === 'csat') {
+                nodes.push(
+                  <CsatIndicator
+                    key={`${f.convId}_${f.msg.id}`}
+                    convId={f.convId}
+                    idioma={idioma}
+                    dataConvId={dataConvId}
+                  />,
+                );
+              } else if (esResueltaSistema) {
+                // Se oculta el mensaje pero se conserva el ancla para scrollToConversation.
+                if (dataConvId) {
+                  nodes.push(<div key={`anchor_${f.msg.id}`} data-convid={dataConvId} className="h-0" />);
+                }
+              } else {
+                nodes.push(
+                  <Burbuja
+                    key={`${f.convId}_${f.msg.id}`}
+                    m={md}
+                    msgId={f.msg.id}
+                    grupo={grupo}
+                    dataConvId={dataConvId}
+                    selfId={agent?.uid ?? ''}
+                    menuAbierto={menuMsg === f.msg.id}
+                    onMenu={() => setMenuMsg((prev) => (prev === f.msg.id ? null : f.msg.id))}
+                    onReaccion={(emoji) =>
+                      agent && toggleReaction(f.convId, f.msg.id, emoji, agent.uid, md.reacciones)
+                    }
+                    onVerTicket={setVerTicketId}
+                    onIrMensaje={irAMensaje}
+                    onResponder={responderA}
+                    onInvestigar={() => abrirInvestigaciones({ conversationId: f.convId, messageId: f.msg.id })}
+                    onEditar={() => editarMensaje(f.convId, f.msg.id, md.texto)}
+                    onAbrirAdjunto={abrirVisor}
+                    onVerConvBot={
+                      md.botConvRef && onOpenConversation
+                        ? () => onOpenConversation(md.botConvRef!)
+                        : undefined
+                    }
+                  />,
+                );
+              }
+
+              // Marcador al final de una conversación cerrada — se muestra al
+              // instante (derivado del estado). Un segmento escalado al agente
+              // se marca distinto de uno resuelto.
+              if (finDeConv && convActual?.data.estado === 'resolved') {
+                const escalada = Boolean(convActual.data.escaladoA);
+                const cat = convActual.data.categoria
+                  ? categoryLabel(convActual.data.categoria, idioma)
+                  : '';
+                nodes.push(
+                  <div key={`res_${f.convId}_${f.msg.id}`} className="self-stretch my-1 flex justify-center">
+                    <span
+                      className={`inline-flex items-center gap-1.5 text-[10px] font-bold tracking-wide rounded-full px-3 py-1 ${
+                        escalada ? 'bg-ai-bg text-ai' : 'bg-ok-bg text-ok-dark'
+                      }`}
+                    >
+                      <span className="msr text-[13px]">
+                        {escalada ? 'support_agent' : 'check_circle'}
+                      </span>
+                      {escalada ? t('inbox.convEscalada') : t('inbox.convResuelta')}
+                      {!escalada && cat ? ` · ${cat}` : ''}
+                    </span>
+                  </div>,
+                );
+              }
+              return nodes;
+            })}
+          </div>
+
+          {!enElFondo && filas.length > 0 && (
+            <button
+              onClick={irAlFondo}
+              title={t('inbox.irAlFinal')}
+              aria-label={t('inbox.irAlFinal')}
+              className="absolute right-4 bottom-4 z-10 h-10 w-10 rounded-full bg-navy text-white shadow-raised flex items-center justify-center hover:bg-navy-light transition-colors"
+            >
+              <span className="msr text-[22px]">arrow_downward</span>
+            </button>
+          )}
+        </div>
+
+        <footer className="bg-white border-t border-warm-border px-4 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+          <div className="flex gap-4 mb-2">
+            <button
+              onClick={() => setTab('responder')}
+              className={`text-[12px] font-semibold pb-1 border-b-2 ${
+                tab === 'responder' ? 'border-navy text-navy' : 'border-transparent text-warm-gray'
+              }`}
+            >
+              {t('inbox.responder')}
+            </button>
+            <button
+              onClick={() => setTab('nota')}
+              className={`flex items-center gap-1 text-[12px] font-semibold pb-1 border-b-2 ${
+                tab === 'nota' ? 'border-gold text-warn-dark' : 'border-transparent text-warm-gray'
+              }`}
+            >
+              <span className="msr text-[13px]">lock</span>
+              {t('inbox.notaInterna')}
+            </button>
+            <button
+              onClick={() => (investigarVisible ? setInvestigarVisible(false) : abrirInvestigaciones())}
+              aria-pressed={investigarVisible}
+              className={`flex items-center gap-1 text-[12px] font-semibold pb-1 border-b-2 ${
+                investigarVisible ? 'border-ai text-ai' : 'border-transparent text-warm-gray'
+              }`}
+            >
+              <span className="msr text-[14px]">troubleshoot</span>
+              {t('inv.tab')}
+              {investigacionesActivas > 0 ? (
+                <span
+                  className="w-1.5 h-1.5 rounded-full bg-ai motion-safe:animate-pulse"
+                  role="status"
+                  aria-label={t('inv.tabTrabajando')}
+                  title={t('inv.tabTrabajando')}
+                />
+              ) : (
+                resultadoNuevo && (
+                  <span
+                    className="w-1.5 h-1.5 rounded-full bg-gold"
+                    role="status"
+                    aria-label={t('inv.tabResultado')}
+                    title={t('inv.tabResultado')}
+                  />
+                )
+              )}
+            </button>
+          </div>
+          {replyTo && tab === 'responder' && !editando && (
+            <div className="flex items-start gap-2 mb-2 rounded-lg bg-cream-1 border-l-2 border-navy px-2.5 py-1.5">
+              <div className="flex-1 min-w-0">
+                <div className="text-[10.5px] font-bold text-navy">{replyTo.senderNombre}</div>
+                <div className="text-[11.5px] text-warm-gray truncate">{replyTo.texto}</div>
+              </div>
               <button
                 type="button"
-                onClick={() => fileRef.current?.click()}
-                disabled={subiendo}
-                title={t('inbox.adjuntar')}
-                aria-label={t('inbox.adjuntar')}
-                className="flex-none self-end p-1.5 text-warm-gray hover:text-navy disabled:opacity-40 transition-colors"
+                onClick={() => setReplyTo(null)}
+                className="flex-none text-warm-gray hover:text-ink"
+                aria-label="Cancelar"
               >
-                <span className="msr text-[20px]">attach_file</span>
+                <span className="msr text-[16px]">close</span>
               </button>
-              <input
-                ref={fileRef}
-                type="file"
-                hidden
-                accept="image/*,video/*,.pdf,.doc,.docx,.txt,.xlsx,.xls,.csv"
-                onChange={onFile}
-              />
-            </>
+            </div>
           )}
-          <textarea
-            ref={inputRef}
-            rows={1}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              // Touch devices: Enter inserts a newline; sending is the button
-              // (WhatsApp behavior). Desktop keeps Enter=send.
-              if (
-                e.key === 'Enter' &&
-                !e.shiftKey &&
-                !window.matchMedia('(hover: none)').matches
-              ) {
-                e.preventDefault();
-                enviar();
-              }
-            }}
-            placeholder={
-              pendingFile && tab === 'responder' && !editando
-                ? idioma === 'es'
-                  ? 'Agregá un comentario…'
-                  : 'Add a caption…'
-                : tab === 'nota'
-                  ? t('inbox.placeholderNota')
-                  : esSm
-                    ? t('inbox.placeholderRespuesta', { nombre: nombre.split(' ')[0] })
-                    : t('inbox.placeholderRespuestaCorta')
-            }
-            className="flex-1 bg-transparent resize-none outline-none text-[13px] leading-[1.45] px-1.5 py-1 min-h-[46px] max-h-40 overflow-y-auto"
-          />
-          <button
-            onClick={enviar}
-            disabled={
-              (!draft.trim() && !(pendingFile && tab === 'responder' && !editando)) || subiendo
-            }
-            className="bg-navy text-white text-[12px] font-semibold px-4 py-2 rounded-lg disabled:opacity-40 hover:bg-navy-light"
+          {editando && (
+            <div className="flex items-center gap-2 mb-2 rounded-lg bg-cream-1 border-l-2 border-navy px-2.5 py-1.5">
+              <span className="msr text-[15px] text-navy flex-none">edit</span>
+              <div className="text-[11.5px] font-semibold text-navy flex-1">Editando mensaje</div>
+              <button
+                type="button"
+                onClick={() => {
+                  setEditando(null);
+                  setDraft('');
+                }}
+                className="flex-none text-warm-gray hover:text-ink"
+                aria-label="Cancelar"
+              >
+                <span className="msr text-[16px]">close</span>
+              </button>
+            </div>
+          )}
+          {pendingFile && tab === 'responder' && !editando && (
+            <div className="flex items-center gap-2.5 mb-2 rounded-lg bg-cream-1 border border-warm-border px-2.5 py-2">
+              {pendingFileUrl ? (
+                <img
+                  src={pendingFileUrl}
+                  alt=""
+                  className="h-10 w-10 rounded-lg object-cover flex-none border border-warm-border"
+                />
+              ) : (
+                <span className="msr text-[20px] text-navy flex-none h-10 w-10 rounded-lg bg-white border border-warm-border flex items-center justify-center">
+                  {pendingFile.type.startsWith('video/') ? 'movie' : 'description'}
+                </span>
+              )}
+              <div className="flex-1 min-w-0">
+                <div className="text-[11.5px] font-semibold text-ink truncate">
+                  {pendingFile.name}
+                </div>
+                <div className="text-[10.5px] text-warm-gray">{formatBytes(pendingFile.size)}</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPendingFile(null)}
+                disabled={subiendo}
+                className="flex-none text-warm-gray hover:text-ink disabled:opacity-40"
+                aria-label="Quitar adjunto"
+              >
+                <span className="msr text-[16px]">close</span>
+              </button>
+            </div>
+          )}
+          {attachError && <div className="text-[11px] text-danger mb-1.5">{attachError}</div>}
+          {showEmoji && (
+            <div className="h-52 overflow-y-auto mb-2 rounded-xl border border-warm-border bg-white px-2.5 pb-2.5 pt-1">
+              {EMOJI_CATEGORIES.map((cat) => (
+                <div key={cat.label.es}>
+                  <div className="text-[10px] font-bold tracking-wide uppercase text-warm-gray-2 mt-2 mb-1 px-0.5">
+                    {cat.label[idioma]}
+                  </div>
+                  <div className="grid grid-cols-10">
+                    {cat.emojis.map((emoji) => (
+                      <button
+                        key={emoji}
+                        type="button"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => insertEmoji(emoji)}
+                        className="text-[20px] leading-none py-1 rounded-lg hover:bg-cream-1 transition-colors"
+                      >
+                        {emoji}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          <div
+            className={`flex items-end gap-2 rounded-xl border p-2 ${
+              tab === 'nota' ? 'bg-gold-bg border-gold' : 'bg-cream-0 border-warm-border'
+            }`}
           >
-            {subiendo ? (
-              <span className="msr text-[14px] animate-spin inline-block align-middle">
-                progress_activity
-              </span>
-            ) : editando ? (
-              'Guardar'
-            ) : (
-              t('inbox.enviar')
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => setShowEmoji((v) => !v)}
+              title="Emoji"
+              aria-label="Emoji"
+              className={`flex-none self-end p-1.5 transition-colors ${
+                showEmoji ? 'text-navy' : 'text-warm-gray hover:text-navy'
+              }`}
+            >
+              <span className="msr text-[20px]">{showEmoji ? 'keyboard' : 'mood'}</span>
+            </button>
+            {tab === 'responder' && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => fileRef.current?.click()}
+                  disabled={subiendo}
+                  title={t('inbox.adjuntar')}
+                  aria-label={t('inbox.adjuntar')}
+                  className="flex-none self-end p-1.5 text-warm-gray hover:text-navy disabled:opacity-40 transition-colors"
+                >
+                  <span className="msr text-[20px]">attach_file</span>
+                </button>
+                <input
+                  ref={fileRef}
+                  type="file"
+                  hidden
+                  accept="image/*,video/*,.pdf,.doc,.docx,.txt,.xlsx,.xls,.csv"
+                  onChange={onFile}
+                />
+              </>
             )}
-          </button>
-        </div>
-        <div className="text-[10.5px] text-warm-gray-2 mt-1.5">{t('inbox.hintEnter')}</div>
-          </>
-        )}
-      </footer>
+            <textarea
+              ref={inputRef}
+              rows={1}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                // Touch devices: Enter inserts a newline; sending is the button
+                // (WhatsApp behavior). Desktop keeps Enter=send.
+                if (
+                  e.key === 'Enter' &&
+                  !e.shiftKey &&
+                  !window.matchMedia('(hover: none)').matches
+                ) {
+                  e.preventDefault();
+                  enviar();
+                }
+              }}
+              placeholder={
+                pendingFile && tab === 'responder' && !editando
+                  ? idioma === 'es'
+                    ? 'Agregá un comentario…'
+                    : 'Add a caption…'
+                  : tab === 'nota'
+                    ? t('inbox.placeholderNota')
+                    : esSm
+                      ? t('inbox.placeholderRespuesta', { nombre: nombre.split(' ')[0] })
+                      : t('inbox.placeholderRespuestaCorta')
+              }
+              className="flex-1 bg-transparent resize-none outline-none text-[13px] leading-[1.45] px-1.5 py-1 min-h-[46px] max-h-40 overflow-y-auto"
+            />
+            <button
+              onClick={enviar}
+              disabled={
+                (!draft.trim() && !(pendingFile && tab === 'responder' && !editando)) || subiendo
+              }
+              className="bg-navy text-white text-[12px] font-semibold px-4 py-2 rounded-lg disabled:opacity-40 hover:bg-navy-light"
+            >
+              {subiendo ? (
+                <span className="msr text-[14px] animate-spin inline-block align-middle">
+                  progress_activity
+                </span>
+              ) : editando ? (
+                'Guardar'
+              ) : (
+                t('inbox.enviar')
+              )}
+            </button>
+          </div>
+          <div className="text-[10.5px] text-warm-gray-2 mt-1.5">{t('inbox.hintEnter')}</div>
+        </footer>
 
-      {showConvert && <ConvertTicketModal conv={activa} onClose={() => setShowConvert(false)} />}
-      {showResolve && convResolver && (
-        <ResolveModal convId={convResolver.id} onClose={() => setShowResolve(false)} />
-      )}
-      {visorIdx !== null && galeria[visorIdx] && (
-        <VisorAdjuntos
-          items={galeria}
-          idx={visorIdx}
-          onIdx={setVisorIdx}
-          onClose={() => setVisorIdx(null)}
-        />
-      )}
-      {verTicketId && (
-        <TicketDetailModal ticketId={verTicketId} onClose={() => setVerTicketId(null)} />
+        {showConvert && <ConvertTicketModal conv={activa} onClose={() => setShowConvert(false)} />}
+        {showResolve && convResolver && (
+          <ResolveModal convId={convResolver.id} onClose={() => setShowResolve(false)} />
+        )}
+        {visorIdx !== null && galeria[visorIdx] && (
+          <VisorAdjuntos
+            items={galeria}
+            idx={visorIdx}
+            onIdx={setVisorIdx}
+            onClose={() => setVisorIdx(null)}
+          />
+        )}
+        {verTicketId && (
+          <TicketDetailModal ticketId={verTicketId} onClose={() => setVerTicketId(null)} />
+        )}
+      </div>
+      {investigacionAbierta && (
+        <>
+          {investigarVisible && investigarAlLado && (
+            <ResizeHandle
+              onStart={(e) => anchoInvestigar.startDrag(e, -1, (raizRef.current?.clientWidth ?? 0) - CHAT_MIN_WIDTH)}
+              onReset={anchoInvestigar.reset}
+            />
+          )}
+          {/* Stays mounted while closed, so a half-written question isn't lost. */}
+          <aside
+            aria-label={t('inv.tab')}
+            style={investigarAlLado ? { width: anchoInvestigar.width, maxWidth: `calc(100% - ${CHAT_MIN_WIDTH}px)` } : undefined}
+            className={
+              !investigarVisible
+                ? 'hidden'
+                : investigarAlLado
+                  ? 'flex h-full flex-none flex-col bg-white'
+                  : 'absolute inset-0 z-20 flex flex-col bg-white'
+            }
+          >
+            {!investigarAlLado && <div className="flex-none bg-navy-deep h-[env(safe-area-inset-top)] md:hidden" />}
+            <div className="flex flex-none items-center justify-between gap-2 border-b border-warm-border px-4 py-2.5">
+              <h2 className="flex items-center gap-1.5 text-[14px] font-semibold text-ink">
+                <span className="msr text-[17px] text-ai">troubleshoot</span>
+                {t('inv.tab')}
+              </h2>
+              <button
+                onClick={() => setInvestigarVisible(false)}
+                aria-label={t('inv.cerrarPanel')}
+                title={t('inv.cerrarPanel')}
+                className="flex rounded p-1 text-warm-gray hover:bg-cream-1 hover:text-ink focus-visible:outline-2 focus-visible:outline-ai"
+              >
+                <span className="msr text-[18px]">close</span>
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3">
+              <InvestigationPanel
+                conv={conv}
+                threadKey={threadKey}
+                seed={investigacionSeed}
+                openId={investigacionId}
+                onOpenConversation={onOpenConversation}
+                onUseReply={(texto) => {
+                  setDraft(texto);
+                  setTab('responder');
+                  if (!investigarAlLado) setInvestigarVisible(false);
+                  requestAnimationFrame(() => inputRef.current?.focus());
+                }}
+                onNotifyClient={async (texto) => {
+                  const target = await convDestino();
+                  if (!target || !agent) throw new Error('No conversation to write to');
+                  const nombreChat = agent.perfil?.nombreChat ?? agent.perfil?.nombre ?? 'Soporte';
+                  await agentSendMessage(target, agent.uid, nombreChat, texto, false);
+                  anclarAlFondo();
+                }}
+              />
+            </div>
+          </aside>
+        </>
       )}
     </div>
   );

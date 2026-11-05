@@ -149,9 +149,9 @@ Functions need their prod secrets already set (`ANTHROPIC_API_KEY`, `CONFIG_KEK`
 - **Investigations** (`services/investigator`, `functions/investigations.ts`, `InvestigationPanel`) are
   separate from the bot: the bot never touches production data, and an investigation only reads
   production with a read-only user, after showing code evidence. See `services/investigator/README.md`.
-  In the console they live in the "Investigar" composer tab (next to Responder / Nota interna): every
+  In the console they open from the composer's "Investigar" button, as a resizable side panel next to the chat: every
   investigation stays in its list, and while one runs the agent sees only a rough phase taken from its
-  latest progress event (`useInvestigationPhase`), with a robot whose look follows the phase.
+  latest progress event (`useInvestigationPhase`), with Claude's mascot acting out the phase.
   They can read files: the attachments of the selected messages (only under that conversation's own
   `adjuntos/{convId}/`, same check as `botReply`) and what the agent uploads. The Pi fetches each by id,
   turns Excel and Word into text in a separate process as Claude's user, and deletes them after the job.

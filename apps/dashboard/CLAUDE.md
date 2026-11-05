@@ -59,10 +59,11 @@ src/lib/            firebase.ts (SDK + emulator wiring), auth.tsx, i18n.ts, soun
   each as a `historial` event; internal notes are editable (`updateTicketNote`). The context panels
   (`ContextPanel` / `GroupContextPanel`) use `PanelLista` + `ConvHistorialRow` + `TicketCard`.
 
-- **Investigations** (`InvestigationPanel`, mounted by `ConversationView`) are a third composer tab that
-  takes about 70% of the column. Master-detail through container queries (`@2xl`): the saved list and
-  the form or report side by side when wide, one at a time when not. The steps an investigation takes
-  are never listed: only a phase and a robot (`InvestigatorRobot`, keyframes in `globals.css`). Files:
+- **Investigations** (`InvestigationPanel`, mounted by `ConversationView`) open from the composer's "Investigar"
+  button as a side panel next to the chat, resizable by dragging (`useColumnWidth`), taking the context panel's
+  place while open. Below 1280px there's no room, so it covers the chat until closed. A single column, one view at a time: the saved list, the form, or one
+  investigation, which opens with its verdict and suggested reply. The steps an investigation takes
+  are never listed: only a phase and Claude's mascot acting it out (`InvestigatorMascot`, keyframes in `globals.css`). Files:
   attachments on marked messages go along by themselves, and the agent can add more, uploaded to
   `investigaciones/{uid}/`, which the client can't read. `investigationFileKind` (shared) decides what
   can be analyzed, for the console and the server alike. The

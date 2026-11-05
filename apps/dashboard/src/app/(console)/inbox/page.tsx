@@ -123,6 +123,9 @@ export default function InboxPage() {
   const esDirectaCtx = !!(sel && sel.data.tipo === 'directa' && sel.data.contactId);
   const esGrupoCtx = !!(sel && sel.data.tipo === 'grupo');
   const mostrarCtx = esDirectaCtx || esGrupoCtx;
+  // The investigations panel takes the context panel's place while it's open.
+  const [investigando, setInvestigando] = useState(false);
+  const ctxOculto = ctxColapsado || investigando;
 
   // Below lg the context panel becomes a drawer; reset it when switching conversations.
   const [ctxAbierto, setCtxAbierto] = useState(false);
@@ -233,7 +236,8 @@ export default function InboxPage() {
             onOpenConversation={setSelId}
             onOpenContext={mostrarCtx ? () => setCtxAbierto(true) : undefined}
             ctxColapsado={ctxColapsado}
-            onToggleCtx={mostrarCtx ? toggleCtxColapsado : undefined}
+            onToggleCtx={mostrarCtx && !investigando ? toggleCtxColapsado : undefined}
+            onInvestigarChange={setInvestigando}
             investigacionId={investigacionLink?.convId === sel.id ? investigacionLink.id : null}
           />
         ) : (
@@ -242,7 +246,7 @@ export default function InboxPage() {
       </section>
 
       {/* Divisor arrastrable conversación ↔ contexto (pantallas anchas) */}
-      {montado && esLg && mostrarCtx && !ctxColapsado && (
+      {montado && esLg && mostrarCtx && !ctxOculto && (
         <ResizeHandle
           className="hidden lg:block"
           onStart={(e) => contexto.startDrag(e, -1)}
@@ -268,7 +272,7 @@ export default function InboxPage() {
           width={montado && esLg ? contexto.width : undefined}
           abierto={ctxAbierto}
           onClose={() => setCtxAbierto(false)}
-          colapsado={ctxColapsado}
+          colapsado={ctxOculto}
         />
       )}
       {esGrupoCtx && (
@@ -279,7 +283,7 @@ export default function InboxPage() {
           width={montado && esLg ? contexto.width : undefined}
           abierto={ctxAbierto}
           onClose={() => setCtxAbierto(false)}
-          colapsado={ctxColapsado}
+          colapsado={ctxOculto}
         />
       )}
     </div>
