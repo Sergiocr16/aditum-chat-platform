@@ -142,6 +142,10 @@ export default function InboxPage() {
 
   // Para que el panel de contexto pueda subir el hilo a una conversación anterior.
   const convViewRef = useRef<ConversationViewHandle>(null);
+  function abrirInvestigaciones() {
+    convViewRef.current?.abrirInvestigaciones();
+    setCtxAbierto(false);
+  }
 
   // Deep link a un segmento concreto (ej. "Ver conversación" desde un ticket):
   // una vez montada la vista de esa conversación, sube el hilo hasta ella.
@@ -269,6 +273,7 @@ export default function InboxPage() {
           contactId={sel!.data.contactId!}
           onScrollToConversation={(id) => convViewRef.current?.scrollToConversation(id)}
           onTicketCreado={(id) => convViewRef.current?.refrescarYVer(id)}
+          onOpenInvestigations={abrirInvestigaciones}
           width={montado && esLg ? contexto.width : undefined}
           abierto={ctxAbierto}
           onClose={() => setCtxAbierto(false)}
@@ -280,6 +285,7 @@ export default function InboxPage() {
           conv={sel!}
           onScrollToConversation={(id) => convViewRef.current?.scrollToConversation(id)}
           onTicketCreado={(id) => convViewRef.current?.refrescarYVer(id)}
+          onOpenInvestigations={abrirInvestigaciones}
           width={montado && esLg ? contexto.width : undefined}
           abierto={ctxAbierto}
           onClose={() => setCtxAbierto(false)}

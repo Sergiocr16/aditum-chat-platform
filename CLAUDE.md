@@ -149,7 +149,7 @@ Functions need their prod secrets already set (`ANTHROPIC_API_KEY`, `CONFIG_KEK`
 - **Investigations** (`services/investigator`, `functions/investigations.ts`, `InvestigationPanel`) are
   separate from the bot: the bot never touches production data, and an investigation only reads
   production with a read-only user, after showing code evidence. See `services/investigator/README.md`.
-  In the console they open from the composer's "Investigar" button, as a resizable side panel next to the chat: every
+  In the console they open from the "Investigar" button next to "Enviar", as a resizable side panel next to the chat, which each chat remembers: every
   investigation stays in its list, and while one runs the agent sees only a rough phase taken from its
   latest progress event (`useInvestigationPhase`), with Claude's mascot acting out the phase.
   They can read files: the attachments of the selected messages (only under that conversation's own

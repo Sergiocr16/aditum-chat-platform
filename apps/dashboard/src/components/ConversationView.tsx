@@ -2,6 +2,7 @@
 
 import {
   forwardRef,
+  useCallback,
   useEffect,
   useImperativeHandle,
   useLayoutEffect,
@@ -9,7 +10,7 @@ import {
   useRef,
   useState,
 } from 'react';
-import type { Attachment, Conversation, Idioma, InvestigationMessageRef, Message } from '@aditum-chat/shared';
+import type { Attachment, Conversation, Idioma, Message } from '@aditum-chat/shared';
 import { categoryLabel, EMOJI_CATEGORIES, formatTicketNumber } from '@aditum-chat/shared';
 import { useAuth } from '@/lib/auth';
 import { useT } from '@/lib/i18n';
@@ -33,7 +34,13 @@ import {
 } from '@/lib/data';
 import { threadKeyOf, useActiveInvestigations } from '@/lib/data-investigations';
 import { ConvertTicketModal } from './ConvertTicketModal';
-import { InvestigationPanel, type InvestigationSeed } from './InvestigationPanel';
+import {
+  InvestigationPanel,
+  recallInvestigationPanel,
+  rememberInvestigationPanel,
+  type InvestigationPane,
+  type InvestigationRequest,
+} from './InvestigationPanel';
 import { ResizeHandle, useColumnWidth, useMediaQuery } from './ResizeHandle';
 import { ResolveModal } from './ResolveModal';
 import { TicketDetailModal } from './TicketDetailModal';
@@ -46,6 +53,8 @@ export interface ConversationViewHandle {
   scrollToConversation(convId: string): void;
   /** Refresca el bloque de una conversación (mensaje nuevo, p. ej. ticket) y salta a ella. */
   refrescarYVer(convId: string): Promise<void>;
+  /** Opens the Investigar panel on this chat's list. */
+  abrirInvestigaciones(): void;
 }
 
 const EMOJIS = ['👍', '❤️', '😂', '😮', '🙏'];
@@ -150,30 +159,45 @@ export const ConversationView = forwardRef<
   const [showResolve, setShowResolve] = useState(false);
   const [verTicketId, setVerTicketId] = useState<string | null>(null);
   // Mounted on first use and then only hidden, so a half-written question survives switching tabs.
-  const [investigacionAbierta, setInvestigacionAbierta] = useState(!!investigacionId);
-  const [investigarVisible, setInvestigarVisible] = useState(!!investigacionId);
+  const threadKey = threadKeyOf(conv.data);
+  const chatKey = threadKey ?? conv.id;
+  const [investigacionAbierta, setInvestigacionAbierta] = useState(
+    () => !!investigacionId || recallInvestigationPanel(chatKey) !== null,
+  );
+  const [investigarVisible, setInvestigarVisible] = useState(
+    () => !!investigacionId || (recallInvestigationPanel(chatKey)?.open ?? false),
+  );
   // Below this there isn't room for both, so the panel covers the chat until it's closed.
   const investigarAlLado = useMediaQuery('(min-width: 1280px)');
   const raizRef = useRef<HTMLDivElement>(null);
   // With the panel open the header is short on room, and the contact's name matters more.
   const etiquetaBoton = investigarVisible ? 'hidden' : 'hidden sm:inline';
   const anchoInvestigar = useColumnWidth('aditum-inbox-investigar', 440, 360, 760);
-  const [investigacionSeed, setInvestigacionSeed] = useState<InvestigationSeed | null>(null);
-  const threadKey = threadKeyOf(conv.data);
+  const [investigacionRequest, setInvestigacionRequest] = useState<InvestigationRequest | null>(
+    investigacionId ? { nonce: 0, id: investigacionId } : null,
+  );
+  const [paneInvestigar, setPaneInvestigar] = useState<InvestigationPane>(null);
   const investigacionesActivas = useActiveInvestigations(threadKey);
-  // An investigation that finished while the agent was on another tab leaves a mark until opened.
+  // An investigation that finished out of the agent's sight leaves a mark until they see the list or a report.
   const [resultadoNuevo, setResultadoNuevo] = useState(false);
   const activasAntes = useRef(0);
   useEffect(() => {
-    if (activasAntes.current > 0 && investigacionesActivas === 0 && !investigarVisible) setResultadoNuevo(true);
+    const aLaVista = investigarVisible && paneInvestigar !== 'new';
+    if (aLaVista) setResultadoNuevo(false);
+    else if (activasAntes.current > 0 && investigacionesActivas === 0) setResultadoNuevo(true);
     activasAntes.current = investigacionesActivas;
-  }, [investigacionesActivas, investigarVisible]);
-  function abrirInvestigaciones(seed?: InvestigationMessageRef) {
-    if (seed) setInvestigacionSeed({ ref: seed, nonce: Date.now() });
+  }, [investigacionesActivas, investigarVisible, paneInvestigar]);
+  const abrirInvestigaciones = useCallback((target: Omit<InvestigationRequest, 'nonce'> = {}) => {
+    setInvestigacionRequest({ ...target, nonce: Date.now() });
+    // Set here too, or the panel opening on its previous view would count as having seen the result.
+    setPaneInvestigar(target.id ? { id: target.id } : target.list ? null : 'new');
     setInvestigacionAbierta(true);
-    setResultadoNuevo(false);
     setInvestigarVisible(true);
-  }
+  }, []);
+  const atencionInvestigar = investigacionesActivas > 0 ? 'working' : resultadoNuevo ? 'result' : null;
+  useEffect(() => {
+    if (investigacionAbierta) rememberInvestigationPanel(chatKey, { open: investigarVisible });
+  }, [chatKey, investigacionAbierta, investigarVisible]);
   useEffect(() => {
     onInvestigarChange?.(investigarVisible);
     return () => onInvestigarChange?.(false);
@@ -339,9 +363,12 @@ export const ConversationView = forwardRef<
           await new Promise((r) => setTimeout(r, 80)); // dejar commitear el DOM
           await irA(convId);
         },
+        abrirInvestigaciones() {
+          abrirInvestigaciones({ list: true });
+        },
       };
     },
-    [loadOlder, refrescarConversacion],
+    [loadOlder, refrescarConversacion, abrirInvestigaciones],
   );
 
   /** Scroll al mensaje citado de un reply (carga páginas si hace falta) + resaltado. */
@@ -757,7 +784,7 @@ export const ConversationView = forwardRef<
                     onVerTicket={setVerTicketId}
                     onIrMensaje={irAMensaje}
                     onResponder={responderA}
-                    onInvestigar={() => abrirInvestigaciones({ conversationId: f.convId, messageId: f.msg.id })}
+                    onInvestigar={() => abrirInvestigaciones({ ref: { conversationId: f.convId, messageId: f.msg.id } })}
                     onEditar={() => editarMensaje(f.convId, f.msg.id, md.texto)}
                     onAbrirAdjunto={abrirVisor}
                     onVerConvBot={
@@ -827,33 +854,6 @@ export const ConversationView = forwardRef<
             >
               <span className="msr text-[13px]">lock</span>
               {t('inbox.notaInterna')}
-            </button>
-            <button
-              onClick={() => (investigarVisible ? setInvestigarVisible(false) : abrirInvestigaciones())}
-              aria-pressed={investigarVisible}
-              className={`flex items-center gap-1 text-[12px] font-semibold pb-1 border-b-2 ${
-                investigarVisible ? 'border-ai text-ai' : 'border-transparent text-warm-gray'
-              }`}
-            >
-              <span className="msr text-[14px]">troubleshoot</span>
-              {t('inv.tab')}
-              {investigacionesActivas > 0 ? (
-                <span
-                  className="w-1.5 h-1.5 rounded-full bg-ai motion-safe:animate-pulse"
-                  role="status"
-                  aria-label={t('inv.tabTrabajando')}
-                  title={t('inv.tabTrabajando')}
-                />
-              ) : (
-                resultadoNuevo && (
-                  <span
-                    className="w-1.5 h-1.5 rounded-full bg-gold"
-                    role="status"
-                    aria-label={t('inv.tabResultado')}
-                    title={t('inv.tabResultado')}
-                  />
-                )
-              )}
             </button>
           </div>
           {replyTo && tab === 'responder' && !editando && (
@@ -1029,6 +1029,26 @@ export const ConversationView = forwardRef<
                 t('inbox.enviar')
               )}
             </button>
+            <button
+              type="button"
+              onClick={() => abrirInvestigaciones()}
+              aria-label={t('inv.nueva')}
+              title={t('inv.nueva')}
+              className="relative flex flex-none items-center gap-1.5 rounded-lg border border-claude bg-claude-bg px-3 py-2 text-[12px] font-semibold text-claude-dark hover:bg-claude/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-claude-dark"
+            >
+              <span className="msr text-[16px]">troubleshoot</span>
+              <span className={etiquetaBoton}>{t('inv.tab')}</span>
+              {atencionInvestigar && (
+                <span
+                  role="status"
+                  aria-label={t(atencionInvestigar === 'working' ? 'inv.tabTrabajando' : 'inv.tabResultado')}
+                  title={t(atencionInvestigar === 'working' ? 'inv.tabTrabajando' : 'inv.tabResultado')}
+                  className={`absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full border-2 border-white ${
+                    atencionInvestigar === 'working' ? 'bg-claude-dark motion-safe:animate-pulse' : 'bg-gold'
+                  }`}
+                />
+              )}
+            </button>
           </div>
           <div className="text-[10.5px] text-warm-gray-2 mt-1.5">{t('inbox.hintEnter')}</div>
         </footer>
@@ -1072,7 +1092,7 @@ export const ConversationView = forwardRef<
             {!investigarAlLado && <div className="flex-none bg-navy-deep h-[env(safe-area-inset-top)] md:hidden" />}
             <div className="flex flex-none items-center justify-between gap-2 border-b border-warm-border px-4 py-2.5">
               <h2 className="flex items-center gap-1.5 text-[14px] font-semibold text-ink">
-                <span className="msr text-[17px] text-ai">troubleshoot</span>
+                <span aria-hidden className="msr text-[17px] text-claude-dark">troubleshoot</span>
                 {t('inv.tab')}
               </h2>
               <button
@@ -1081,16 +1101,16 @@ export const ConversationView = forwardRef<
                 title={t('inv.cerrarPanel')}
                 className="flex rounded p-1 text-warm-gray hover:bg-cream-1 hover:text-ink focus-visible:outline-2 focus-visible:outline-ai"
               >
-                <span className="msr text-[18px]">close</span>
+                <span aria-hidden className="msr text-[20px]">keyboard_double_arrow_right</span>
               </button>
             </div>
             <div className="min-h-0 flex-1 px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3">
               <InvestigationPanel
                 conv={conv}
                 threadKey={threadKey}
-                seed={investigacionSeed}
-                openId={investigacionId}
-                onOpenConversation={onOpenConversation}
+                chatKey={chatKey}
+                request={investigacionRequest}
+                onPaneChange={setPaneInvestigar}
                 onUseReply={(texto) => {
                   setDraft(texto);
                   setTab('responder');

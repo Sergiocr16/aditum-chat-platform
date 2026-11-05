@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { contentHash, dbSettingsProblem, filesProblem, isOwnChatAttachment, validateUploads, secretMatches, threadKeyOf, validateRequest } from './investigations.js';
+import { contentHash, dbSettingsProblem, filesProblem, investigationSource, isOwnChatAttachment, validateUploads, secretMatches, threadKeyOf, validateRequest } from './investigations.js';
 
 const ref = { conversationId: 'c', messageId: 'm' };
 
@@ -93,5 +93,26 @@ describe('investigation files', () => {
     const base = contentHash('q', []);
     expect(contentHash('q', [], [])).toBe(base);
     expect(contentHash('q', [], [{ id: 'f1', md5: 'a' }])).not.toBe(contentHash('q', [], [{ id: 'f1', md5: 'b' }]));
+  });
+});
+
+describe('investigationSource', () => {
+  it('keeps the contact and client of a direct chat', () => {
+    expect(
+      investigationSource({ contactId: 'c1', contactNombre: 'Ana', clientId: 'k1', clientNombre: 'Torres' }, undefined),
+    ).toEqual({ contactId: 'c1', contactNombre: 'Ana', clientId: 'k1', clientNombre: 'Torres' });
+  });
+
+  it('falls back to the contact doc for the name', () => {
+    expect(investigationSource({ contactId: 'c1' }, { nombre: 'Ana' }).contactNombre).toBe('Ana');
+  });
+
+  it('uses the group name for a group chat, with no contact', () => {
+    expect(investigationSource({ groupName: 'Horizonte' }, undefined)).toEqual({
+      contactId: null,
+      contactNombre: null,
+      clientId: null,
+      clientNombre: 'Horizonte',
+    });
   });
 });

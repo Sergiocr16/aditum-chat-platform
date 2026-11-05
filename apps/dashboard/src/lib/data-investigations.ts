@@ -4,7 +4,16 @@
 // Raspberry Pi lo resuelve. Firestore es solo lectura desde acá; todo pasa por functions.
 
 import { useEffect, useMemo, useState } from 'react';
-import { collection, limit as fsLimit, onSnapshot, orderBy, query, type QueryConstraint, where } from 'firebase/firestore';
+import {
+  collection,
+  getCountFromServer,
+  limit as fsLimit,
+  onSnapshot,
+  orderBy,
+  query,
+  type QueryConstraint,
+  where,
+} from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import type {
   Conversation,
@@ -118,12 +127,54 @@ export function useInvestigationQueries(id: string | null): Row<InvestigationQue
   return useRows<InvestigationQueryRecord>(id ? `investigations/${id}/queries` : null, constraints);
 }
 
-export function useRunnerOnline(now: number): { online: boolean; tokenDaysLeft: number | null } {
+export interface InvestigationStats {
+  confirmed: number;
+  hypothesis: number;
+  undetermined: number;
+  noResult: number;
+  active: number;
+}
+
+/**
+ * Totals over every investigation, not just the loaded page. Firestore counts aren't live, so they're
+ * read again whenever `refreshKey` changes.
+ */
+export function useInvestigationStats(siteId: string | null, refreshKey: string): { stats: InvestigationStats | null; error: boolean } {
+  const [state, setState] = useState<{ stats: InvestigationStats | null; error: boolean }>({ stats: null, error: false });
+  useEffect(() => {
+    let stale = false;
+    const count = (constraint: QueryConstraint) =>
+      getCountFromServer(
+        query(collection(db, 'investigations'), ...(siteId ? [where('siteId', '==', siteId)] : []), constraint),
+      ).then((snap) => snap.data().count);
+    Promise.all([
+      count(where('report.conclusion', '==', 'confirmed')),
+      count(where('report.conclusion', '==', 'hypothesis')),
+      count(where('report.conclusion', '==', 'undetermined')),
+      count(where('status', 'in', ['failed', 'rate_limited', 'cancelled'])),
+      count(where('status', 'in', ['queued', 'running'])),
+    ]).then(
+      ([confirmed, hypothesis, undetermined, noResult, active]) => {
+        if (!stale) setState({ stats: { confirmed, hypothesis, undetermined, noResult, active }, error: false });
+      },
+      () => {
+        if (!stale) setState({ stats: null, error: true });
+      },
+    );
+    return () => {
+      stale = true;
+    };
+  }, [siteId, refreshKey]);
+  return state;
+}
+
+export function useRunnerOnline(now: number): { online: boolean; tokenDaysLeft: number | null; lastSeenAt: unknown } {
   const runner = useDoc<InvestigatorRunnerState>('investigator/runner');
   const seen = (runner?.data.lastSeenAt as { toMillis?: () => number } | undefined)?.toMillis?.();
   return {
     online: seen !== undefined && now - seen < RUNNER_OFFLINE_MS,
     tokenDaysLeft: runner?.data.tokenDaysLeft ?? null,
+    lastSeenAt: runner?.data.lastSeenAt ?? null,
   };
 }
 

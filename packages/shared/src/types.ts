@@ -777,11 +777,40 @@ export interface InvestigationFile {
   size: number;
 }
 
+/** Who the chat was with when the investigation was requested. A group chat has no single contact. */
+export interface InvestigationSource {
+  contactId: string | null;
+  contactNombre: string | null;
+  clientId: string | null;
+  clientNombre: string | null;
+}
+
+/** A message as the analyzer received it. */
+export interface InvestigationSentMessage {
+  at: string | null;
+  senderType: string;
+  senderName: string;
+  internalNote: boolean;
+  text: string;
+  attachments: { type: string; name: string | null; mimeType: string | null; fileId?: string }[];
+}
+
+/**
+ * investigations/{id}/sent/messages: exactly what went to the analyzer, frozen at request time so a
+ * later edit to the chat doesn't change it. Apart from the investigation so lists don't load it.
+ */
+export interface InvestigationSentMessages {
+  messages: InvestigationSentMessage[];
+}
+
 export interface Investigation {
   /** `contact:{id}` or `group:{id}`: the chat this belongs to across segments. */
   threadKey: string;
+  /** The conversation it was requested from. */
   conversationId: string;
   siteId: string;
+  /** Missing on investigations from before it was saved. */
+  source?: InvestigationSource;
   question: string;
   messageCount: number;
   messageRefs: InvestigationMessageRef[];

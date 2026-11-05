@@ -25,7 +25,7 @@ import {
   testInvestigatorPi,
   useGatewayOnline,
 } from '@/lib/data-investigations';
-import { Campo, Card } from './ui';
+import { Campo } from './ui';
 
 const M = {
   es: {
@@ -46,14 +46,13 @@ const M = {
     quitarSi: 'Sí, quitar',
     cancelar: 'Cancelar',
     error: 'No se pudo guardar. Intentá de nuevo.',
-    estado: 'Prueba de la conexión a producción',
     pendiente: 'Probando desde la Pi…',
     correcta: 'Conexión correcta',
     fallida: 'La conexión no pasó la prueba y no se va a usar',
     piOnline: 'El analizador está activo en la Pi',
-    piOffline: 'El analizador no responde en la Pi. La prueba corre cuando vuelva.',
     ipFirewall: 'MySQL debe permitir conexiones desde',
     sinPrueba: 'Todavía no hay una conexión guardada.',
+    piApagada: 'El analizador no responde en la Pi, así que la prueba corre cuando vuelva.',
     pi: {
       titulo: 'Raspberry Pi',
       subtitulo: 'La máquina donde corre el analizador',
@@ -64,6 +63,7 @@ const M = {
       correcta: 'La Pi responde',
       fallida: 'No se pudo entrar a la Pi',
       huella: 'Huella guardada',
+      sinPrueba: 'Guardá la conexión para probar que se pueda entrar.',
       quitarConfirmar: '¿Seguro? Se borran la contraseña y la huella guardadas.',
       checks: { connect: 'Acceso', hostKey: 'Huella', system: 'Máquina', claude: 'Claude Code' },
       instalar: {
@@ -82,6 +82,10 @@ const M = {
         fallo: 'La instalación no terminó',
         version: 'Versión',
         detalle: 'Ver detalle',
+        bloqueado: 'Se puede instalar cuando la Pi responda.',
+        sinInstalar: 'Todavía no se ha instalado.',
+        noResponde: 'El analizador no responde en la Pi',
+        ultima: 'Última instalación',
         pasos: {
           connect: 'Entrando a la Pi',
           prepare: 'Revisando la máquina',
@@ -121,14 +125,13 @@ const M = {
     quitarSi: 'Yes, remove',
     cancelar: 'Cancel',
     error: "Couldn't save. Try again.",
-    estado: 'Production connection test',
     pendiente: 'Testing from the Pi…',
     correcta: 'Connection OK',
     fallida: "The connection failed the test and won't be used",
     piOnline: 'The analyzer is running on the Pi',
-    piOffline: "The analyzer isn't responding on the Pi. The test runs when it returns.",
     ipFirewall: 'MySQL must allow connections from',
     sinPrueba: 'No connection saved yet.',
+    piApagada: "The analyzer isn't responding on the Pi, so the test runs when it returns.",
     pi: {
       titulo: 'Raspberry Pi',
       subtitulo: 'The machine that runs the analyzer',
@@ -139,6 +142,7 @@ const M = {
       correcta: 'The Pi responds',
       fallida: "Couldn't log in to the Pi",
       huella: 'Saved fingerprint',
+      sinPrueba: 'Save the connection to test the login.',
       quitarConfirmar: 'Are you sure? The saved password and fingerprint are deleted.',
       checks: { connect: 'Access', hostKey: 'Fingerprint', system: 'Machine', claude: 'Claude Code' },
       instalar: {
@@ -157,6 +161,10 @@ const M = {
         fallo: "The install didn't finish",
         version: 'Version',
         detalle: 'Show details',
+        bloqueado: 'You can install it once the Pi responds.',
+        sinInstalar: "It hasn't been installed yet.",
+        noResponde: "The analyzer isn't responding on the Pi",
+        ultima: 'Last install',
         pasos: {
           connect: 'Logging in to the Pi',
           prepare: 'Checking the machine',
@@ -181,6 +189,74 @@ const M = {
 } as const;
 
 const inputClass = 'w-full rounded-lg border border-warm-border px-2.5 py-2 text-[13px] outline-none focus:border-navy';
+const primaryButton =
+  'rounded-lg bg-navy px-3.5 py-2 text-[12.5px] font-semibold text-white hover:brightness-110 disabled:opacity-40';
+const secondaryButton =
+  'rounded-lg border border-warm-border px-3.5 py-2 text-[12.5px] font-semibold hover:border-navy disabled:opacity-40';
+
+type Tone = 'ok' | 'bad' | 'pending';
+
+const TONE_TEXT: Record<Tone, string> = { ok: 'text-ok-dark', bad: 'text-warn-dark', pending: 'text-ink-2' };
+const TONE_DOT: Record<Tone, string> = { ok: 'bg-ok', bad: 'bg-warn', pending: 'bg-warm-gray-3 motion-safe:animate-pulse' };
+
+const toneOf = (status: 'ok' | 'failed' | string): Tone => (status === 'ok' ? 'ok' : status === 'failed' ? 'bad' : 'pending');
+
+/** What to set up on the left, and what came of it on the right. */
+function Section({
+  icon,
+  title,
+  subtitle,
+  status,
+  children,
+  testId,
+}: {
+  icon: string;
+  title: string;
+  subtitle: string;
+  status: React.ReactNode;
+  children: React.ReactNode;
+  testId?: string;
+}) {
+  return (
+    <section
+      data-testid={testId}
+      className="overflow-hidden rounded-lg border border-warm-border bg-white shadow-card lg:grid lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]"
+    >
+      <div className="min-w-0 p-5">
+        <header className="mb-4 flex items-start gap-2.5">
+          <span className="msr mt-0.5 text-[19px] text-navy">{icon}</span>
+          <div>
+            <h3 className="text-[14px] font-bold text-ink">{title}</h3>
+            <p className="mt-0.5 text-[12px] text-warm-gray">{subtitle}</p>
+          </div>
+        </header>
+        {children}
+      </div>
+      <div className="min-w-0 border-t border-cream-3 bg-cream-1 p-5 lg:border-l lg:border-t-0">{status}</div>
+    </section>
+  );
+}
+
+function StatusTitle({ tone, children }: { tone: Tone; children: React.ReactNode }) {
+  return (
+    <p className={`flex items-start gap-2 text-[13px] font-bold leading-snug ${TONE_TEXT[tone]}`}>
+      <span aria-hidden className={`mt-[5px] h-2 w-2 flex-none rounded-full ${TONE_DOT[tone]}`} />
+      {children}
+    </p>
+  );
+}
+
+function StatusEmpty({ children }: { children: React.ReactNode }) {
+  return <p className="text-[12.5px] leading-relaxed text-warm-gray">{children}</p>;
+}
+
+function CheckList({ children }: { children: React.ReactNode }) {
+  return <ul className="mt-3 space-y-2">{children}</ul>;
+}
+
+function Meta({ children }: { children: React.ReactNode }) {
+  return <p className="mt-2 text-[11.5px] leading-relaxed text-warm-gray">{children}</p>;
+}
 
 function CheckRow({ check, label }: { check: InvestigatorDbCheck | InvestigatorPiCheck; label: string }) {
   return (
@@ -196,15 +272,199 @@ function CheckRow({ check, label }: { check: InvestigatorDbCheck | InvestigatorP
   );
 }
 
-function PiInstallSection({ idioma, config }: { idioma: Idioma; config: InvestigatorPiConfig }) {
+function ConfirmBar({
+  text,
+  cancel,
+  confirm,
+  onCancel,
+  onConfirm,
+}: {
+  text: string;
+  cancel: string;
+  confirm: string;
+  onCancel(): void;
+  onConfirm(): void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg bg-warn-bg px-3 py-2 text-[12px] text-warn-dark">
+      <span className="min-w-0 flex-1 basis-64">{text}</span>
+      <button type="button" onClick={onCancel} className="font-semibold hover:underline">
+        {cancel}
+      </button>
+      <button type="button" onClick={onConfirm} className="font-bold hover:underline">
+        {confirm}
+      </button>
+    </div>
+  );
+}
+
+/** Text with `code` in backticks. */
+function WithCode({ text }: { text: string }) {
+  return (
+    <>
+      {text.split('`').map((part, i) =>
+        i % 2 ? (
+          <code key={i} className="rounded bg-cream-2 px-1 font-mono text-[11px] text-ink-2">
+            {part}
+          </code>
+        ) : (
+          part
+        ),
+      )}
+    </>
+  );
+}
+
+function PiStatus({ idioma, config }: { idioma: Idioma; config: InvestigatorPiConfig | null }) {
+  const m = M[idioma];
+  const test = config?.test;
+  if (!test) return <StatusEmpty>{m.pi.sinPrueba}</StatusEmpty>;
+  return (
+    <div data-testid="pi-status">
+      <StatusTitle tone={toneOf(test.status)}>
+        {test.status === 'ok' ? m.pi.correcta : test.status === 'failed' ? m.pi.fallida : m.pi.pendiente}
+      </StatusTitle>
+      {test.status !== 'pending' && (
+        <>
+          <CheckList>
+            {(test.checks ?? []).map((check) => (
+              <CheckRow key={check.id} check={check} label={m.pi.checks[check.id]} />
+            ))}
+          </CheckList>
+          <div className="mt-3">
+            {config?.hostKeyFingerprint && (
+              <Meta>
+                {m.pi.huella}: <span className="break-all font-mono text-[11px]">{config.hostKeyFingerprint}</span>
+              </Meta>
+            )}
+            {test.finishedAt != null && <Meta>{fmtFecha(test.finishedAt, true)}</Meta>}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function AnalyzerStatus({
+  idioma,
+  config,
+  gatewayOnline,
+}: {
+  idioma: Idioma;
+  config: InvestigatorPiConfig | null;
+  gatewayOnline: boolean;
+}) {
+  const m = M[idioma];
+  const steps = m.pi.instalar;
+  const install = config?.install;
+  const step = install ? steps.pasos[install.step as InvestigatorPiInstallStep] : '';
+  return (
+    <div data-testid="pi-install-status">
+      {install?.status === 'running' ? (
+        <StatusTitle tone="pending">{step}…</StatusTitle>
+      ) : install?.status === 'failed' ? (
+        <>
+          <StatusTitle tone="bad">{steps.fallo}</StatusTitle>
+          <p className="mt-1.5 pl-4 text-[12.5px] text-ink-2">
+            {step}
+            {install.detail ? `: ${install.detail}` : ''}
+          </p>
+          {gatewayOnline && <p className="mt-1.5 pl-4 text-[12.5px] text-ink-2">{m.piOnline}</p>}
+        </>
+      ) : gatewayOnline ? (
+        <StatusTitle tone="ok">{m.piOnline}</StatusTitle>
+      ) : install ? (
+        <StatusTitle tone="bad">{steps.noResponde}</StatusTitle>
+      ) : (
+        <StatusEmpty>{steps.sinInstalar}</StatusEmpty>
+      )}
+      {install && (
+        <div className="mt-3">
+          {install.commit && (
+            <Meta>
+              {steps.version}: <span className="font-mono text-[11px]">{install.commit.slice(0, 8)}</span>
+            </Meta>
+          )}
+          {install.finishedAt != null && (
+            <Meta>
+              {steps.ultima}: {fmtFecha(install.finishedAt, true)}
+            </Meta>
+          )}
+          {install.log.length > 0 && (
+            <details className="mt-2" open={install.status === 'failed'}>
+              <summary className="cursor-pointer text-[12px] font-semibold text-ink-2">{steps.detalle}</summary>
+              <pre className="mt-1.5 max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-cream-3 bg-white p-2 font-mono text-[11px] text-ink-2">
+                {install.log.join('\n')}
+              </pre>
+            </details>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DbStatus({
+  idioma,
+  test,
+  gatewayOnline,
+  publicIp,
+}: {
+  idioma: Idioma;
+  test?: InvestigatorDbConfig['test'];
+  gatewayOnline: boolean;
+  publicIp?: string | null;
+}) {
+  const m = M[idioma];
+  return (
+    <div>
+      {!test ? (
+        <StatusEmpty>{m.sinPrueba}</StatusEmpty>
+      ) : (
+        <>
+          <StatusTitle tone={toneOf(test.status)}>
+            {test.status === 'ok' ? m.correcta : test.status === 'failed' ? m.fallida : m.pendiente}
+          </StatusTitle>
+          {test.status !== 'pending' && (
+            <CheckList>
+              {(test.checks ?? []).map((check) => (
+                <CheckRow key={check.id} check={check} label={m.checks[check.id]} />
+              ))}
+            </CheckList>
+          )}
+        </>
+      )}
+      <div className="mt-3">
+        {!gatewayOnline && <p className="text-[12.5px] text-warn-dark">{m.piApagada}</p>}
+        {gatewayOnline && publicIp && (
+          <Meta>
+            {m.ipFirewall} <span className="font-mono text-[11px] font-semibold text-ink-2">{publicIp}</span>
+          </Meta>
+        )}
+        {test && test.status !== 'pending' && test.finishedAt != null && <Meta>{fmtFecha(test.finishedAt, true)}</Meta>}
+      </div>
+    </div>
+  );
+}
+
+function AnalyzerSection({
+  idioma,
+  config,
+  gatewayOnline,
+}: {
+  idioma: Idioma;
+  config: InvestigatorPiConfig | null;
+  gatewayOnline: boolean;
+}) {
   const m = M[idioma].pi.instalar;
   const [token, setToken] = useState('');
   const [confirming, setConfirming] = useState(false);
   const [calling, setCalling] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const install = config.install;
+  const install = config?.install;
   const running = calling || install?.status === 'running';
-  const canInstall = (token.trim() || config.hasClaudeToken) && !running;
+  const canInstall = (token.trim() || config?.hasClaudeToken) && !running;
+  const piReady = Boolean(config?.hostKeyFingerprint) && config?.test?.status === 'ok';
 
   async function start() {
     setConfirming(false);
@@ -221,85 +481,52 @@ function PiInstallSection({ idioma, config }: { idioma: Idioma; config: Investig
   }
 
   return (
-    <div className="mt-4 space-y-3 border-t border-warm-border pt-3" data-testid="pi-install">
-      <div>
-        <p className="text-[13px] font-bold">{m.titulo}</p>
-        <p className="text-[11.5px] text-warm-gray">{m.descripcion}</p>
-      </div>
-      <Campo label={m.token}>
-        <input
-          type="password"
-          value={token}
-          onChange={(e) => setToken(e.target.value)}
-          autoComplete="new-password"
-          placeholder={config.hasClaudeToken ? m.tokenGuardado : ''}
-          className={inputClass}
-        />
-      </Campo>
-      <p className="text-[11.5px] text-warm-gray">{m.tokenAyuda}</p>
-      {error && <p className="text-[12px] text-warn-dark">{error}</p>}
-      {confirming ? (
-        <div className="flex flex-wrap items-center gap-2 rounded-lg bg-warn-bg p-2 text-[12px] text-warn-dark">
-          <span className="min-w-0 flex-1 basis-64">{m.confirmar}</span>
-          <button type="button" onClick={() => setConfirming(false)} className="font-semibold hover:underline">
-            {M[idioma].cancelar}
-          </button>
-          <button type="button" onClick={() => void start()} className="font-bold hover:underline">
-            {m.confirmarSi}
-          </button>
-        </div>
+    <Section
+      icon="deployed_code"
+      title={m.titulo}
+      subtitle={m.descripcion}
+      testId="pi-install"
+      status={<AnalyzerStatus idioma={idioma} config={config} gatewayOnline={gatewayOnline} />}
+    >
+      {!piReady ? (
+        <StatusEmpty>{m.bloqueado}</StatusEmpty>
       ) : (
-        <button
-          type="button"
-          disabled={!canInstall}
-          onClick={() => setConfirming(true)}
-          className="rounded-lg bg-navy px-3.5 py-2 text-[12.5px] font-semibold text-white hover:brightness-110 disabled:opacity-40"
-        >
-          {running ? m.corriendo : install?.status === 'ok' ? m.actualizar : m.boton}
-        </button>
-      )}
-      {install && (
-        <div data-testid="pi-install-status">
-          <p
-            className={`text-[13px] font-bold ${
-              install.status === 'ok' ? 'text-ok-dark' : install.status === 'failed' ? 'text-warn-dark' : 'text-ink-2'
-            }`}
-          >
-            {install.status === 'ok'
-              ? m.listo
-              : install.status === 'failed'
-                ? m.fallo
-                : `${m.pasos[install.step as InvestigatorPiInstallStep]}…`}
+        <div className="space-y-3">
+          <Campo label={m.token}>
+            <input
+              type="password"
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+              autoComplete="new-password"
+              placeholder={config?.hasClaudeToken ? m.tokenGuardado : ''}
+              className={inputClass}
+            />
+          </Campo>
+          <p className="text-[11.5px] text-warm-gray">
+            <WithCode text={m.tokenAyuda} />
           </p>
-          {install.status === 'failed' && (
-            <p className="mt-1 text-[12px] text-ink-2">
-              {m.pasos[install.step as InvestigatorPiInstallStep]}
-              {install.detail ? `: ${install.detail}` : ''}
-            </p>
-          )}
-          {install.commit && (
-            <p className="mt-1 text-[11px] text-warm-gray">
-              {m.version}: <span className="font-mono">{install.commit.slice(0, 8)}</span>
-            </p>
-          )}
-          {install.finishedAt != null && <p className="mt-1 text-[11px] text-warm-gray">{fmtFecha(install.finishedAt, true)}</p>}
-          {install.log.length > 0 && (
-            <details className="mt-2" open={install.status === 'failed'}>
-              <summary className="cursor-pointer text-[12px] font-semibold text-ink-2">{m.detalle}</summary>
-              <pre className="mt-1 max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-cream-1 p-2 font-mono text-[11px] text-ink-2">
-                {install.log.join('\n')}
-              </pre>
-            </details>
+          {error && <p className="text-[12px] text-warn-dark">{error}</p>}
+          {confirming ? (
+            <ConfirmBar
+              text={m.confirmar}
+              cancel={M[idioma].cancelar}
+              confirm={m.confirmarSi}
+              onCancel={() => setConfirming(false)}
+              onConfirm={() => void start()}
+            />
+          ) : (
+            <button type="button" disabled={!canInstall} onClick={() => setConfirming(true)} className={primaryButton}>
+              {running ? m.corriendo : install?.status === 'ok' ? m.actualizar : m.boton}
+            </button>
           )}
         </div>
       )}
-    </div>
+    </Section>
   );
 }
 
-function PiCard({ idioma }: { idioma: Idioma }) {
+function PiSection({ idioma, config }: { idioma: Idioma; config: InvestigatorPiConfig | null }) {
   const m = M[idioma];
-  const saved = useDoc<InvestigatorPiConfig>('investigator/pi');
   const [host, setHost] = useState('');
   const [port, setPort] = useState('22');
   const [user, setUser] = useState('');
@@ -310,19 +537,18 @@ function PiCard({ idioma }: { idioma: Idioma }) {
   const [confirmRemove, setConfirmRemove] = useState(false);
 
   // Carga lo guardado una vez por versión, para no pisar lo que se está escribiendo.
-  const version = saved?.data.version ?? null;
+  const version = config?.version ?? null;
   useEffect(() => {
-    if (!saved || version === loadedVersion) return;
-    setHost(saved.data.host);
-    setPort(String(saved.data.port));
-    setUser(saved.data.user);
+    if (!config || version === loadedVersion) return;
+    setHost(config.host);
+    setPort(String(config.port));
+    setUser(config.user);
     setPassword('');
     setLoadedVersion(version);
-  }, [saved, version, loadedVersion]);
+  }, [config, version, loadedVersion]);
 
-  const hasSaved = Boolean(saved);
+  const hasSaved = Boolean(config);
   const canSave = host.trim() && user.trim() && (password || hasSaved) && !busy;
-  const test = saved?.data.test;
 
   async function run(action: () => Promise<void>) {
     setBusy(true);
@@ -337,7 +563,7 @@ function PiCard({ idioma }: { idioma: Idioma }) {
   }
 
   return (
-    <Card icon="developer_board" title={m.pi.titulo} subtitle={m.pi.subtitulo}>
+    <Section icon="developer_board" title={m.pi.titulo} subtitle={m.pi.subtitulo} status={<PiStatus idioma={idioma} config={config} />}>
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -373,20 +599,11 @@ function PiCard({ idioma }: { idioma: Idioma }) {
         <p className="text-[11.5px] text-warm-gray">{m.pi.aviso}</p>
         {error && <p className="text-[12px] text-warn-dark">{error}</p>}
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="submit"
-            disabled={!canSave}
-            className="rounded-lg bg-navy px-3.5 py-2 text-[12.5px] font-semibold text-white hover:brightness-110 disabled:opacity-40"
-          >
+          <button type="submit" disabled={!canSave} className={primaryButton}>
             {busy ? m.pi.pendiente : m.guardar}
           </button>
           {hasSaved && (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => void run(testInvestigatorPi)}
-              className="rounded-lg border border-warm-border px-3.5 py-2 text-[12.5px] font-semibold hover:border-navy disabled:opacity-40"
-            >
+            <button type="button" disabled={busy} onClick={() => void run(testInvestigatorPi)} className={secondaryButton}>
               {m.probar}
             </button>
           )}
@@ -401,58 +618,24 @@ function PiCard({ idioma }: { idioma: Idioma }) {
           )}
         </div>
         {confirmRemove && (
-          <div className="flex flex-wrap items-center gap-2 rounded-lg bg-warn-bg p-2 text-[12px] text-warn-dark">
-            <span className="flex-1">{m.pi.quitarConfirmar}</span>
-            <button type="button" onClick={() => setConfirmRemove(false)} className="font-semibold hover:underline">
-              {m.cancelar}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setConfirmRemove(false);
-                setLoadedVersion(null);
-                setHost('');
-                setPort('22');
-                setUser('');
-                setPassword('');
-                void run(removeInvestigatorPi);
-              }}
-              className="font-bold hover:underline"
-            >
-              {m.quitarSi}
-            </button>
-          </div>
+          <ConfirmBar
+            text={m.pi.quitarConfirmar}
+            cancel={m.cancelar}
+            confirm={m.quitarSi}
+            onCancel={() => setConfirmRemove(false)}
+            onConfirm={() => {
+              setConfirmRemove(false);
+              setLoadedVersion(null);
+              setHost('');
+              setPort('22');
+              setUser('');
+              setPassword('');
+              void run(removeInvestigatorPi);
+            }}
+          />
         )}
       </form>
-
-      {test && (
-        <div className="mt-4 border-t border-warm-border pt-3" data-testid="pi-status">
-          <p
-            className={`text-[13px] font-bold ${
-              test.status === 'ok' ? 'text-ok-dark' : test.status === 'failed' ? 'text-warn-dark' : 'text-ink-2'
-            }`}
-          >
-            {test.status === 'ok' ? m.pi.correcta : test.status === 'failed' ? m.pi.fallida : m.pi.pendiente}
-          </p>
-          {test.status !== 'pending' && (
-            <>
-              <ul className="mt-2 space-y-1.5">
-                {(test.checks ?? []).map((check) => (
-                  <CheckRow key={check.id} check={check} label={m.pi.checks[check.id]} />
-                ))}
-              </ul>
-              {saved?.data.hostKeyFingerprint && (
-                <p className="mt-2 break-all text-[11px] text-warm-gray">
-                  {m.pi.huella}: <span className="font-mono">{saved.data.hostKeyFingerprint}</span>
-                </p>
-              )}
-              {test.finishedAt != null && <p className="mt-1 text-[11px] text-warm-gray">{fmtFecha(test.finishedAt, true)}</p>}
-            </>
-          )}
-        </div>
-      )}
-      {saved?.data.hostKeyFingerprint && test?.status === 'ok' && <PiInstallSection idioma={idioma} config={saved.data} />}
-    </Card>
+    </Section>
   );
 }
 
@@ -461,6 +644,7 @@ export function AnalizadorTab() {
   const idioma: Idioma = agent?.idioma ?? 'es';
   const m = M[idioma];
   const saved = useDoc<InvestigatorDbConfig>('investigator/db');
+  const pi = useDoc<InvestigatorPiConfig>('investigator/pi');
   const gatewayDoc = useDoc<InvestigatorGatewayState>('investigator/gateway');
   const gatewayOnline = useGatewayOnline(gatewayDoc?.data ?? null);
 
@@ -502,11 +686,18 @@ export function AnalizadorTab() {
   }
 
   const test = saved?.data.test;
+  const piConfig = pi?.data ?? null;
 
   return (
-    <div className="max-w-2xl space-y-4">
-      <PiCard idioma={idioma} />
-      <Card icon="database" title={m.titulo} subtitle={m.subtitulo}>
+    <div className="max-w-6xl space-y-4">
+      <PiSection idioma={idioma} config={piConfig} />
+      <AnalyzerSection idioma={idioma} config={piConfig} gatewayOnline={gatewayOnline} />
+      <Section
+        icon="database"
+        title={m.titulo}
+        subtitle={m.subtitulo}
+        status={<DbStatus idioma={idioma} test={test} gatewayOnline={gatewayOnline} publicIp={gatewayDoc?.data.publicIp} />}
+      >
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -526,6 +717,9 @@ export function AnalizadorTab() {
             </Campo>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
+            <Campo label={m.base}>
+              <input value={database} onChange={(e) => setDatabase(e.target.value)} spellCheck={false} className={inputClass} />
+            </Campo>
             <Campo label={m.usuario}>
               <input
                 value={user}
@@ -534,9 +728,6 @@ export function AnalizadorTab() {
                 spellCheck={false}
                 className={inputClass}
               />
-            </Campo>
-            <Campo label={m.base}>
-              <input value={database} onChange={(e) => setDatabase(e.target.value)} spellCheck={false} className={inputClass} />
             </Campo>
           </div>
           <Campo label={m.contrasena}>
@@ -552,11 +743,7 @@ export function AnalizadorTab() {
           <p className="text-[11.5px] text-warm-gray">{m.aviso}</p>
           {error && <p className="text-[12px] text-warn-dark">{error}</p>}
           <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="submit"
-              disabled={!canSave}
-              className="rounded-lg bg-navy px-3.5 py-2 text-[12.5px] font-semibold text-white hover:brightness-110 disabled:opacity-40"
-            >
+            <button type="submit" disabled={!canSave} className={primaryButton}>
               {busy ? m.guardando : m.guardar}
             </button>
             {hasSaved && (
@@ -564,7 +751,7 @@ export function AnalizadorTab() {
                 type="button"
                 disabled={busy || test?.status === 'pending'}
                 onClick={() => void run(testInvestigatorDb)}
-                className="rounded-lg border border-warm-border px-3.5 py-2 text-[12.5px] font-semibold hover:border-navy disabled:opacity-40"
+                className={secondaryButton}
               >
                 {m.probar}
               </button>
@@ -580,63 +767,23 @@ export function AnalizadorTab() {
             )}
           </div>
           {confirmRemove && (
-            <div className="flex flex-wrap items-center gap-2 rounded-lg bg-warn-bg p-2 text-[12px] text-warn-dark">
-              <span className="flex-1">{m.quitarConfirmar}</span>
-              <button type="button" onClick={() => setConfirmRemove(false)} className="font-semibold hover:underline">
-                {m.cancelar}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setConfirmRemove(false);
-                  setLoadedVersion(null);
-                  setHost('');
-                  setUser('');
-                  setPassword('');
-                  void run(removeInvestigatorDb);
-                }}
-                className="font-bold hover:underline"
-              >
-                {m.quitarSi}
-              </button>
-            </div>
+            <ConfirmBar
+              text={m.quitarConfirmar}
+              cancel={m.cancelar}
+              confirm={m.quitarSi}
+              onCancel={() => setConfirmRemove(false)}
+              onConfirm={() => {
+                setConfirmRemove(false);
+                setLoadedVersion(null);
+                setHost('');
+                setUser('');
+                setPassword('');
+                void run(removeInvestigatorDb);
+              }}
+            />
           )}
         </form>
-      </Card>
-
-      <Card icon="lan" title={m.estado}>
-        <p className={`text-[12.5px] ${gatewayOnline ? 'text-ok-dark' : 'text-warn-dark'}`}>
-          {gatewayOnline ? m.piOnline : m.piOffline}
-        </p>
-        {gatewayOnline && gatewayDoc?.data.publicIp && (
-          <p className="mt-1 text-[12.5px] text-ink-2">
-            {m.ipFirewall} <span className="font-mono font-semibold">{gatewayDoc.data.publicIp}</span>
-          </p>
-        )}
-        {!test ? (
-          <p className="mt-3 text-[12.5px] text-warm-gray">{m.sinPrueba}</p>
-        ) : (
-          <div className="mt-3">
-            <p
-              className={`text-[13px] font-bold ${
-                test.status === 'ok' ? 'text-ok-dark' : test.status === 'failed' ? 'text-warn-dark' : 'text-ink-2'
-              }`}
-            >
-              {test.status === 'ok' ? m.correcta : test.status === 'failed' ? m.fallida : m.pendiente}
-            </p>
-            {test.status !== 'pending' && (
-              <>
-                <ul className="mt-2 space-y-1.5">
-                  {(test.checks ?? []).map((check) => (
-                    <CheckRow key={check.id} check={check} label={m.checks[check.id]} />
-                  ))}
-                </ul>
-                {test.finishedAt != null && <p className="mt-2 text-[11px] text-warm-gray">{fmtFecha(test.finishedAt, true)}</p>}
-              </>
-            )}
-          </div>
-        )}
-      </Card>
+      </Section>
     </div>
   );
 }

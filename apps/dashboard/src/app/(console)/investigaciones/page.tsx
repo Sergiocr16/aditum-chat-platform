@@ -5,16 +5,16 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { Conversation, Investigation } from '@aditum-chat/shared';
-import { InvestigationDetail, InvestigationStatusChip } from '@/components/InvestigationPanel';
+import { InvestigationDetail, InvestigationStatusChip, sourceLabel, TOKEN_WARNING_DAYS } from '@/components/InvestigationPanel';
 import { useSiteFilter } from '@/components/Shell';
 import { fmtFecha, useDoc, type Row } from '@/lib/data';
-import { useInvestigationList, useRunnerOnline } from '@/lib/data-investigations';
+import { useInvestigationList, useInvestigationStats, useRunnerOnline, type InvestigationStats } from '@/lib/data-investigations';
 import { useT } from '@/lib/i18n';
 
 const PAGE_SIZE = 50;
 
-type Filter = 'todas' | 'enCurso' | 'confirmadas' | 'sinConfirmar' | 'sinResultado';
-const FILTERS: Filter[] = ['todas', 'enCurso', 'confirmadas', 'sinConfirmar', 'sinResultado'];
+type Filter = 'todas' | 'enCurso' | 'confirmadas' | 'hipotesis' | 'sinDeterminar' | 'sinResultado';
+const FILTERS: Filter[] = ['todas', 'enCurso', 'confirmadas', 'hipotesis', 'sinDeterminar', 'sinResultado'];
 
 function matchesFilter({ status, report }: Investigation, filter: Filter): boolean {
   switch (filter) {
@@ -24,22 +24,25 @@ function matchesFilter({ status, report }: Investigation, filter: Filter): boole
       return status === 'queued' || status === 'running';
     case 'confirmadas':
       return status === 'done' && report?.conclusion === 'confirmed';
-    case 'sinConfirmar':
-      return status === 'done' && report?.conclusion !== 'confirmed';
+    case 'hipotesis':
+      return status === 'done' && report?.conclusion === 'hypothesis';
+    case 'sinDeterminar':
+      return status === 'done' && report?.conclusion === 'undetermined';
     case 'sinResultado':
       return status === 'failed' || status === 'rate_limited' || status === 'cancelled';
   }
 }
 
-/** Who the chat is with. Investigations don't store it, so it comes from their conversation. */
-function useChatLabel(conversationId: string): string {
-  const conv = useDoc<Conversation>(`conversations/${conversationId}`);
-  if (!conv) return '';
-  return [conv.data.contactNombre, conv.data.clientNombre].filter(Boolean).join(' · ');
+/** Who the chat is with. Older investigations didn't save it, so theirs comes from the conversation. */
+function useChatLabel(investigation: Investigation): string {
+  const saved = sourceLabel(investigation);
+  const conv = useDoc<Conversation>(saved ? null : `conversations/${investigation.conversationId}`);
+  if (saved) return saved;
+  return conv ? [conv.data.contactNombre, conv.data.clientNombre].filter(Boolean).join(' · ') : '';
 }
 
 function ListRow({ row, selected, onOpen }: { row: Row<Investigation>; selected: boolean; onOpen(): void }) {
-  const chat = useChatLabel(row.data.conversationId);
+  const chat = useChatLabel(row.data);
   return (
     <button
       onClick={onOpen}
@@ -63,10 +66,12 @@ function ListRow({ row, selected, onOpen }: { row: Row<Investigation>; selected:
 function Origin({ row }: { row: Row<Investigation> }) {
   const t = useT();
   const router = useRouter();
-  const chat = useChatLabel(row.data.conversationId);
+  // The detail already shows the saved one.
+  const chat = useChatLabel(row.data);
+  const shown = sourceLabel(row.data) ? '' : chat;
   return (
     <p className="mt-1.5 flex flex-wrap items-center gap-x-2 text-[12.5px] text-ink-2">
-      {chat}
+      {shown}
       <button
         onClick={() => router.push(`/inbox?c=${encodeURIComponent(row.data.conversationId)}&inv=${encodeURIComponent(row.id)}`)}
         className="inline-flex items-center gap-0.5 font-semibold text-navy hover:underline"
@@ -75,6 +80,144 @@ function Origin({ row }: { row: Row<Investigation> }) {
         <span className="msr text-[15px]">arrow_forward</span>
       </button>
     </p>
+  );
+}
+
+const OUTCOMES = [
+  { filter: 'confirmadas', stat: 'confirmed', swatch: 'bg-ok' },
+  { filter: 'hipotesis', stat: 'hypothesis', swatch: 'bg-warn' },
+  { filter: 'sinDeterminar', stat: 'undetermined', swatch: 'bg-warm-gray-4' },
+] as const;
+
+function OutcomeFilter({
+  label,
+  count,
+  swatch,
+  active,
+  onClick,
+}: {
+  label: string;
+  count: number;
+  swatch?: string;
+  active: boolean;
+  onClick(): void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      aria-pressed={active}
+      className={`flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[12px] text-ink-2 hover:bg-cream-1 focus-visible:outline-2 focus-visible:outline-navy ${
+        active ? 'bg-cream-2 font-semibold text-ink' : ''
+      }`}
+    >
+      {swatch && <span aria-hidden className={`h-2 w-2 flex-none rounded-[2px] ${swatch}`} />}
+      {label}
+      <span className="font-semibold tabular-nums text-ink">{count}</span>
+    </button>
+  );
+}
+
+/** Whether the analyzer is up, and how investigations have turned out. Picking an outcome filters the list. */
+function StatsStrip({
+  runner,
+  stats,
+  error,
+  filter,
+  onFilter,
+  className,
+}: {
+  runner: ReturnType<typeof useRunnerOnline>;
+  stats: InvestigationStats | null;
+  error: boolean;
+  filter: Filter;
+  onFilter(filter: Filter): void;
+  className: string;
+}) {
+  const t = useT();
+  const finished = stats ? stats.confirmed + stats.hypothesis + stats.undetermined : 0;
+  const toggle = (value: Filter) => onFilter(filter === value ? 'todas' : value);
+
+  return (
+    <section
+      aria-label={t('inv.panel.region')}
+      className={`flex-none flex-wrap items-center gap-x-8 gap-y-3 border-b border-warm-border bg-white px-4 py-3 ${className}`}
+    >
+      <div className="w-full sm:w-auto sm:max-w-[300px]">
+        <p className="flex items-center gap-2 text-[13px] font-bold text-ink">
+          <span aria-hidden className={`h-2 w-2 flex-none rounded-full ${runner.online ? 'bg-ok' : 'bg-warn'}`} />
+          {t(runner.online ? 'inv.panel.conectado' : 'inv.panel.desconectado')}
+        </p>
+        <p className={`mt-0.5 pl-4 text-[12px] ${runner.online ? 'text-warm-gray' : 'text-warn-dark'}`}>
+          {!runner.online
+            ? runner.lastSeenAt
+              ? t('inv.panel.ultimaSenal', { fecha: fmtFecha(runner.lastSeenAt, true) })
+              : t('inv.panel.enCola')
+            : stats && stats.active > 0
+              ? t('inv.panel.enCurso', { n: stats.active })
+              : t('inv.panel.listo')}
+        </p>
+        {runner.online && runner.tokenDaysLeft !== null && runner.tokenDaysLeft < TOKEN_WARNING_DAYS && (
+          <p className="mt-0.5 pl-4 text-[12px] text-warn-dark">{t('inv.tokenVence', { n: runner.tokenDaysLeft })}</p>
+        )}
+      </div>
+
+      {error ? (
+        <p className="text-[12.5px] text-warn-dark">{t('inv.panel.error')}</p>
+      ) : stats && finished === 0 && stats.noResult === 0 ? (
+        <p className="text-[12.5px] text-warm-gray">{t('inv.panel.vacio')}</p>
+      ) : (
+        stats && (
+          <div className="flex min-w-0 flex-1 basis-[420px] flex-wrap items-center gap-x-6 gap-y-2">
+            {finished > 0 && (
+              <p className="flex-none">
+                <span className="block text-[15px] font-bold leading-tight text-ink">
+                  {t('inv.panel.pctConfirmadas', { n: Math.round((stats.confirmed / finished) * 100) })}
+                </span>
+                <span className="text-[12px] text-warm-gray">{t('inv.panel.deTerminadas', { n: finished })}</span>
+              </p>
+            )}
+            <div className="min-w-[240px] flex-1">
+              {finished > 0 && (
+                <div
+                  role="img"
+                  aria-label={t('inv.panel.barra', { a: stats.confirmed, b: stats.hypothesis, c: stats.undetermined })}
+                  className="mb-1.5 flex h-2 gap-[2px] overflow-hidden rounded-full"
+                >
+                  {OUTCOMES.filter(({ stat }) => stats[stat] > 0).map(({ filter: value, stat, swatch }) => (
+                    <span
+                      key={stat}
+                      title={`${t(`inv.filtro.${value}`)}: ${stats[stat]} (${Math.round((stats[stat] / finished) * 100)}%)`}
+                      style={{ flexGrow: stats[stat] }}
+                      className={`basis-0 ${swatch}`}
+                    />
+                  ))}
+                </div>
+              )}
+              <div className="-mx-1.5 flex flex-wrap items-center gap-x-1 gap-y-0.5">
+                {OUTCOMES.map(({ filter: value, stat, swatch }) => (
+                  <OutcomeFilter
+                    key={stat}
+                    label={t(`inv.filtro.${value}`)}
+                    count={stats[stat]}
+                    swatch={swatch}
+                    active={filter === value}
+                    onClick={() => toggle(value)}
+                  />
+                ))}
+                {stats.noResult > 0 && (
+                  <OutcomeFilter
+                    label={t('inv.panel.sinResultado')}
+                    count={stats.noResult}
+                    active={filter === 'sinResultado'}
+                    onClick={() => toggle('sinResultado')}
+                  />
+                )}
+              </div>
+            </div>
+          </div>
+        )
+      )}
+    </section>
   );
 }
 
@@ -100,14 +243,26 @@ export default function InvestigacionesPage() {
       ({ data }) =>
         (!siteId || data.siteId === siteId) &&
         matchesFilter(data, filter) &&
-        (!term || data.question.toLowerCase().includes(term) || data.requestedBy.nombre.toLowerCase().includes(term)),
+        (!term ||
+          [data.question, data.requestedBy.nombre, sourceLabel(data)].some((text) => text.toLowerCase().includes(term))),
     );
   }, [list.rows, siteId, filter, search]);
 
   const hasAny = list.rows.length > 0;
+  const refreshKey = useMemo(() => list.rows.map((r) => `${r.id}:${r.data.status}`).join(), [list.rows]);
+  const { stats, error: statsError } = useInvestigationStats(siteId ?? null, refreshKey);
 
   return (
-    <div className="flex h-full min-h-0">
+    <div className="flex h-full min-h-0 flex-col">
+      <StatsStrip
+        runner={runner}
+        stats={stats}
+        error={statsError}
+        filter={filter}
+        onFilter={setFilter}
+        className={selectedId ? 'hidden md:flex' : 'flex'}
+      />
+      <div className="flex min-h-0 flex-1">
       <div className={`min-h-0 w-full flex-none flex-col border-r border-warm-border bg-white md:flex md:w-[380px] ${selectedId ? 'hidden' : 'flex'}`}>
         <header className="flex-none border-b border-cream-3 px-4 pb-3 pt-4">
           <h1 className="text-[19px] font-bold text-ink">{t('inv.titulo')}</h1>
@@ -137,10 +292,6 @@ export default function InvestigacionesPage() {
             ))}
           </div>
         </header>
-
-        {!runner.online && (
-          <p className="flex-none bg-warn-bg px-4 py-2 text-[12px] text-warn-dark">{t('inv.desconectado')}</p>
-        )}
 
         <div className="min-h-0 flex-1 overflow-y-auto">
           {list.error ? (
@@ -190,6 +341,7 @@ export default function InvestigacionesPage() {
             </div>
           )
         )}
+      </div>
       </div>
     </div>
   );

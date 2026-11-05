@@ -27,6 +27,23 @@ const WHOLE_MOTION: Partial<Record<MascotPose, string>> = {
 /** Lifts to turn the page, pushes to send the query. */
 const ARM_MOTION: Partial<Record<MascotPose, string>> = { files: 'mascot-arm-turn', database: 'mascot-arm-push' };
 
+/** The mascot standing still, for where it only marks that Claude is behind something. */
+export function ClaudeLogo({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 16 32 20" className={`w-auto ${className ?? ''}`} aria-hidden>
+      <g fill={CLAUDE}>
+        <rect x="4" y="16" width="24" height="16" />
+        <rect x="0" y="24" width="32" height="4" />
+        {[6, 10, 20, 24].map((x) => <rect key={x} x={x} y="32" width="2" height="4" />)}
+      </g>
+      <g fill={INK}>
+        <rect x="8" y="20" width="2" height="4" />
+        <rect x="22" y="20" width="2" height="4" />
+      </g>
+    </svg>
+  );
+}
+
 /**
  * Claude's pixel mascot, on a grid where one logo pixel is 2 units. Each pose acts out what the
  * investigation is really doing, with the prop on its right:

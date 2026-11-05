@@ -10,6 +10,8 @@ import {
   type InvestigationFileKind,
 } from '@aditum-chat/shared';
 import type {
+  InvestigationSentMessage,
+  InvestigationSource,
   InvestigatorPiConfig,
   Contact,
   Conversation,
@@ -49,13 +51,18 @@ const MAX_PER_AGENT_PER_DAY = 30;
 const STALE_RUNNING_MS = 10 * 60_000;
 const MAX_REPORT_BYTES = 500_000;
 
-export interface TranscriptMessage {
-  at: string | null;
-  senderType: string;
-  senderName: string;
-  internalNote: boolean;
-  text: string;
-  attachments: { type: string; name: string | null; mimeType: string | null; fileId?: string }[];
+export type TranscriptMessage = InvestigationSentMessage;
+
+export function investigationSource(
+  conv: Pick<Conversation, 'contactId' | 'contactNombre' | 'clientId' | 'clientNombre' | 'groupName'>,
+  contact: Pick<Contact, 'nombre'> | undefined,
+): InvestigationSource {
+  return {
+    contactId: conv.contactId ?? null,
+    contactNombre: conv.contactNombre ?? contact?.nombre ?? null,
+    clientId: conv.clientId ?? null,
+    clientNombre: conv.clientNombre ?? conv.groupName ?? null,
+  };
 }
 
 /** What the analyzer needs to fetch a file. The path stays here: it asks by id. */
@@ -214,6 +221,7 @@ export const requestInvestigation = onCall({ region: 'us-central1' }, async (req
     : undefined;
   const agent = (await db.doc(`team/${req.auth.uid}`).get()).data() as { nombre?: string } | undefined;
   const trimmed = question.trim();
+  const source = investigationSource(anchor, contact);
 
   const ref = db.collection('investigations').doc();
   const counterRef = db.doc(`counters/investigations_${req.auth.uid}_${dayKey()}`);
@@ -221,6 +229,7 @@ export const requestInvestigation = onCall({ region: 'us-central1' }, async (req
     threadKey,
     conversationId,
     siteId: anchor.siteId,
+    source,
     question: trimmed,
     messageCount: transcript.length,
     messageRefs: uniqueRefs.map(({ conversationId: c, messageId }) => ({ conversationId: c, messageId })),
@@ -238,6 +247,7 @@ export const requestInvestigation = onCall({ region: 'us-central1' }, async (req
     }
     tx.set(counterRef, { count: count + 1 }, { merge: true });
     tx.set(ref, data);
+    tx.set(ref.collection('sent').doc('messages'), { messages: transcript });
     // What the analyzer reads. Kept apart so a later edit to the chat can't change a case
     // after the fact, and denied to every client in the rules.
     tx.set(db.doc(`investigation_inputs/${ref.id}`), {
@@ -246,8 +256,8 @@ export const requestInvestigation = onCall({ region: 'us-central1' }, async (req
       files,
       context: {
         siteId: anchor.siteId,
-        clientNombre: anchor.clientNombre ?? anchor.groupName ?? null,
-        contactNombre: anchor.contactNombre ?? contact?.nombre ?? null,
+        clientNombre: source.clientNombre,
+        contactNombre: source.contactNombre,
         contactRol: contact?.rol ?? null,
       },
     });

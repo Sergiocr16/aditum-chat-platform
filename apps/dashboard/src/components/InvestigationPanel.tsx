@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import type {
+  InvestigationSentMessages,
   Conversation,
   Investigation,
   InvestigationFile,
@@ -17,7 +18,7 @@ import {
   investigationFileKind,
 } from '@aditum-chat/shared';
 import { useAuth } from '@/lib/auth';
-import { fmtFecha, useContactThread, useDoc, useGroupThread, useMessages, type Row, type ThreadRow } from '@/lib/data';
+import { fmtFecha, fmtHora, useContactThread, useDoc, useGroupThread, useMessages, type Row, type ThreadRow } from '@/lib/data';
 import {
   cancelInvestigation,
   investigationFileUrl,
@@ -29,16 +30,22 @@ import {
   useRunnerOnline,
 } from '@/lib/data-investigations';
 import { useT } from '@/lib/i18n';
-import { InvestigatorMascot } from './InvestigatorMascot';
+import { ClaudeLogo, InvestigatorMascot } from './InvestigatorMascot';
 
 const MAX_MESSAGES = 100;
 const MIN_QUESTION_CHARS = 10;
-const TOKEN_WARNING_DAYS = 30;
+export const TOKEN_WARNING_DAYS = 30;
 
 /** "Investigate this message": opens the form with only that message marked. */
-export interface InvestigationSeed {
-  ref: InvestigationMessageRef;
+/** Asks an open panel to show something. No `ref` or `id` means the form, as the agent left it. */
+export interface InvestigationRequest {
   nonce: number;
+  /** Starts the form over with only this message marked. */
+  ref?: InvestigationMessageRef;
+  /** Shows this investigation. */
+  id?: string;
+  /** Shows the chat's list. */
+  list?: boolean;
 }
 
 /** What the form starts from. A new `nonce` resets it. */
@@ -59,7 +66,22 @@ interface Upload {
 }
 
 /** One view at a time: the list, the form, or one investigation. */
-type Pane = null | 'new' | { id: string };
+export type InvestigationPane = null | 'new' | { id: string };
+type Pane = InvestigationPane;
+
+/** What a chat's panel was showing. Opening a chat remounts everything, so this outlives it. */
+interface PanelMemory {
+  open: boolean;
+  pane: Pane;
+  form: FormStart | null;
+}
+const panelMemory = new Map<string, PanelMemory>();
+
+export const recallInvestigationPanel = (chatKey: string): PanelMemory | null => panelMemory.get(chatKey) ?? null;
+
+export function rememberInvestigationPanel(chatKey: string, patch: Partial<PanelMemory>) {
+  panelMemory.set(chatKey, { open: false, pane: null, form: null, ...panelMemory.get(chatKey), ...patch });
+}
 
 /** Starting points for the question: picking one fills the text, which stays editable. */
 const QUESTION_TEMPLATES = ['error', 'consulta', 'funciona', 'datos'] as const;
@@ -68,7 +90,7 @@ const keyOf = (r: InvestigationMessageRef) => `${r.conversationId}/${r.messageId
 
 const STATUS_TONE: Record<InvestigationStatus, string> = {
   queued: 'text-warm-gray',
-  running: 'text-ai',
+  running: 'text-claude-dark',
   done: 'text-ok-dark',
   failed: 'text-danger',
   rate_limited: 'text-warn-dark',
@@ -90,6 +112,17 @@ const CONCLUSION_STYLE: Record<InvestigationConclusion, string> = {
 /** The rough steps shown while it runs. Whether it reaches the database varies, so that's in the title instead. */
 const PROGRESS_STEPS = ['queued', 'preparing', 'analyzing', 'done'] as const;
 
+/** How each outcome looks at a glance in the panel's list. */
+const OUTCOME_BADGE: Record<InvestigationConclusion | Exclude<InvestigationStatus, 'done' | 'running'>, { icon: string; style: string }> = {
+  confirmed: { icon: 'check', style: 'bg-ok-bg text-ok-dark' },
+  hypothesis: { icon: 'lightbulb', style: 'bg-warn-bg text-warn-dark' },
+  undetermined: { icon: 'help', style: 'bg-cream-2 text-ink-2' },
+  failed: { icon: 'error', style: 'bg-danger-bg text-danger' },
+  rate_limited: { icon: 'hourglass_top', style: 'bg-warn-bg text-warn-dark' },
+  cancelled: { icon: 'block', style: 'bg-cream-2 text-warm-gray' },
+  queued: { icon: 'schedule', style: 'bg-cream-2 text-ink-2' },
+};
+
 const millis = (ts: unknown) => (ts as { toMillis?: () => number } | null)?.toMillis?.() ?? 0;
 
 const isSystem = (m: Message) => m.sender.tipo === 'sistema' || m.tipoContenido === 'sistema';
@@ -107,27 +140,31 @@ function defaultSelection(rows: ThreadRow[], conversationId: string): Set<string
 export function InvestigationPanel({
   conv,
   threadKey,
-  seed,
-  onOpenConversation,
+  chatKey,
+  request,
+  onPaneChange,
   onUseReply,
   onNotifyClient,
-  openId,
 }: {
   conv: Row<Conversation>;
   threadKey: string | null;
-  seed: InvestigationSeed | null;
-  /** Opens with this investigation showing, e.g. when arriving from the Investigaciones page. */
-  openId?: string | null;
-  onOpenConversation?(conversationId: string): void;
+  /** Where this chat's panel is remembered. */
+  chatKey: string;
+  request: InvestigationRequest | null;
+  onPaneChange(pane: Pane): void;
   onUseReply(texto: string): void;
   /** Sends a text to the chat, as if the agent had written it. */
   onNotifyClient(texto: string): Promise<void>;
 }) {
   const t = useT();
-  const [scope, setScope] = useState<'chat' | 'all'>('chat');
-  const list = useInvestigationList(scope === 'chat' ? threadKey : null);
-  const [pane, setPane] = useState<Pane>(openId ? { id: openId } : seed ? 'new' : null);
-  const [form, setForm] = useState<FormStart>(() => (seed ? { nonce: seed.nonce, refs: [seed.ref] } : { nonce: 0 }));
+  // The hook lists every chat's for a null key, and this panel only ever shows its own chat's.
+  const list = useInvestigationList(threadKey ?? 'none');
+  const [pane, setPane] = useState<Pane>(() =>
+    request?.id ? { id: request.id } : request?.list ? null : request ? 'new' : (recallInvestigationPanel(chatKey)?.pane ?? null),
+  );
+  const [form, setForm] = useState<FormStart>(
+    () => (request?.ref ? { nonce: request.nonce, refs: [request.ref] } : recallInvestigationPanel(chatKey)?.form) ?? { nonce: 0 },
+  );
   const questionRef = useRef<HTMLTextAreaElement>(null);
   // Investigations the client was already told about, so one click can't become two messages.
   const [notified, setNotified] = useState<ReadonlySet<string>>(() => new Set());
@@ -146,8 +183,16 @@ export function InvestigationPanel({
   }
 
   useEffect(() => {
-    if (seed) openForm({ nonce: seed.nonce, refs: [seed.ref] });
-  }, [seed]);
+    if (!request) return;
+    if (request.id) setPane({ id: request.id });
+    else if (request.list) setPane(null);
+    else openForm(request.ref ? { nonce: request.nonce, refs: [request.ref] } : undefined);
+  }, [request]);
+
+  useEffect(() => {
+    rememberInvestigationPanel(chatKey, { pane });
+    onPaneChange(pane);
+  }, [chatKey, pane, onPaneChange]);
 
   const selectedId = pane && pane !== 'new' ? pane.id : null;
   const selected = useDoc<Investigation>(selectedId ? `investigations/${selectedId}` : null);
@@ -163,38 +208,12 @@ export function InvestigationPanel({
         </p>
       )}
 
-      {pane === null ? (
+      {pane === null && (
         <SavedList
           list={list}
-          scope={scope}
-          canFilter={threadKey !== null}
-          onScope={setScope}
           onOpen={(id) => setPane({ id })}
           onNew={() => openForm()}
         />
-      ) : (
-        <div className="flex flex-none items-center justify-between gap-3 border-b border-cream-2 pb-2.5 text-[13px]">
-          <div className="flex min-w-0 items-center gap-2">
-            <button
-              onClick={() => setPane(null)}
-              className="flex flex-none items-center gap-1 font-semibold text-navy hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ai"
-            >
-              <span className="msr text-[16px]">arrow_back</span>
-              {t('inv.titulo')}
-            </button>
-            {pane === 'new' && (
-              <>
-                <span aria-hidden className="text-warm-gray">/</span>
-                <span className="font-semibold text-ink">{t('inv.nuevaCorta')}</span>
-              </>
-            )}
-          </div>
-          {selectedId && selected?.id === selectedId && (
-            <span className="min-w-0 truncate text-warm-gray">
-              {fmtFecha(selected.data.createdAt, true)} · {selected.data.requestedBy.nombre}
-            </span>
-          )}
-        </div>
       )}
 
       {/* Stays mounted while a report or the list is showing, so a half-written question isn't lost. */}
@@ -204,6 +223,7 @@ export function InvestigationPanel({
           conv={conv}
           start={form}
           questionRef={questionRef}
+          onDraft={(draft) => rememberInvestigationPanel(chatKey, { form: draft })}
           onCreated={(id) => {
             setForm({ nonce: Date.now() });
             setPane({ id });
@@ -215,7 +235,6 @@ export function InvestigationPanel({
         <InvestigationDetail
           key={selectedId}
           row={selected}
-          metaInBar
           actions={
             selected.data.threadKey === threadKey
               ? {
@@ -237,21 +256,6 @@ export function InvestigationPanel({
                 }
               : undefined
           }
-          origin={
-            selected.data.threadKey === threadKey ? undefined : (
-              <p className="mt-1.5 flex flex-wrap items-center gap-x-2 text-[12px] text-warm-gray">
-                {t('inv.otroChat')}
-                {onOpenConversation && (
-                  <button
-                    onClick={() => onOpenConversation(selected.data.conversationId)}
-                    className="font-semibold text-navy hover:underline"
-                  >
-                    {t('inv.irAlChat')}
-                  </button>
-                )}
-              </p>
-            )
-          }
         />
       )}
     </div>
@@ -272,49 +276,71 @@ export function InvestigationStatusChip({ row }: { row: Row<Investigation> }) {
   );
 }
 
+function SavedRow({ row, onOpen }: { row: Row<Investigation>; onOpen(): void }) {
+  const t = useT();
+  const { status, report, question, createdAt, requestedBy } = row.data;
+  const conclusion = status === 'done' ? report?.conclusion : undefined;
+  const badge = status === 'running' ? null : OUTCOME_BADGE[conclusion ?? (status === 'done' ? 'undetermined' : status)];
+  return (
+    <button
+      onClick={onOpen}
+      className="group flex w-full items-center gap-3 rounded-xl border border-cream-3 bg-white p-2.5 text-left shadow-card transition-colors duration-150 hover:border-warm-gray-4 hover:bg-cream-0 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-navy"
+    >
+      {badge ? (
+        <span aria-hidden className={`flex h-9 w-9 flex-none items-center justify-center rounded-[10px] ${badge.style}`}>
+          <span className="msr text-[19px]">{badge.icon}</span>
+        </span>
+      ) : (
+        <span aria-hidden className="flex h-9 w-9 flex-none items-center justify-center rounded-[10px] bg-claude-bg">
+          <ClaudeLogo className="h-3.5 motion-safe:animate-pulse" />
+        </span>
+      )}
+      <span className="min-w-0 flex-1">
+        <span className="line-clamp-2 text-[13.5px] font-semibold leading-snug text-ink">{question}</span>
+        <span className="mt-0.5 block truncate text-[12px] text-warm-gray">
+          <span className={`font-semibold ${conclusion ? CONCLUSION_TONE[conclusion] : STATUS_TONE[status]}`}>
+            {conclusion ? t(`inv.conclusion.${conclusion}`) : t(`inv.estado.${status}`)}
+          </span>
+          {' · '}
+          {fmtHora(createdAt)} · {requestedBy.nombre}
+        </span>
+      </span>
+      <span aria-hidden className="msr flex-none text-[18px] text-warm-gray-3 transition-colors duration-150 group-hover:text-ink">
+        chevron_right
+      </span>
+    </button>
+  );
+}
+
 function SavedList({
   list,
-  scope,
-  canFilter,
-  onScope,
   onOpen,
   onNew,
 }: {
   list: ReturnType<typeof useInvestigationList>;
-  scope: 'chat' | 'all';
-  canFilter: boolean;
-  onScope(scope: 'chat' | 'all'): void;
   onOpen(id: string): void;
   onNew(): void;
 }) {
   const t = useT();
-  const scopes = [
-    ['chat', t('inv.esteChat')],
-    ['all', t('inv.todas')],
-  ] as const;
+  const today = fmtFecha({ toDate: () => new Date() });
+  const days = useMemo(() => {
+    const byDay = new Map<string, Row<Investigation>[]>();
+    for (const row of list.rows) {
+      const day = fmtFecha(row.data.createdAt);
+      byDay.set(day, [...(byDay.get(day) ?? []), row]);
+    }
+    return [...byDay];
+  }, [list.rows]);
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex flex-none items-center justify-between gap-3 pb-2.5 pt-1">
-        {canFilter && (
-          <div role="group" aria-label={t('inv.titulo')} className="flex rounded-lg bg-cream-2 p-[3px] text-[13px] font-semibold">
-            {scopes.map(([value, label]) => (
-              <button
-                key={value}
-                onClick={() => onScope(value)}
-                aria-pressed={scope === value}
-                className={`rounded-md px-3 py-1 focus-visible:outline-2 focus-visible:outline-ai ${
-                  scope === value ? 'bg-white text-ink shadow-sm' : 'text-warm-gray hover:text-ink'
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        )}
+      <div className="flex flex-none items-center justify-between gap-3 pb-3 pt-1">
+        <p className="text-[13px] text-warm-gray">
+          {list.rows.length > 0 && t('inv.enEsteChat', { n: `${list.rows.length}${list.hasMore ? '+' : ''}` })}
+        </p>
         <button
           onClick={onNew}
           aria-label={t('inv.nueva')}
-          className="ml-auto flex h-[34px] flex-none items-center gap-1.5 rounded-lg bg-navy px-3.5 text-[13.5px] font-semibold text-white hover:bg-navy-light focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-navy"
+          className="flex h-[34px] flex-none items-center gap-1.5 rounded-lg bg-navy px-3.5 text-[13.5px] font-semibold text-white hover:bg-navy-light focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-navy"
         >
           <span className="msr text-[17px]">add</span>
           {t('inv.nuevaCorta')}
@@ -326,28 +352,28 @@ function SavedList({
           <p className="py-4 text-[13px] text-warn-dark">{t('inv.errorLista')}</p>
         ) : list.loading ? null : list.rows.length === 0 ? (
           <div className="py-6 text-[13px] text-warm-gray">
-            <p className="font-semibold text-ink-2">{t(scope === 'chat' && canFilter ? 'inv.vacio' : 'inv.vacioTodas')}</p>
+            <p className="font-semibold text-ink-2">{t('inv.vacio')}</p>
             <p className="mt-1 leading-relaxed">{t('inv.vacioAyuda')}</p>
           </div>
         ) : (
-          <ul>
-            {list.rows.map((row) => (
-              <li key={row.id} className="border-b border-cream-2 last:border-0">
-                <button
-                  onClick={() => onOpen(row.id)}
-                  className={`grid w-full grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 rounded-lg px-2.5 py-2.5 text-left focus-visible:outline-2 focus-visible:outline-ai ${
-                    row.data.status === 'running' ? 'bg-ai-bg/60' : 'hover:bg-cream-1'
-                  }`}
-                >
-                  <span className="truncate text-[14px] font-medium leading-snug text-ink">{row.data.question}</span>
-                  <InvestigationStatusChip row={row} />
-                  <span className="truncate text-[12.5px] text-warm-gray">
-                    {fmtFecha(row.data.createdAt, true)} · {row.data.requestedBy.nombre}
-                  </span>
-                </button>
-              </li>
+          <div className="space-y-3 pb-2">
+            {days.map(([day, rows]) => (
+              <section key={day}>
+                {day && (
+                  <h3 className="mb-1.5 px-0.5 text-[11.5px] font-semibold uppercase tracking-[.06em] text-warm-gray">
+                    {day === today ? t('inv.hoy') : day}
+                  </h3>
+                )}
+                <ul className="space-y-1.5">
+                  {rows.map((row) => (
+                    <li key={row.id}>
+                      <SavedRow row={row} onOpen={() => onOpen(row.id)} />
+                    </li>
+                  ))}
+                </ul>
+              </section>
             ))}
-          </ul>
+          </div>
         )}
         {list.hasMore && (
           <button
@@ -407,11 +433,14 @@ function NewInvestigation({
   conv,
   start,
   questionRef,
+  onDraft,
   onCreated,
 }: {
   conv: Row<Conversation>;
   start: FormStart;
   questionRef: RefObject<HTMLTextAreaElement | null>;
+  /** Called as it changes, so the form can come back the same after leaving the chat. */
+  onDraft(draft: FormStart): void;
   onCreated(id: string): void;
 }) {
   const t = useT();
@@ -445,6 +474,26 @@ function NewInvestigation({
   useEffect(() => {
     if (current.length > 0 && selected === null) setSelected(defaultSelection(rows, conv.id));
   }, [current.length, rows, selected, conv.id]);
+
+  // Untouched, it isn't saved: coming back later should mark the messages written since.
+  useEffect(() => {
+    const started = question.trim() !== '' || uploads.length > 0 || start.refs !== undefined;
+    onDraft({
+      nonce: start.nonce,
+      question,
+      refs:
+        started && selected
+          ? [...selected].map((key) => {
+              const [conversationId, messageId] = key.split('/');
+              return { conversationId, messageId };
+            })
+          : undefined,
+      uploads: uploads.flatMap(({ storagePath, name, size, problem }) =>
+        storagePath && !problem ? [{ storagePath, name, size }] : [],
+      ),
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- onDraft is rebuilt on every render of the panel.
+  }, [question, selected, uploads, start.nonce, start.refs]);
 
   const marked = selected ?? new Set<string>();
   const full = marked.size >= MAX_MESSAGES;
@@ -749,6 +798,40 @@ function Collapsible({
   );
 }
 
+/** Who it's about, in the investigation's own words: it doesn't change if the chat does. */
+export function sourceLabel({ source }: Investigation): string {
+  return [source?.contactNombre, source?.clientNombre].filter(Boolean).join(' · ');
+}
+
+function SentMessages({ id, count }: { id: string; count: number }) {
+  const t = useT();
+  const sent = useDoc<InvestigationSentMessages>(`investigations/${id}/sent/messages`);
+  // Investigations from before these were saved only have the count, at the end of the report.
+  if (!sent) return null;
+  return (
+    <Collapsible title={t('inv.mensajesEnviados')} count={count}>
+      <ol className="space-y-3">
+        {sent.data.messages.map((message, i) => (
+          <li key={i} className="text-[13px] leading-snug">
+            <p className="flex flex-wrap items-baseline gap-x-2 text-[12px]">
+              <span className="font-semibold text-ink">{message.senderName}</span>
+              {message.at && <span className="text-warm-gray">{fmtFecha({ toDate: () => new Date(message.at!) }, true)}</span>}
+              {message.internalNote && <span className="font-semibold text-warn-dark">{t('inv.notaInterna')}</span>}
+            </p>
+            {message.text && <p className="mt-0.5 whitespace-pre-wrap break-words text-ink-2">{message.text}</p>}
+            {message.attachments.map((attachment, j) => (
+              <p key={j} className="mt-0.5 flex items-center gap-1 text-[12px] text-warm-gray">
+                <span aria-hidden className="msr text-[14px]">attach_file</span>
+                <span className="min-w-0 break-words">{attachment.name ?? attachment.type}</span>
+              </p>
+            ))}
+          </li>
+        ))}
+      </ol>
+    </Collapsible>
+  );
+}
+
 function FileRow({ file }: { file: InvestigationFile }) {
   const t = useT();
   const [url, setUrl] = useState<string | null>(null);
@@ -894,14 +977,11 @@ export function InvestigationDetail({
   row,
   actions,
   origin,
-  metaInBar,
 }: {
   row: Row<Investigation>;
   actions?: InvestigationChatActions;
   /** Where it came from, under the question, when that isn't the chat being viewed. */
   origin?: ReactNode;
-  /** The panel already shows the date and author in its top bar. */
-  metaInBar?: boolean;
 }) {
   const t = useT();
   const { status, report, question, error, usedDatabase, messageCount, sha, requestedBy, createdAt, files, unreadableFiles } = row.data;
@@ -912,8 +992,7 @@ export function InvestigationDetail({
     <div className="@container min-h-0 flex-1 overflow-y-auto pr-1 pt-4">
       <div className="flex min-h-full flex-col">
         <header className="flex-none">
-          {(report || !isActive(status) || !metaInBar) && (
-            <div className="mb-2.5 flex flex-wrap items-center gap-x-2.5 gap-y-1">
+          <div className="mb-2.5 flex flex-wrap items-center gap-x-2.5 gap-y-1">
               {report ? (
                 <span className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12.5px] font-bold ${CONCLUSION_STYLE[report.conclusion]}`}>
                   <span aria-hidden className="h-[7px] w-[7px] rounded-full bg-current" />
@@ -922,14 +1001,17 @@ export function InvestigationDetail({
               ) : (
                 !isActive(status) && <InvestigationStatusChip row={row} />
               )}
-              {!metaInBar && (
-                <span className="text-[12px] text-warm-gray">
-                  {fmtFecha(createdAt, true)} · {requestedBy.nombre}
-                </span>
-              )}
+              <span className="text-[12px] text-warm-gray">
+                {fmtFecha(createdAt, true)} · {requestedBy.nombre}
+              </span>
             </div>
-          )}
           <h3 className="max-w-[70ch] whitespace-pre-wrap text-[17px] font-semibold leading-[1.35] text-ink">{question}</h3>
+          {sourceLabel(row.data) && (
+            <p className="mt-1.5 flex items-center gap-1 text-[12.5px] text-ink-2">
+              <span aria-hidden className="msr text-[15px] text-warm-gray">person</span>
+              <span className="min-w-0 truncate">{sourceLabel(row.data)}</span>
+            </p>
+          )}
           {origin}
         </header>
 
@@ -1046,6 +1128,8 @@ export function InvestigationDetail({
               </>
             )}
 
+            <SentMessages id={row.id} count={messageCount} />
+
             {(files?.length ?? 0) > 0 && (
               <Collapsible title={t('inv.archivos')} count={files!.length}>
                 <ul className="space-y-1">
@@ -1072,7 +1156,7 @@ export function InvestigationDetail({
 
             <p className="py-3 text-[12px] text-warm-gray">
               {status === 'done' && !usedDatabase && queries.length === 0 && <>{t('inv.sinBase')} </>}
-              {t('inv.base', { n: messageCount, sha: sha ? sha.slice(0, 8) : '-' })}
+              {t(messageCount === 1 ? 'inv.baseUno' : 'inv.base', { n: messageCount, sha: sha ? sha.slice(0, 8) : '-' })}
             </p>
           </div>
         )}
