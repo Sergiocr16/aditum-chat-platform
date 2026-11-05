@@ -7,7 +7,8 @@ export { demoPayload } from './demo.js';
 export { createTicket } from './tickets.js';
 export { botReply, testBot, aiAssist } from './bot.js';
 export { onBotFeedbackWrite } from './botFeedback.js';
-export { kbIngestPdf, kbSyncHelpCenter, kbSyncNow } from './kb.js';
+export { kbIngestPdf, kbSyncHelpCenter, kbSyncNow, kbReindexAll } from './kb.js';
+export { codeSync, codeSyncNow } from './code/codeIndex.js';
 export { manageTeam, rotateSiteKey } from './team.js';
 export { ticketSlaInit, firstResponseTracker, slaEngine } from './sla.js';
 export { metricsOnConversation, metricsOnResolve, metricsOnCsat, metricsOnMessage } from './metrics.js';
@@ -16,3 +17,25 @@ export { reopenOnCustomerReply } from './waiting.js';
 export { pushNotify } from './push.js';
 export { notifyAgentsOnMessage } from './pushAgentes.js';
 export { setSiteFcmCredentials } from './pushConfig.js';
+export {
+  requestInvestigation,
+  requestFollowUp,
+  cancelInvestigation,
+  investigationRunner,
+  setInvestigatorDb,
+  setInvestigatorPi,
+  testInvestigatorPi,
+  installInvestigatorOnPi,
+  testInvestigatorDb,
+  investigationGateway,
+} from './investigations.js';
+export { addInvestigationToBacklog, setInvestigatorBacklog, testInvestigatorBacklog } from './backlog.js';
+export {
+  confirmWriteStep,
+  createReverseProposal,
+  investigationWriter,
+  rehearseWriteProposal,
+  setInvestigatorWriter,
+  setWritesEnabled,
+  testInvestigatorWriter,
+} from './writes.js';

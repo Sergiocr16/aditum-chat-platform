@@ -5,7 +5,7 @@
 // los valores efectivos son el merge de settings/global.botConfig + override.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { BotConfig, Idioma, KbDoc, KbDocEstado, WidgetConfig } from '@aditum-chat/shared';
+import type { BotConfig, CodeIndexState, Idioma, KbDoc, KbDocEstado, WidgetConfig } from '@aditum-chat/shared';
 import { EMOJI_CATEGORIES, makeT, widgetMessages } from '@aditum-chat/shared';
 import { renderMarkdown } from '@/components/ConversationView';
 // The test chat reuses the REAL widget stylesheet so it always looks identical.
@@ -19,9 +19,12 @@ import {
   guardarBotOverride,
   guardarWidgetMensajes,
   isKbFile,
+  reindexarKb,
+  sincronizarCodigo,
   subirAvatarBot,
   testBotPregunta,
   uploadKbFile,
+  useCodeIndexState,
   useGlobalSettings,
   useKbDocs,
   useSite,
@@ -77,6 +80,22 @@ const M = {
     cambiar: 'Cambiar',
     subiendo: 'Subiendo…',
     comportamiento: 'Comportamiento',
+    codigoTitulo: 'Código del sistema como evidencia',
+    codigoToggle: 'Usar el código de producción para responder',
+    codigoHint: 'El bot explica cómo funciona el sistema sin mostrar nunca el código. No tiene acceso a la base de datos.',
+    codigoEstado: 'Estado del índice',
+    codigoSinIndice: 'Todavía no se ha indexado',
+    codigoIndexado: 'Indexado',
+    codigoArchivos: 'archivos',
+    codigoFragmentos: 'fragmentos',
+    codigoPendientes: 'archivos pendientes; la sincronización continúa sola',
+    codigoExcluidos: 'archivos excluidos por posibles credenciales',
+    codigoSincronizar: 'Sincronizar ahora',
+    codigoSincronizando: 'Sincronizando…',
+    codigoReindexarKb: 'Reindexar base de conocimiento',
+    codigoReindexando: 'Reindexando…',
+    codigoReindexOk: 'Base de conocimiento reindexada: {total} documentos, {failed} con error.',
+    codigoErrorAccion: 'No se pudo completar. Intentá de nuevo.',
     escalar: 'Escalar a agente si no puede resolver',
     escalarPre: 'Tras',
     escalarPost: 'intentos sin resolver',
@@ -148,6 +167,22 @@ const M = {
     cambiar: 'Change',
     subiendo: 'Uploading…',
     comportamiento: 'Behavior',
+    codigoTitulo: 'System code as evidence',
+    codigoToggle: 'Use production code to answer',
+    codigoHint: 'The bot explains how the system works without ever showing the code. It has no access to the database.',
+    codigoEstado: 'Index status',
+    codigoSinIndice: 'Not indexed yet',
+    codigoIndexado: 'Indexed',
+    codigoArchivos: 'files',
+    codigoFragmentos: 'fragments',
+    codigoPendientes: 'files pending; the sync continues on its own',
+    codigoExcluidos: 'files excluded for possible credentials',
+    codigoSincronizar: 'Sync now',
+    codigoSincronizando: 'Syncing…',
+    codigoReindexarKb: 'Reindex knowledge base',
+    codigoReindexando: 'Reindexing…',
+    codigoReindexOk: 'Knowledge base reindexed: {total} documents, {failed} with errors.',
+    codigoErrorAccion: 'Could not complete. Try again.',
     escalar: 'Escalate to an agent when it cannot resolve',
     escalarPre: 'After',
     escalarPost: 'unresolved attempts',
@@ -208,6 +243,7 @@ export default function BotPage() {
   const siteDoc = useSite(esAdmin ? siteId : null);
   const globalDoc = useGlobalSettings(esAdmin);
   const kbDocs = useKbDocs(esAdmin);
+  const codeIndex = useCodeIndexState(esAdmin);
 
   // Draft del override por sitio + estado de guardado.
   const [override, setOverride] = useState<Partial<BotConfig>>({});
@@ -356,6 +392,14 @@ export default function BotPage() {
               m={m}
             />
             <CardKb kbDocs={kbDocs} siteId={siteId} siteNombre={siteNombre} m={m} />
+            <CardCodigo
+              estado={codeIndex}
+              activo={efectivo.codeRagEnabled === true}
+              global={esGlobal('codeRagEnabled')}
+              onActivo={(v) => setCampo('codeRagEnabled', v)}
+              idioma={idioma}
+              m={m}
+            />
           </div>
 
           <div className="flex flex-col gap-4 min-w-0">
@@ -932,6 +976,103 @@ function FilaToggle({
       </div>
       <Toggle checked={checked} onChange={onChange} label={label} />
     </div>
+  );
+}
+
+// -- Código del sistema -------------------------------------------------
+
+function CardCodigo({
+  estado,
+  activo,
+  global,
+  onActivo,
+  idioma,
+  m,
+}: {
+  estado: CodeIndexState | null;
+  activo: boolean;
+  global: boolean;
+  onActivo(v: boolean): void;
+  idioma: Idioma;
+  m: Msgs;
+}) {
+  const [accion, setAccion] = useState<'codigo' | 'kb' | null>(null);
+  const [aviso, setAviso] = useState<string | null>(null);
+
+  const correr = async (tipo: 'codigo' | 'kb') => {
+    setAccion(tipo);
+    setAviso(null);
+    try {
+      if (tipo === 'codigo') {
+        await sincronizarCodigo();
+      } else {
+        const { total, failed } = await reindexarKb();
+        setAviso(m.codigoReindexOk.replace('{total}', String(total)).replace('{failed}', String(failed)));
+      }
+    } catch {
+      setAviso(m.codigoErrorAccion);
+    } finally {
+      setAccion(null);
+    }
+  };
+
+  const indexadoEl = estado?.indexedAt
+    ? new Date(estado.indexedAt).toLocaleString(idioma === 'en' ? 'en-US' : 'es-CR', { timeZone: 'America/Costa_Rica' })
+    : null;
+  const excluidos = estado?.skippedForSecrets?.length ?? 0;
+
+  return (
+    <Card titulo={m.codigoTitulo}>
+      <FilaToggle
+        label={m.codigoToggle}
+        hint={m.codigoHint}
+        checked={activo}
+        global={global}
+        onChange={onActivo}
+        m={m}
+      />
+      <div className="mt-2 pt-3 border-t border-cream-3 text-[11.5px] text-warm-gray-2 flex flex-col gap-1">
+        <span className="text-[10px] font-bold tracking-wider">{m.codigoEstado.toUpperCase()}</span>
+        {indexadoEl ? (
+          <span>
+            {m.codigoIndexado}: {indexadoEl} · {estado?.indexedSha?.slice(0, 8)} · {estado?.files ?? 0} {m.codigoArchivos} ·{' '}
+            {estado?.chunks ?? 0} {m.codigoFragmentos}
+          </span>
+        ) : (
+          <span>{m.codigoSinIndice}</span>
+        )}
+        {(estado?.pendingFiles ?? 0) > 0 && (
+          <span>
+            {estado?.pendingFiles} {m.codigoPendientes}
+          </span>
+        )}
+        {excluidos > 0 && (
+          <span>
+            {excluidos} {m.codigoExcluidos}
+          </span>
+        )}
+        {estado?.lastError && <span className="text-danger break-words">{estado.lastError}</span>}
+        {aviso && <span className="text-ink">{aviso}</span>}
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button
+          type="button"
+          disabled={accion !== null}
+          onClick={() => void correr('codigo')}
+          className="text-[11.5px] font-semibold border border-warm-border rounded px-2.5 py-1.5 bg-white hover:bg-cream-2 disabled:opacity-50"
+        >
+          {accion === 'codigo' ? m.codigoSincronizando : m.codigoSincronizar}
+        </button>
+        <button
+          type="button"
+          disabled={accion !== null}
+          onClick={() => void correr('kb')}
+          className="text-[11.5px] font-semibold border border-warm-border rounded px-2.5 py-1.5 bg-white hover:bg-cream-2 disabled:opacity-50"
+        >
+          {accion === 'kb' ? m.codigoReindexando : m.codigoReindexarKb}
+        </button>
+      </div>
+    </Card>
   );
 }
 

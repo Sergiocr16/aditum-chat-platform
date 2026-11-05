@@ -11,8 +11,9 @@ import { SlaConfigTab } from '@/components/config/SlaConfigTab';
 import { SitiosTab } from '@/components/config/SitiosTab';
 import { EquipoTab } from '@/components/config/EquipoTab';
 import { EtiquetasTab } from '@/components/config/EtiquetasTab';
+import { AnalizadorTab } from '@/components/config/AnalizadorTab';
 
-type Tab = 'widget' | 'sla' | 'sitios' | 'etiquetas' | 'equipo';
+type Tab = 'widget' | 'sla' | 'sitios' | 'etiquetas' | 'equipo' | 'analizador';
 
 const M = {
   es: {
@@ -24,6 +25,7 @@ const M = {
       sitios: 'Sitios conectados',
       etiquetas: 'Etiquetas',
       equipo: 'Equipo y roles',
+      analizador: 'Investigador',
     },
     soloAdmin: 'Solo administradores',
     soloAdminSub: 'Esta sección es exclusiva del rol Admin. Pedile acceso a un administrador.',
@@ -37,13 +39,14 @@ const M = {
       sitios: 'Connected sites',
       etiquetas: 'Tags',
       equipo: 'Team and roles',
+      analizador: 'Investigator',
     },
     soloAdmin: 'Admins only',
     soloAdminSub: 'This section is exclusive to the Admin role. Ask an administrator for access.',
   },
 } as const;
 
-const TABS: Tab[] = ['widget', 'sla', 'sitios', 'etiquetas', 'equipo'];
+const TABS: Tab[] = ['widget', 'sla', 'sitios', 'etiquetas', 'equipo', 'analizador'];
 
 export default function ConfiguracionPage() {
   const { agent, loading } = useAuth();
@@ -98,6 +101,7 @@ export default function ConfiguracionPage() {
         {tab === 'sitios' && <SitiosTab />}
         {tab === 'etiquetas' && <EtiquetasTab />}
         {tab === 'equipo' && <EquipoTab />}
+        {tab === 'analizador' && <AnalizadorTab />}
       </div>
     </div>
   );

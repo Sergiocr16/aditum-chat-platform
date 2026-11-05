@@ -1,5 +1,8 @@
 @import 'tailwindcss';
 
+/* Touch screens: the same query the console uses to tell them apart in code. */
+@custom-variant touch (@media (hover: none));
+
 /* Tokens del diseño de Claude Design — ver packages/shared/src/tokens.ts */
 @theme {
   --font-sans: 'Instrument Sans', system-ui, -apple-system, sans-serif;
@@ -38,6 +41,9 @@
   --color-danger-bright: #d93636;
   --color-danger-bg: #fbe3e1;
 
+  --color-claude: #cc7c5e;
+  --color-claude-dark: #9a4f30;
+  --color-claude-bg: #fbeee8;
   --color-ai: #7a4fb3;
   --color-ai-light: #b9a7e0;
   --color-ai-bg: #f0e8fb;
@@ -103,4 +109,191 @@ body {
   select {
     font-size: 16px !important;
   }
+}
+
+/* Investigation mascot. Steps instead of easing, so it moves like the pixel art it is. */
+@keyframes mascot-breathe {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(1px); }
+}
+@keyframes mascot-tap {
+  0%, 60%, 80%, 100% { transform: translateY(0); }
+  70%, 90% { transform: translateY(-1px); }
+}
+@keyframes mascot-blink {
+  0%, 92%, 100% { transform: scaleY(1); }
+  96% { transform: scaleY(0.15); }
+}
+@keyframes mascot-ponder {
+  0%, 45%, 100% { transform: translateX(0); }
+  50%, 95% { transform: translateX(1px); }
+}
+@keyframes mascot-think {
+  0%, 15%, 100% { opacity: 0.25; }
+  30%, 60% { opacity: 1; }
+}
+@keyframes mascot-question {
+  0%, 40% { opacity: 1; }
+  41%, 100% { opacity: 0; }
+}
+@keyframes mascot-idea {
+  0%, 40% { opacity: 0; }
+  41%, 100% { opacity: 1; }
+}
+@keyframes mascot-sand-top {
+  from { transform: scaleY(1); }
+  to { transform: scaleY(0.1); }
+}
+@keyframes mascot-sand-bottom {
+  from { transform: scaleY(0.1); }
+  to { transform: scaleY(1); }
+}
+@keyframes mascot-sand-fall {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0.4; }
+}
+@keyframes mascot-fall {
+  0% { transform: translateY(0); opacity: 0; }
+  10% { opacity: 1; }
+  85% { transform: translateY(11px); opacity: 1; }
+  86%, 100% { transform: translateY(11px); opacity: 0; }
+}
+@keyframes mascot-fill {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+@keyframes mascot-follow {
+  0%, 100% { transform: translate(1px, -2px); }
+  50% { transform: translate(1px, 1px); }
+}
+@keyframes mascot-read {
+  0%, 100% { transform: translateX(-1px); }
+  50% { transform: translateX(2px); }
+}
+@keyframes mascot-page {
+  0%, 65% { transform: scaleX(1); opacity: 1; }
+  90% { transform: scaleX(0.1); opacity: 1; }
+  91%, 100% { transform: scaleX(0.1); opacity: 0; }
+}
+@keyframes mascot-scroll {
+  from { transform: translateY(0); }
+  to { transform: translateY(-12px); }
+}
+@keyframes mascot-query {
+  0% { transform: translateX(0); opacity: 1; }
+  25% { transform: translateX(4px); opacity: 1; }
+  26%, 100% { transform: translateX(4px); opacity: 0; }
+}
+@keyframes mascot-reply {
+  0%, 69% { transform: translateX(4px); opacity: 0; }
+  70% { transform: translateX(4px); opacity: 1; }
+  95% { transform: translateX(0); opacity: 1; }
+  96%, 100% { transform: translateX(0); opacity: 0; }
+}
+@keyframes mascot-row {
+  0%, 20%, 72%, 100% { opacity: 0.2; }
+  28%, 64% { opacity: 1; }
+}
+@keyframes mascot-answer {
+  0%, 93%, 100% { transform: translateY(0); }
+  94%, 99% { transform: translateY(-2px); }
+}
+@keyframes mascot-pace {
+  0%, 100% { transform: translateX(-1px); }
+  50% { transform: translateX(1px); }
+}
+@keyframes mascot-step {
+  0%, 49% { transform: translateY(0); }
+  50%, 100% { transform: translateY(-1px); }
+}
+@keyframes mascot-hop {
+  0%, 82%, 100% { transform: translateY(0); }
+  84%, 96% { transform: translateY(-1px); }
+}
+@keyframes mascot-lean {
+  0%, 45%, 100% { transform: translateX(0); }
+  50%, 95% { transform: translateX(1px); }
+}
+@keyframes mascot-arm-turn {
+  0%, 62%, 92%, 100% { transform: translateY(0); }
+  66%, 88% { transform: translateY(-3px); }
+}
+@keyframes mascot-arm-push {
+  0%, 26%, 100% { transform: translateX(0); }
+  4%, 22% { transform: translateX(1px); }
+}
+@keyframes mascot-tick-1 {
+  0%, 12% { opacity: 0; }
+  13%, 92% { opacity: 1; }
+  93%, 100% { opacity: 0; }
+}
+@keyframes mascot-tick-2 {
+  0%, 27% { opacity: 0; }
+  28%, 92% { opacity: 1; }
+  93%, 100% { opacity: 0; }
+}
+@keyframes mascot-tick-3 {
+  0%, 42% { opacity: 0; }
+  43%, 92% { opacity: 1; }
+  93%, 100% { opacity: 0; }
+}
+@keyframes mascot-cursor {
+  0%, 57%, 66%, 74%, 83%, 92%, 100% { opacity: 0; }
+  58%, 65%, 75%, 82% { opacity: 1; }
+}
+/* Dips as each tick lands. */
+@keyframes mascot-nod {
+  0%, 12%, 16%, 27%, 31%, 42%, 46%, 100% { transform: translateY(0); }
+  13%, 15%, 28%, 30%, 43%, 45% { transform: translateY(1px); }
+}
+@keyframes mascot-phase-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.mascot-tick { animation-duration: 4.8s; animation-timing-function: steps(1); animation-iteration-count: infinite; }
+.mascot-tick-1 { animation-name: mascot-tick-1; }
+.mascot-tick-2 { animation-name: mascot-tick-2; }
+.mascot-tick-3 { animation-name: mascot-tick-3; }
+.mascot-cursor { animation: mascot-cursor 4.8s steps(1) infinite; }
+.mascot-nod { animation: mascot-nod 4.8s steps(1) infinite; }
+.mascot-breathe { animation: mascot-breathe 2.4s steps(1) infinite; }
+.mascot-tap { animation: mascot-tap 2.4s steps(1) infinite; }
+.mascot-eyes { animation: mascot-blink 3.4s linear infinite; transform-box: fill-box; transform-origin: 50% 50%; }
+.mascot-ponder { animation: mascot-ponder 3s steps(1) infinite; }
+.mascot-question { animation: mascot-question 3s steps(1) infinite; }
+.mascot-idea { animation: mascot-idea 3s steps(1) infinite; opacity: 0; }
+.mascot-think { animation: mascot-think 1.5s steps(5) infinite; }
+.mascot-think-2 { animation-delay: 0.25s; }
+.mascot-think-3 { animation-delay: 0.5s; }
+.mascot-sand-top { animation: mascot-sand-top 4s steps(7) infinite; transform-box: fill-box; transform-origin: 50% 100%; }
+.mascot-sand-bottom { animation: mascot-sand-bottom 4s steps(7) infinite; transform-box: fill-box; transform-origin: 50% 100%; }
+.mascot-sand-fall { animation: mascot-sand-fall 0.6s steps(1) infinite; }
+.mascot-fall { animation: mascot-fall 1.5s steps(11) infinite; }
+.mascot-fall-2 { animation-delay: 0.5s; }
+.mascot-fall-3 { animation-delay: 1s; }
+.mascot-fill { animation: mascot-fill 4.5s steps(11) infinite; transform-box: fill-box; transform-origin: 0 50%; }
+.mascot-follow { animation: mascot-follow 1.5s steps(3) infinite; }
+.mascot-read { animation: mascot-read 1.6s steps(3) infinite; }
+.mascot-page { animation: mascot-page 3s steps(14) infinite; transform-box: fill-box; transform-origin: 0 50%; }
+.mascot-scroll { animation: mascot-scroll 3s steps(12) infinite; }
+.mascot-query { animation: mascot-query 2.4s steps(10) infinite; }
+.mascot-reply { animation: mascot-reply 2.4s steps(10) infinite; opacity: 0; }
+.mascot-row { animation: mascot-row 2.4s steps(1) infinite; }
+.mascot-row-2 { animation-delay: 0.15s; }
+.mascot-row-3 { animation-delay: 0.3s; }
+.mascot-answer { animation: mascot-answer 2.4s steps(1) infinite; }
+.mascot-pace { animation: mascot-pace 2s steps(3) infinite; }
+.mascot-step { animation: mascot-step 0.8s steps(1) infinite; }
+.mascot-step-2 { animation-delay: 0.4s; }
+.mascot-hop { animation: mascot-hop 1.5s steps(1) infinite; }
+.mascot-lean { animation: mascot-lean 3s steps(1) infinite; }
+.mascot-arm-turn { animation: mascot-arm-turn 3s steps(1) infinite; }
+.mascot-arm-push { animation: mascot-arm-push 2.4s steps(1) infinite; }
+.mascot-phase-in { animation: mascot-phase-in 280ms cubic-bezier(0.16, 1, 0.3, 1); }
+@media (prefers-reduced-motion: reduce) {
+  .mascot-breathe, .mascot-tap, .mascot-eyes, .mascot-ponder, .mascot-question, .mascot-idea,
+  .mascot-think, .mascot-sand-top, .mascot-sand-bottom, .mascot-sand-fall, .mascot-fall, .mascot-fill,
+  .mascot-follow, .mascot-read, .mascot-page, .mascot-scroll, .mascot-query, .mascot-reply, .mascot-row,
+  .mascot-answer, .mascot-pace, .mascot-step, .mascot-hop, .mascot-lean, .mascot-arm-turn, .mascot-arm-push,
+  .mascot-tick, .mascot-cursor, .mascot-nod, .mascot-phase-in { animation: none; }
 }

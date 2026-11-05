@@ -1,0 +1,26 @@
+[Unit]
+Description=Aditum production writer (runs only what an admin approved)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=aditum-writer
+Group=aditum-writer
+WorkingDirectory=/opt/aditum-investigator/current
+# Holds the secret to ask for jobs, not the database password: that comes with each approved job.
+EnvironmentFile=/etc/aditum-investigator/writer.env
+ExecStart=/opt/aditum-investigator/node/bin/node dist/writer.js
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+RestrictSUIDSGID=true
+# Keeps the password out of a core dump.
+LimitCORE=0
+
+[Install]
+WantedBy=multi-user.target

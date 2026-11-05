@@ -16,7 +16,8 @@ by Firebase custom claims + Firestore rules. See `README.md` for the full pictur
 ```
 apps/widget      Embeddable widget (Preact + Vite → IIFE widget.js, Shadow DOM)
 apps/dashboard   Agent console (Next.js 15 App Router + Tailwind 4, static export)
-functions        Cloud Functions v2 (bot, tickets, SLA, KB/RAG, push, team, widgetSession)
+functions        Cloud Functions v2 (bot, tickets, SLA, KB/RAG, push, team, widgetSession, investigations)
+services/investigator  Runs on the Raspberry Pi: investigations over production code and read-only data, and the writer for approved changes
 packages/shared  Types (source of truth), design tokens, i18n (es/en) — consumed as raw TS
 ```
 
@@ -69,12 +70,15 @@ automatic; confirm the prod target with the maintainer first. Verified procedure
    prompts nor deletes other functions):
    ```sh
    npx firebase deploy --project aditum-chat-1a5cd \
-     --only firestore:rules,storage,functions:<changed>,hosting:dashboard,hosting:widget
+     --only firestore:rules,firestore:indexes,storage,functions:<changed>,hosting:dashboard,hosting:widget
    ```
 
 `apps/dashboard/out/` is committed; `apps/widget/dist/` + `functions/lib/` are gitignored. The
 trailing "cleaning up build images" warning is harmless (minor GCR cost, self-corrects next deploy).
-Functions need their prod secrets already set (`ANTHROPIC_API_KEY`, `CONFIG_KEK`).
+Functions need their prod secrets already set (`ANTHROPIC_API_KEY`, `CONFIG_KEK`, `VOYAGE_API_KEY`,
+`GITHUB_CODE_TOKEN`, `RUNNER_SHARED_SECRET`, `GATEWAY_SHARED_SECRET`, `WRITER_SHARED_SECRET`); a deploy fails if a declared secret doesn't exist.
+They also need `functions/.env` (gitignored, copy `functions/.env.example`) with `CODE_REPO` and `CODE_JAVA_PACKAGE`:
+which repository is production's. Without it the code index stops syncing and the Pi can't be installed.
 
 ## Hard rules
 
@@ -101,8 +105,11 @@ Functions need their prod secrets already set (`ANTHROPIC_API_KEY`, `CONFIG_KEK`
   composers) — test touch behavior with that media query, not by narrowing the window.
 - **React StrictMode** double-invokes effects in dev — expect transient states in the console.
 - **Secrets** live in `functions/.secret.local` (gitignored): `ANTHROPIC_API_KEY`,
-  `VOYAGE_API_KEY` (optional), `CONFIG_KEK`. Never commit them. Bot models are **fixed in code**
-  (`bot.ts`): `claude-haiku-4-5` (widget bot + testBot), `claude-sonnet-5` (aiAssist).
+  `VOYAGE_API_KEY`, `GITHUB_CODE_TOKEN`, `RUNNER_SHARED_SECRET`, `GATEWAY_SHARED_SECRET`, `WRITER_SHARED_SECRET`, `CONFIG_KEK`. Never commit them. Bot models are **fixed in
+  code** (`bot.ts`): `claude-haiku-5-5` (widget bot + testBot), `claude-sonnet-5` (aiAssist).
+- **The bot answers only with evidence** (`functions/src/evidence.ts`): a reply without a valid
+  quoted source, or one exposing code, is replaced by a fixed "couldn't confirm" message. It can use a
+  private index of the production repo but has no access to the production database.
 - All privileged writes (tickets, keys, team, KB chunks, metrics, bot feedback stamping/handoff)
   go through Cloud Functions with the Admin SDK — client SDK writes are constrained by
   `firestore.rules`.
@@ -136,7 +143,23 @@ Functions need their prod secrets already set (`ANTHROPIC_API_KEY`, `CONFIG_KEK`
   `adjuntos/{convId}/`. `widgetSession` stamps the owning `siteId` on `clients`/`groups` and rejects
   a host asserting another site's `clientId`/`groupId`. Agents are global Aditum staff by design —
   the per-agent `sitios` field only routes push, not data access.
-- **`aiAssist`** (console "sugerir respuesta" + AI ticket draft) is scoped to the **current
-  conversation only** (that doc's messages, never the contact's stitched history), grounds reply
-  suggestions on the bot KB via RAG, and returns a structured title+description for AI tickets. The
-  console surfaces it in an **editable review modal** — never auto-inserted.
+- **`aiAssist`** (console AI ticket draft) is scoped to the **current conversation only** (that doc's
+  messages, never the contact's stitched history) and returns a structured title+description, shown
+  in an **editable review modal**, never auto-inserted. Its `sugerir_respuesta` mode has no console
+  caller anymore: suggested replies now come from investigations.
+- **This repo is public.** Don't commit anything that describes production's internals. The production
+  repository's name and Java package are settings (`functions/.env`; on the Pi, `REPO_URL`/`REPO_BRANCH`,
+  which the install fills in).
+- **Investigations** (`services/investigator`, `functions/investigations.ts`, `InvestigationPanel`) are
+  separate from the bot: the bot never touches production data, and Claude only reads production with
+  a read-only user, after showing code evidence. It can also propose a change (`write_proposal`,
+  `packages/shared/src/writeProposal.ts`): structured operations, one row each by primary key. Only
+  the writer on the Pi applies it, after an admin rehearses it and confirms 3 steps (`functions/writes.ts`,
+  `WriteProposal.tsx`); writes start off, and nothing retries by itself. A confirmed bug can go to the Notion backlog with one click
+  (`functions/backlog.ts`), and an agent can keep asking (`requestFollowUp`), each round resuming Claude's session on the same commit, or starting from the history otherwise. See `services/investigator/README.md`.
+  In the console they open from the "Investigar" button next to "Enviar", as a resizable side panel next to the chat, which each chat remembers: every
+  investigation stays in its list, and while one runs the agent sees only a rough phase taken from its
+  latest progress event (`useInvestigationPhase`), with Claude's mascot acting out the phase.
+  They can read files: the attachments of the selected messages (only under that conversation's own
+  `adjuntos/{convId}/`, same check as `botReply`) and what the agent uploads. The Pi fetches each by id,
+  turns Excel and Word into text in a separate process as Claude's user, and deletes them after the job.

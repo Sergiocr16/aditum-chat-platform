@@ -17,7 +17,7 @@ import {
 } from 'firebase/firestore';
 import { getDownloadURL, ref as storageRef, uploadBytes } from 'firebase/storage';
 import { httpsCallable } from 'firebase/functions';
-import type { BotConfig, GlobalSettings, KbDoc, Site, WidgetConfig } from '@aditum-chat/shared';
+import type { BotConfig, CodeIndexState, GlobalSettings, KbDoc, Site, WidgetConfig } from '@aditum-chat/shared';
 import { db, fns, storage } from './firebase';
 import { useDoc, type Row } from './data';
 
@@ -37,6 +37,11 @@ export function useKbDocs(enabled: boolean): Row<KbDoc>[] {
     });
   }, [enabled]);
   return rows;
+}
+
+/** code_index/state: progress of the private repository index (admins only). */
+export function useCodeIndexState(enabled: boolean): CodeIndexState | null {
+  return useDoc<CodeIndexState>(enabled ? 'code_index/state' : null)?.data ?? null;
 }
 
 /** settings/global — para calcular los valores efectivos (herencia). */
@@ -135,6 +140,25 @@ export async function subirAvatarBot(siteId: string, file: File): Promise<string
   const ref = storageRef(storage, `perfiles/bot-${siteId}.png`);
   await uploadBytes(ref, file, { contentType: file.type || 'image/png' });
   return getDownloadURL(ref);
+}
+
+// A run can take the function's full 9 minutes; the client default would give up at 70 s.
+const LONG_CALL = { timeout: 540_000 };
+
+/** Runs one sync of the repository index now. The schedule continues whatever remains. */
+export async function sincronizarCodigo(): Promise<{ pendingFiles: number; indexedSha: string | null }> {
+  const res = await httpsCallable<unknown, { pendingFiles: number; indexedSha: string | null }>(
+    fns,
+    'codeSyncNow',
+    LONG_CALL,
+  )({});
+  return res.data;
+}
+
+/** Reindexes the whole KB; needed once after enabling embeddings. */
+export async function reindexarKb(): Promise<{ total: number; failed: number }> {
+  const res = await httpsCallable<unknown, { total: number; failed: number }>(fns, 'kbReindexAll', LONG_CALL)({});
+  return res.data;
 }
 
 /** Callable testBot — panel "Probar el bot" (config actual sin guardar). */

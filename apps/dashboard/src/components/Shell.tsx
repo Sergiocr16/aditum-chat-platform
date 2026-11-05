@@ -30,6 +30,7 @@ export const useMobileTopbar = () => useContext(TopbarCtx);
 const NAV = [
   { href: '/inbox', icon: 'inbox', key: 'nav.inbox' as const },
   { href: '/tickets', icon: 'confirmation_number', key: 'nav.tickets' as const },
+  { href: '/investigaciones', icon: 'troubleshoot', key: 'nav.investigaciones' as const },
   { href: '/contactos', icon: 'group', key: 'nav.contactos' as const },
   { href: '/bot', icon: 'smart_toy', key: 'nav.bot' as const, badge: 'CLAUDE', admin: true },
   { href: '/reportes', icon: 'monitoring', key: 'nav.reportes' as const, admin: true },

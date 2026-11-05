@@ -18,6 +18,7 @@ import {
 } from '@/lib/data';
 import type { Conversation } from '@aditum-chat/shared';
 import { toggleContactTag, useTags } from '@/lib/data-tags';
+import { InvestigationsButton } from './InvestigationsButton';
 import { ConvertTicketModal } from './ConvertTicketModal';
 import { GroupClientsList } from './GroupClientsList';
 import { EtiquetasBlock } from './TagAssign';
@@ -27,6 +28,7 @@ export function ContextPanel({
   contactId,
   onScrollToConversation,
   onTicketCreado,
+  onOpenInvestigations,
   width,
   abierto,
   onClose,
@@ -37,6 +39,8 @@ export function ContextPanel({
   onScrollToConversation?(convId: string): void;
   /** Tras crear un ticket de una conversación: refresca su bloque y salta a ella. */
   onTicketCreado?(convId: string): void;
+  /** Opens the Investigar panel on this chat's list. */
+  onOpenInvestigations?(): void;
   /** Ancho controlado (columna redimensionable del inbox). */
   width?: number;
   /** Mobile drawer: open state + close callback (below lg; static panel at lg+). */
@@ -160,6 +164,8 @@ export function ContextPanel({
           emptyLabel={t('ctx.sinEtiquetasSitio')}
         />
       </Section>
+
+      <InvestigationsButton onOpen={onOpenInvestigations} />
 
       {/* Tickets previos — clic abre el detalle del ticket */}
       {tickets.length > 0 && (

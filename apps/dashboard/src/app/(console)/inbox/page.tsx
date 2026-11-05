@@ -38,14 +38,19 @@ export default function InboxPage() {
   const [filtro, setFiltro] = useState<InboxFiltro>('todas');
   const [selId, setSelId] = useState<string | null>(null);
   const [scrollAOrigen, setScrollAOrigen] = useState<string | null>(null);
+  // Viene de la página de Investigaciones (/inbox?c=<convId>&inv=<id>).
+  const [investigacionLink, setInvestigacionLink] = useState<{ convId: string; id: string } | null>(null);
 
   // Deep link a una conversación (/inbox?c=<convId> desde una notificación push):
   // la selecciona y sube el hilo hasta ella.
   useEffect(() => {
-    const c = new URLSearchParams(window.location.search).get('c');
+    const params = new URLSearchParams(window.location.search);
+    const c = params.get('c');
     if (c) {
       setSelId(c);
       setScrollAOrigen(c);
+      const inv = params.get('inv');
+      if (inv) setInvestigacionLink({ convId: c, id: inv });
     }
   }, []);
 
@@ -118,6 +123,9 @@ export default function InboxPage() {
   const esDirectaCtx = !!(sel && sel.data.tipo === 'directa' && sel.data.contactId);
   const esGrupoCtx = !!(sel && sel.data.tipo === 'grupo');
   const mostrarCtx = esDirectaCtx || esGrupoCtx;
+  // The investigations panel takes the context panel's place while it's open.
+  const [investigando, setInvestigando] = useState(false);
+  const ctxOculto = ctxColapsado || investigando;
 
   // Below lg the context panel becomes a drawer; reset it when switching conversations.
   const [ctxAbierto, setCtxAbierto] = useState(false);
@@ -134,6 +142,10 @@ export default function InboxPage() {
 
   // Para que el panel de contexto pueda subir el hilo a una conversación anterior.
   const convViewRef = useRef<ConversationViewHandle>(null);
+  function abrirInvestigaciones() {
+    convViewRef.current?.abrirInvestigaciones();
+    setCtxAbierto(false);
+  }
 
   // Deep link a un segmento concreto (ej. "Ver conversación" desde un ticket):
   // una vez montada la vista de esa conversación, sube el hilo hasta ella.
@@ -228,7 +240,9 @@ export default function InboxPage() {
             onOpenConversation={setSelId}
             onOpenContext={mostrarCtx ? () => setCtxAbierto(true) : undefined}
             ctxColapsado={ctxColapsado}
-            onToggleCtx={mostrarCtx ? toggleCtxColapsado : undefined}
+            onToggleCtx={mostrarCtx && !investigando ? toggleCtxColapsado : undefined}
+            onInvestigarChange={setInvestigando}
+            investigacionId={investigacionLink?.convId === sel.id ? investigacionLink.id : null}
           />
         ) : (
           <InboxVacio filas={filas} t={t} />
@@ -236,7 +250,7 @@ export default function InboxPage() {
       </section>
 
       {/* Divisor arrastrable conversación ↔ contexto (pantallas anchas) */}
-      {montado && esLg && mostrarCtx && !ctxColapsado && (
+      {montado && esLg && mostrarCtx && !ctxOculto && (
         <ResizeHandle
           className="hidden lg:block"
           onStart={(e) => contexto.startDrag(e, -1)}
@@ -259,10 +273,11 @@ export default function InboxPage() {
           contactId={sel!.data.contactId!}
           onScrollToConversation={(id) => convViewRef.current?.scrollToConversation(id)}
           onTicketCreado={(id) => convViewRef.current?.refrescarYVer(id)}
+          onOpenInvestigations={abrirInvestigaciones}
           width={montado && esLg ? contexto.width : undefined}
           abierto={ctxAbierto}
           onClose={() => setCtxAbierto(false)}
-          colapsado={ctxColapsado}
+          colapsado={ctxOculto}
         />
       )}
       {esGrupoCtx && (
@@ -270,10 +285,11 @@ export default function InboxPage() {
           conv={sel!}
           onScrollToConversation={(id) => convViewRef.current?.scrollToConversation(id)}
           onTicketCreado={(id) => convViewRef.current?.refrescarYVer(id)}
+          onOpenInvestigations={abrirInvestigaciones}
           width={montado && esLg ? contexto.width : undefined}
           abierto={ctxAbierto}
           onClose={() => setCtxAbierto(false)}
-          colapsado={ctxColapsado}
+          colapsado={ctxOculto}
         />
       )}
     </div>

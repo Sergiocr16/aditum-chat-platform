@@ -38,13 +38,15 @@ export function useColumnWidth(key: string, def: number, min: number, max: numbe
   }, [key, min, max]);
 
   const startDrag = useCallback(
-    (e: React.MouseEvent, dir: 1 | -1) => {
+    (e: React.MouseEvent, dir: 1 | -1, room = max) => {
       e.preventDefault();
       const startX = e.clientX;
-      const startW = ref.current;
+      // Less room than `max`: the column can't show more, so a drag shouldn't count more either.
+      const hi = Math.max(min, Math.min(max, room));
+      const startW = clamp(ref.current, min, hi);
       let latest = startW;
       const onMove = (ev: MouseEvent) => {
-        latest = clamp(startW + dir * (ev.clientX - startX), min, max);
+        latest = clamp(startW + dir * (ev.clientX - startX), min, hi);
         setWidth(latest);
       };
       const onUp = () => {

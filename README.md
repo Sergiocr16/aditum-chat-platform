@@ -408,14 +408,13 @@ design** — the per-agent "sites" field only routes push notifications, not dat
   interpreted.
 - `testBot` ("Probar el bot" in `/bot`) is a **replica of the widget chat**: bot header + greeting,
   WhatsApp-style bubbles, **multi-turn history** and **image attachments** the model analyzes via
-  vision (JPG/PNG/GIF/WebP ≤ 4 MB). `aiAssist` drafts a reply or a ticket title+description **from
-  the active conversation only** (that doc's messages, never the contact's stitched history); reply
-  suggestions are grounded on the bot KB via RAG, and the console surfaces them in an **editable
-  review modal** (edit / regenerate / confirm) — never auto-inserted. Both are agent-only callables.
+  vision (JPG/PNG/GIF/WebP ≤ 4 MB). `aiAssist` drafts a ticket title+description **from
+  the active conversation only** (that doc's messages, never the contact's stitched history), and the
+  console surfaces it in an **editable review modal**, never auto-inserted. Both are agent-only callables.
 - **Knowledge base** (`/bot`): accepts **PDF, TXT and MD** — file picker or **drag & drop** (multi
   file), with a search box over the document list. `kbIngestPdf` (storage trigger) parses PDFs with
   `pdf-parse` and ingests text files as UTF-8; URLs re-sync daily.
-- **Embeddings** use **Voyage AI** (`voyage-3.5-lite`, 768-dim) with a keyword-search fallback
+- **Embeddings** use **Voyage AI** (`voyage-3.5-lite`, 1024-dim) with a keyword-search fallback
   when `VOYAGE_API_KEY` is unset; semantic search uses Firestore `findNearest` (COSINE).
 
 ---

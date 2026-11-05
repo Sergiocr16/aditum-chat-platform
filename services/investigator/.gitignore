@@ -1,0 +1,4 @@
+dist/
+# The repo is public: these describe the whole production schema.
+deploy/pii-map.yml
+deploy/*.generated.sql

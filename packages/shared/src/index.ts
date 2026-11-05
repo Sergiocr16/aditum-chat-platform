@@ -3,6 +3,7 @@ export * from './tokens';
 export * from './i18n';
 export * from './schedule';
 export * from './emoji';
+export * from './writeProposal';
 
 export const TICKET_NUMBER_PREFIX = 'TK';
 
@@ -19,3 +20,4 @@ export function contactIdFor(siteId: string, externalId: string): string {
 export function groupConversationIdFor(siteId: string, groupId: string): string {
   return `grupo_${siteId}_${groupId}`;
 }
+export * from './investigations';

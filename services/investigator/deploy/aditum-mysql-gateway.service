@@ -1,0 +1,22 @@
+[Unit]
+Description=Aditum read-only MySQL gateway (MCP)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=mysql-gateway
+Group=mysql-gateway
+WorkingDirectory=/opt/aditum-investigator/current
+# Only this user's process gets the database credentials.
+EnvironmentFile=/etc/aditum-investigator/gateway.env
+ExecStart=/opt/aditum-investigator/node/bin/node dist/gateway-main.js
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/aditum-mysql-gateway
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

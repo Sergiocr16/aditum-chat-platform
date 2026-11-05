@@ -5,6 +5,7 @@ import type { Client, Conversation, Group, Ticket } from '@aditum-chat/shared';
 import { categoryLabel, ticketStatusLabels } from '@aditum-chat/shared';
 import { useAuth } from '@/lib/auth';
 import { useT } from '@/lib/i18n';
+import { InvestigationsButton } from './InvestigationsButton';
 import { ConvHistorialRow, PanelLista, TicketCard } from './PanelLista';
 import {
   fmtFecha,
@@ -29,6 +30,7 @@ export function GroupContextPanel({
   width,
   onScrollToConversation,
   onTicketCreado,
+  onOpenInvestigations,
   abierto,
   onClose,
   colapsado,
@@ -37,6 +39,8 @@ export function GroupContextPanel({
   width?: number;
   onScrollToConversation?(convId: string): void;
   onTicketCreado?(convId: string): void;
+  /** Opens the Investigar panel on this chat's list. */
+  onOpenInvestigations?(): void;
   /** Mobile drawer: open state + close callback (below lg; static panel at lg+). */
   abierto?: boolean;
   onClose?(): void;
@@ -162,6 +166,8 @@ export function GroupContextPanel({
           />
         </Section>
       )}
+
+      <InvestigationsButton onOpen={onOpenInvestigations} />
 
       {/* Tickets del condominio — clic abre el detalle */}
       {tickets.length > 0 && (
