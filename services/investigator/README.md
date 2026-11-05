@@ -72,7 +72,7 @@ must match `functions/.secret.local`.
 2. **Firebase:** set the `RUNNER_SHARED_SECRET`, `GATEWAY_SHARED_SECRET` and `WRITER_SHARED_SECRET` secrets and deploy the
    functions and indexes.
 
-3. **Install, from the console.** Under Configuración → Analizador an admin saves the Pi's public IP, SSH
+3. **Install, from the console.** Under Configuración → Investigador an admin saves the Pi's public IP, SSH
    port, user and password, compares the fingerprint, pastes a token from `claude setup-token` and
    presses **Instalar en la Pi**. The user needs `sudo`. A Cloud Function logs in and runs
    `deploy/install.sh` from a checkout of `main` (`INVESTIGATOR_GIT_REF` overrides it). The script is safe
@@ -83,7 +83,7 @@ must match `functions/.secret.local`.
    Against the emulators, set `INVESTIGATOR_GIT_REF` and `INVESTIGATOR_PUBLIC_FUNCTIONS_URL` (a functions URL
    the Pi can reach) in `functions/.env.local`.
 
-4. **Connection:** an admin enters the host, user and password under Configuración → Analizador, which
+4. **Connection:** an admin enters the host, user and password under Configuración → Investigador, which
    shows the Pi's public IP for production's firewall. The gateway fetches them and tests them from
    the Pi. It refuses a user with more than `SELECT` on that database, and rechecks every hour.
    For MySQL's certificate to be verified, point `RO_DB_CA_FILE` at its CA (on RDS, the region's bundle).
@@ -95,7 +95,7 @@ must match `functions/.secret.local`.
    close the port until the next update.
 
 6. **Writes (optional, off by default).** Run `deploy/create-write-user.sql` by hand, listing only the
-   tables it may touch. Under Configuración → Analizador → Escrituras an admin saves that connection with
+   tables it may touch. Under Configuración → Investigador → Escrituras an admin saves that connection with
    the server's CA certificate (on RDS, the region's bundle) and turns on the switch once its check
    passes. Without a certificate it refuses to connect, and it checks the host name too, so use the
    name on the certificate and not an IP. Before granting a table, find out what cache the app

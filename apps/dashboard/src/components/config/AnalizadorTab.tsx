@@ -1,6 +1,6 @@
 'use client';
 
-// Tab "Analizador" de /configuracion: cómo llegar a la Raspberry Pi y su conexión a la base de producción.
+// Tab "Investigador" de /configuracion: cómo llegar a la Raspberry Pi y su conexión a la base de producción.
 // Las contraseñas nunca vuelven al navegador. La Pi se prueba desde el servidor; MySQL, desde la Pi.
 
 import { useEffect, useState } from 'react';
@@ -44,7 +44,7 @@ import { Campo } from './ui';
 const M = {
   es: {
     titulo: 'Conexión a producción',
-    subtitulo: 'Con esta conexión el analizador consulta datos de producción en las investigaciones',
+    subtitulo: 'Con esta conexión el investigador consulta datos de producción en las investigaciones',
     host: 'IP o host',
     puerto: 'Puerto',
     usuario: 'Usuario',
@@ -63,10 +63,10 @@ const M = {
     pendiente: 'Probando desde la Pi…',
     correcta: 'Conexión correcta',
     fallida: 'La conexión no pasó la prueba y no se va a usar',
-    piOnline: 'El analizador está activo en la Pi',
+    piOnline: 'El investigador está activo en la Pi',
     ipFirewall: 'MySQL debe permitir conexiones desde',
     sinPrueba: 'Todavía no hay una conexión guardada.',
-    piApagada: 'El analizador no responde en la Pi, así que la prueba corre cuando vuelva.',
+    piApagada: 'El investigador no responde en la Pi, así que la prueba corre cuando vuelva.',
     escrituras: {
       titulo: 'Escrituras en producción',
       subtitulo: 'Con esta conexión se aplican los cambios que un admin aprueba en una investigación',
@@ -123,7 +123,7 @@ const M = {
     },
     pi: {
       titulo: 'Raspberry Pi',
-      subtitulo: 'La máquina donde corre el analizador',
+      subtitulo: 'La máquina donde corre el investigador',
       host: 'IP pública o host',
       puerto: 'Puerto SSH',
       aviso: 'El servidor de Aditum Chat entra por SSH, así que el router tiene que dejar pasar este puerto hacia la Pi.',
@@ -135,8 +135,8 @@ const M = {
       quitarConfirmar: '¿Seguro? Se borran la contraseña y la huella guardadas.',
       checks: { connect: 'Acceso', hostKey: 'Huella', system: 'Máquina', claude: 'Claude Code' },
       instalar: {
-        titulo: 'Analizador en la Pi',
-        descripcion: 'Instala o actualiza el analizador. Tarda varios minutos y este usuario necesita sudo.',
+        titulo: 'Investigador en la Pi',
+        descripcion: 'Instala o actualiza el investigador. Tarda varios minutos y este usuario necesita sudo.',
         token: 'Token de Claude Code',
         tokenAyuda: 'Generalo con `claude setup-token` en una máquina con tu sesión de Claude.',
         tokenGuardado: 'Guardado. Dejalo vacío para no cambiarlo.',
@@ -152,14 +152,14 @@ const M = {
         detalle: 'Ver detalle',
         bloqueado: 'Se puede instalar cuando la Pi responda.',
         sinInstalar: 'Todavía no se ha instalado.',
-        noResponde: 'El analizador no responde en la Pi',
+        noResponde: 'El investigador no responde en la Pi',
         ultima: 'Última instalación',
         pasos: {
           connect: 'Entrando a la Pi',
           prepare: 'Revisando la máquina',
           users: 'Creando usuarios y carpetas',
           node: 'Instalando Node',
-          build: 'Compilando el analizador',
+          build: 'Compilando el investigador',
           claude: 'Instalando Claude Code',
           config: 'Guardando la configuración',
           services: 'Arrancando los servicios',
@@ -177,7 +177,7 @@ const M = {
   },
   en: {
     titulo: 'Production connection',
-    subtitulo: 'The analyzer uses this connection to query production data during investigations',
+    subtitulo: 'The investigator uses this connection to query production data during investigations',
     host: 'IP or host',
     puerto: 'Port',
     usuario: 'User',
@@ -196,10 +196,10 @@ const M = {
     pendiente: 'Testing from the Pi…',
     correcta: 'Connection OK',
     fallida: "The connection failed the test and won't be used",
-    piOnline: 'The analyzer is running on the Pi',
+    piOnline: 'The investigator is running on the Pi',
     ipFirewall: 'MySQL must allow connections from',
     sinPrueba: 'No connection saved yet.',
-    piApagada: "The analyzer isn't responding on the Pi, so the test runs when it returns.",
+    piApagada: "The investigator isn't responding on the Pi, so the test runs when it returns.",
     escrituras: {
       titulo: 'Production writes',
       subtitulo: 'This connection applies the changes an admin approves in an investigation',
@@ -256,7 +256,7 @@ const M = {
     },
     pi: {
       titulo: 'Raspberry Pi',
-      subtitulo: 'The machine that runs the analyzer',
+      subtitulo: 'The machine that runs the investigator',
       host: 'Public IP or host',
       puerto: 'SSH port',
       aviso: 'The Aditum Chat server logs in over SSH, so the router has to forward this port to the Pi.',
@@ -268,8 +268,8 @@ const M = {
       quitarConfirmar: 'Are you sure? The saved password and fingerprint are deleted.',
       checks: { connect: 'Access', hostKey: 'Fingerprint', system: 'Machine', claude: 'Claude Code' },
       instalar: {
-        titulo: 'Analyzer on the Pi',
-        descripcion: 'Installs or updates the analyzer. It takes several minutes and this user needs sudo.',
+        titulo: 'Investigator on the Pi',
+        descripcion: 'Installs or updates the investigator. It takes several minutes and this user needs sudo.',
         token: 'Claude Code token',
         tokenAyuda: 'Generate it with `claude setup-token` on a machine signed in to Claude.',
         tokenGuardado: 'Saved. Leave it empty to keep it.',
@@ -285,14 +285,14 @@ const M = {
         detalle: 'Show details',
         bloqueado: 'You can install it once the Pi responds.',
         sinInstalar: "It hasn't been installed yet.",
-        noResponde: "The analyzer isn't responding on the Pi",
+        noResponde: "The investigator isn't responding on the Pi",
         ultima: 'Last install',
         pasos: {
           connect: 'Logging in to the Pi',
           prepare: 'Checking the machine',
           users: 'Creating users and folders',
           node: 'Installing Node',
-          build: 'Building the analyzer',
+          build: 'Building the investigator',
           claude: 'Installing Claude Code',
           config: 'Saving the settings',
           services: 'Starting the services',

@@ -205,7 +205,7 @@ export const requestInvestigation = onCall({ region: 'us-central1' }, async (req
     throw new HttpsError('invalid-argument', invalid ?? 'Falta la conversación.');
   }
   const condominiums = cleanCondominiums(req.data.condominiums);
-  if (!condominiums) throw new HttpsError('invalid-argument', 'La lista de condominios no es válida.');
+  if (!condominiums) throw new HttpsError('invalid-argument', 'La lista de clientes no es válida.');
 
   const anchor = (await db.doc(`conversations/${conversationId}`).get()).data() as Conversation | undefined;
   const threadKey = anchor ? threadKeyOf(anchor) : null;
@@ -416,7 +416,7 @@ async function failStaleJobs() {
       .map((doc) =>
         doc.ref.update({
           status: 'failed',
-          error: 'El analizador dejó de responder.',
+          error: 'El investigador dejó de responder.',
           finishedAt: FieldValue.serverTimestamp(),
         }),
       ),
