@@ -88,10 +88,13 @@ export function InvestigationPanel({
   onOpenConversation,
   onUseReply,
   onNotifyClient,
+  openId,
 }: {
   conv: Row<Conversation>;
   threadKey: string | null;
   seed: InvestigationSeed | null;
+  /** Opens with this investigation showing, e.g. when arriving from the Investigaciones page. */
+  openId?: string | null;
   onOpenConversation?(conversationId: string): void;
   onUseReply(texto: string): void;
   /** Sends a text to the chat, as if the agent had written it. */
@@ -100,7 +103,7 @@ export function InvestigationPanel({
   const t = useT();
   const [scope, setScope] = useState<'chat' | 'all'>('chat');
   const list = useInvestigationList(scope === 'chat' ? threadKey : null);
-  const [pane, setPane] = useState<Pane>(seed ? 'new' : null);
+  const [pane, setPane] = useState<Pane>(openId ? { id: openId } : seed ? 'new' : null);
   const [form, setForm] = useState<FormStart>(() => (seed ? { nonce: seed.nonce, refs: [seed.ref] } : { nonce: 0 }));
   const questionRef = useRef<HTMLTextAreaElement>(null);
   // Investigations the client was already told about, so one click can't become two messages.
@@ -180,19 +183,37 @@ export function InvestigationPanel({
           </div>
 
           {selectedId && selected?.id === selectedId && (
-            <Detail
+            <InvestigationDetail
               key={selectedId}
               row={selected}
-              sameChat={selected.data.threadKey === threadKey}
-              onUseReply={onUseReply}
-              notified={notified.has(selectedId)}
-              onNotifyClient={async (texto) => {
-                await onNotifyClient(texto);
-                setNotified((current) => new Set(current).add(selectedId));
-              }}
-              onOpenConversation={onOpenConversation}
-              onRetry={() =>
-                openForm({ nonce: Date.now(), question: selected.data.question, refs: selected.data.messageRefs })
+              actions={
+                selected.data.threadKey === threadKey
+                  ? {
+                      onUseReply,
+                      notified: notified.has(selectedId),
+                      onNotifyClient: async (texto) => {
+                        await onNotifyClient(texto);
+                        setNotified((current) => new Set(current).add(selectedId));
+                      },
+                      onRetry: () =>
+                        openForm({ nonce: Date.now(), question: selected.data.question, refs: selected.data.messageRefs }),
+                    }
+                  : undefined
+              }
+              origin={
+                selected.data.threadKey === threadKey ? undefined : (
+                  <p className="mt-1.5 flex flex-wrap items-center gap-x-2 text-[12px] text-warm-gray">
+                    {t('inv.otroChat')}
+                    {onOpenConversation && (
+                      <button
+                        onClick={() => onOpenConversation(selected.data.conversationId)}
+                        className="font-semibold text-navy hover:underline"
+                      >
+                        {t('inv.irAlChat')}
+                      </button>
+                    )}
+                  </p>
+                )
               }
             />
           )}
@@ -339,7 +360,7 @@ function InvestigatorRobot({ pose, label }: { pose: RobotPose; label: string }) 
   );
 }
 
-function StatusChip({ row }: { row: Row<Investigation> }) {
+export function InvestigationStatusChip({ row }: { row: Row<Investigation> }) {
   const t = useT();
   const { status, report } = row.data;
   if (status === 'done' && report) {
@@ -429,7 +450,7 @@ function SavedList({
                 >
                   <span className="line-clamp-2 text-[12.5px] font-semibold leading-snug text-ink">{row.data.question}</span>
                   <span className="mt-1 flex items-center gap-1.5">
-                    <StatusChip row={row} />
+                    <InvestigationStatusChip row={row} />
                     <span className="truncate text-[10.5px] text-warm-gray">
                       {fmtFecha(row.data.createdAt, true)} · {row.data.requestedBy.nombre}
                     </span>
@@ -659,17 +680,7 @@ function formatElapsed(ms: number): string {
 }
 
 /** Only a rough idea of where it is: the individual steps it takes aren't shown. */
-function Working({
-  row,
-  canNotify,
-  notified,
-  onNotifyClient,
-}: {
-  row: Row<Investigation>;
-  canNotify: boolean;
-  notified: boolean;
-  onNotifyClient(texto: string): Promise<void>;
-}) {
+function Working({ row, actions }: { row: Row<Investigation>; actions?: InvestigationChatActions }) {
   const t = useT();
   const running = row.data.status === 'running';
   const phase = useInvestigationPhase(running ? row.id : null);
@@ -691,7 +702,7 @@ function Working({
       {since > 0 && (
         <p className="mt-2 text-[12px] tabular-nums text-ink-2">{t('inv.transcurrido', { t: formatElapsed(now - since) })}</p>
       )}
-      {canNotify && <NotifyClient notified={notified} onNotifyClient={onNotifyClient} />}
+      {actions && <NotifyClient notified={actions.notified} onNotifyClient={actions.onNotifyClient} />}
       <button
         onClick={() => void cancelInvestigation(row.id)}
         className="mt-2 rounded-lg px-3 py-1.5 text-[12px] font-semibold text-warm-gray hover:bg-cream-1 hover:text-ink"
@@ -747,22 +758,23 @@ function NotifyClient({ notified, onNotifyClient }: { notified: boolean; onNotif
   );
 }
 
-function Detail({
-  row,
-  sameChat,
-  onUseReply,
-  notified,
-  onNotifyClient,
-  onOpenConversation,
-  onRetry,
-}: {
-  row: Row<Investigation>;
-  sameChat: boolean;
+/** What only makes sense from inside the investigation's own chat. */
+export interface InvestigationChatActions {
   onUseReply(texto: string): void;
   notified: boolean;
   onNotifyClient(texto: string): Promise<void>;
-  onOpenConversation?(conversationId: string): void;
   onRetry(): void;
+}
+
+export function InvestigationDetail({
+  row,
+  actions,
+  origin,
+}: {
+  row: Row<Investigation>;
+  actions?: InvestigationChatActions;
+  /** Where it came from, under the question, when that isn't the chat being viewed. */
+  origin?: ReactNode;
 }) {
   const t = useT();
   const { status, report, question, error, usedDatabase, messageCount, sha, requestedBy, createdAt } = row.data;
@@ -780,29 +792,17 @@ function Detail({
                 {t(`inv.conclusion.${report.conclusion}`)}
               </span>
             ) : (
-              !isActive(status) && <StatusChip row={row} />
+              !isActive(status) && <InvestigationStatusChip row={row} />
             )}
             <span className="text-[11px] text-warm-gray">
               {fmtFecha(createdAt, true)} · {requestedBy.nombre}
             </span>
           </div>
           <h3 className="mt-1.5 max-w-[70ch] whitespace-pre-wrap text-[14px] font-bold leading-snug text-ink">{question}</h3>
-          {!sameChat && (
-            <p className="mt-1.5 flex flex-wrap items-center gap-x-2 text-[12px] text-warm-gray">
-              {t('inv.otroChat')}
-              {onOpenConversation && (
-                <button
-                  onClick={() => onOpenConversation(row.data.conversationId)}
-                  className="font-semibold text-navy hover:underline"
-                >
-                  {t('inv.irAlChat')}
-                </button>
-              )}
-            </p>
-          )}
+          {origin}
         </header>
 
-        {isActive(status) && <Working row={row} canNotify={sameChat} notified={notified} onNotifyClient={onNotifyClient} />}
+        {isActive(status) && <Working row={row} actions={actions} />}
 
         {unfinished && (
           <div className="mt-3 rounded-lg bg-warn-bg p-3 text-[12.5px] leading-relaxed text-warn-dark">
@@ -810,9 +810,9 @@ function Detail({
               {status === 'rate_limited' ? t('inv.limite') : status === 'cancelled' ? t('inv.canceladaAyuda') : t('inv.falloAyuda')}
             </p>
             {status === 'failed' && error && <p className="mt-1 break-words">{error}</p>}
-            {sameChat && (
+            {actions && (
               <button
-                onClick={onRetry}
+                onClick={actions.onRetry}
                 className="mt-2 rounded-lg bg-navy px-3 py-1.5 text-[12.5px] font-semibold text-white hover:bg-navy-light"
               >
                 {t('inv.reintentar')}
@@ -852,10 +852,10 @@ function Detail({
                   {report.suggestedReply ? (
                     <>
                       <p className="whitespace-pre-wrap rounded-lg bg-cream-1 p-3">{report.suggestedReply}</p>
-                      {sameChat && (
+                      {actions && (
                         <>
                           <button
-                            onClick={() => onUseReply(report.suggestedReply!)}
+                            onClick={() => actions.onUseReply(report.suggestedReply!)}
                             className="mt-2 rounded-lg bg-navy px-3 py-1.5 text-[12.5px] font-semibold text-white hover:bg-navy-light focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-navy"
                           >
                             {t('inv.usarRespuesta')}

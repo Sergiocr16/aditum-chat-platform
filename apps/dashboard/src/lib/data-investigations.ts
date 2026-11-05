@@ -52,14 +52,14 @@ export interface InvestigationList {
 }
 
 /** Every saved investigation, newest first: of one chat, or of all of them when `threadKey` is null. */
-export function useInvestigationList(threadKey: string | null): InvestigationList {
-  const [max, setMax] = useState(INVESTIGATIONS_PAGE);
+export function useInvestigationList(threadKey: string | null, pageSize = INVESTIGATIONS_PAGE): InvestigationList {
+  const [max, setMax] = useState(pageSize);
   const [state, setState] = useState<{ key: string; rows: Row<Investigation>[]; error: boolean } | null>(null);
   const listKey = threadKey ?? '*';
 
   useEffect(() => {
-    setMax(INVESTIGATIONS_PAGE);
-  }, [listKey]);
+    setMax(pageSize);
+  }, [listKey, pageSize]);
 
   useEffect(() => {
     const constraints: QueryConstraint[] = [
@@ -80,7 +80,7 @@ export function useInvestigationList(threadKey: string | null): InvestigationLis
     loading: current === null,
     error: current?.error ?? false,
     hasMore: (current?.rows.length ?? 0) >= max,
-    loadMore: () => setMax((n) => n + INVESTIGATIONS_PAGE),
+    loadMore: () => setMax((n) => n + pageSize),
   };
 }
 

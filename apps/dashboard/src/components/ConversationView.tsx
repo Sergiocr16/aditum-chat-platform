@@ -67,9 +67,11 @@ export const ConversationView = forwardRef<
     ctxColapsado?: boolean;
     /** Toggle del panel de contexto (escritorio); si no viene, no hay panel. */
     onToggleCtx?: () => void;
+    /** Abre directo en la pestaña Investigar, mostrando esta investigación. */
+    investigacionId?: string | null;
   }
 >(function ConversationView(
-  { conv, onBack, onOpenConversation, onOpenContext, ctxColapsado, onToggleCtx },
+  { conv, onBack, onOpenConversation, onOpenContext, ctxColapsado, onToggleCtx, investigacionId },
   ref,
 ) {
   const { agent } = useAuth();
@@ -136,14 +138,14 @@ export const ConversationView = forwardRef<
     if (i >= 0) setVisorIdx(i);
   };
 
-  const [tab, setTab] = useState<'responder' | 'nota' | 'investigar'>('responder');
+  const [tab, setTab] = useState<'responder' | 'nota' | 'investigar'>(investigacionId ? 'investigar' : 'responder');
   const [draft, setDraft] = useState('');
   const [showConvert, setShowConvert] = useState(false);
   const [showAsignar, setShowAsignar] = useState(false);
   const [showResolve, setShowResolve] = useState(false);
   const [verTicketId, setVerTicketId] = useState<string | null>(null);
   // Mounted on first use and then only hidden, so a half-written question survives switching tabs.
-  const [investigacionAbierta, setInvestigacionAbierta] = useState(false);
+  const [investigacionAbierta, setInvestigacionAbierta] = useState(!!investigacionId);
   const [investigacionSeed, setInvestigacionSeed] = useState<InvestigationSeed | null>(null);
   const threadKey = threadKeyOf(conv.data);
   const investigacionesActivas = useActiveInvestigations(threadKey);
@@ -844,6 +846,7 @@ export const ConversationView = forwardRef<
               conv={conv}
               threadKey={threadKey}
               seed={investigacionSeed}
+              openId={investigacionId}
               onOpenConversation={onOpenConversation}
               onUseReply={(texto) => {
                 setDraft(texto);

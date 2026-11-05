@@ -38,14 +38,19 @@ export default function InboxPage() {
   const [filtro, setFiltro] = useState<InboxFiltro>('todas');
   const [selId, setSelId] = useState<string | null>(null);
   const [scrollAOrigen, setScrollAOrigen] = useState<string | null>(null);
+  // Viene de la página de Investigaciones (/inbox?c=<convId>&inv=<id>).
+  const [investigacionLink, setInvestigacionLink] = useState<{ convId: string; id: string } | null>(null);
 
   // Deep link a una conversación (/inbox?c=<convId> desde una notificación push):
   // la selecciona y sube el hilo hasta ella.
   useEffect(() => {
-    const c = new URLSearchParams(window.location.search).get('c');
+    const params = new URLSearchParams(window.location.search);
+    const c = params.get('c');
     if (c) {
       setSelId(c);
       setScrollAOrigen(c);
+      const inv = params.get('inv');
+      if (inv) setInvestigacionLink({ convId: c, id: inv });
     }
   }, []);
 
@@ -229,6 +234,7 @@ export default function InboxPage() {
             onOpenContext={mostrarCtx ? () => setCtxAbierto(true) : undefined}
             ctxColapsado={ctxColapsado}
             onToggleCtx={mostrarCtx ? toggleCtxColapsado : undefined}
+            investigacionId={investigacionLink?.convId === sel.id ? investigacionLink.id : null}
           />
         ) : (
           <InboxVacio filas={filas} t={t} />

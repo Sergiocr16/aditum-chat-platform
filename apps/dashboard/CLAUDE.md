@@ -7,7 +7,7 @@ Next.js 15 **App Router** + React 19 + **Tailwind CSS 4**. Deployed as a **stati
 
 ```
 src/app/            Routes. Route group (console)/ is wrapped by <Shell>; login/ sits outside it.
-                    Console pages: inbox, tickets, contactos, bot, reportes, configuracion.
+                    Console pages: inbox, tickets, investigaciones, contactos, bot, reportes, configuracion.
 src/components/     Shell, ConversationView, VisorAdjuntos (fullscreen image/PDF lightbox),
                     ContextPanel/GroupContextPanel, ResolveModal, ConvertTicketModal,
                     TicketDetailModal, TagAssign, chips, ResizeHandle,
@@ -62,7 +62,9 @@ src/lib/            firebase.ts (SDK + emulator wiring), auth.tsx, i18n.ts, soun
 - **Investigations** (`InvestigationPanel`, mounted by `ConversationView`) are a third composer tab that
   takes about 70% of the column. Master-detail through container queries (`@2xl`): the saved list and
   the form or report side by side when wide, one at a time when not. The steps an investigation takes
-  are never listed: only a phase and a robot (`InvestigatorRobot`, keyframes in `globals.css`).
+  are never listed: only a phase and a robot (`InvestigatorRobot`, keyframes in `globals.css`). The
+  `/investigaciones` page lists all of them across chats; its "Ir al chat" links to
+  `/inbox?c=<convId>&inv=<id>`, which opens that report in the tab, where the reply can be used.
 
 ## Notes
 
