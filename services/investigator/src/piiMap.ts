@@ -68,7 +68,7 @@ export function generateViews(
   map: PiiMap,
   schema: SchemaColumn[],
   source = 'aditum',
-  target = 'aditum_ro',
+  target = 'read_only_user',
 ): ViewsResult {
   const byTable = new Map<string, SchemaColumn[]>();
   for (const col of schema) byTable.set(col.table, [...(byTable.get(col.table) ?? []), col]);

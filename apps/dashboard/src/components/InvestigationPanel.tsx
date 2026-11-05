@@ -742,7 +742,7 @@ function NewInvestigation({
           {t('inv.soltar')}
         </div>
       )}
-      <div className="-mx-1 min-h-0 flex-1 space-y-4 overflow-y-auto px-1 py-3">
+      <div className="-mx-4 min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-3">
         <div className="space-y-2">
           <label htmlFor={`inv-question-${conv.id}`} className="block text-[15px] font-semibold text-ink">
             {t('inv.pregunta')}
@@ -1134,7 +1134,7 @@ function ReportWarnings({ report }: { report: InvestigationReport }) {
 }
 
 /** What the agent acts on: the reply, the recommendation, and what's left to find out. */
-function ReportAnswer({ report, onUseReply }: { report: InvestigationReport; onUseReply?(texto: string): void }) {
+function ReportAnswer({ report, onUseReply, followUp }: { report: InvestigationReport; onUseReply?(texto: string): void; followUp?: ReactNode }) {
   const t = useT();
   return (
     <div className="space-y-[18px]">
@@ -1161,6 +1161,8 @@ function ReportAnswer({ report, onUseReply }: { report: InvestigationReport; onU
           )}
         </Section>
       </div>
+
+      {followUp}
 
       <Section title={t('inv.recomendacion')}><p className="whitespace-pre-wrap">{report.recommendation}</p></Section>
 
@@ -1406,7 +1408,7 @@ function FollowUpComposer({ id }: { id: string }) {
   }
 
   return (
-    <div className="flex-none border-t border-cream-3 pt-2.5">
+    <div>
       {failed && <p className="mb-1.5 text-[12.5px] text-warn-dark">{failed}</p>}
       <div className="flex items-end gap-2 rounded-[10px] border-[1.5px] border-warm-border bg-white py-1.5 pl-3 pr-1.5 focus-within:border-ai-light focus-within:ring-[3px] focus-within:ring-ai-bg">
         <textarea
@@ -1467,7 +1469,7 @@ export function InvestigationDetail({
 
   return (
     <div className="@container flex min-h-0 flex-1 flex-col">
-      <div className="min-h-0 flex-1 overflow-y-auto pr-1 pt-4">
+      <div className="-mr-4 min-h-0 flex-1 overflow-y-auto pr-4 pt-4">
         <div className="flex min-h-full flex-col">
           <header className="flex-none">
             <div className="mb-2.5 flex flex-wrap items-center gap-x-2.5 gap-y-1">
@@ -1534,9 +1536,16 @@ export function InvestigationDetail({
             </div>
           )}
 
+          {/* A round that failed has no report to sit under, and this is how to try it again. */}
+          {!report && unfinished && turn > 1 && (
+            <div className="mt-4">
+              <FollowUpComposer id={row.id} />
+            </div>
+          )}
+
           {report && (
             <div className="mt-4">
-              <ReportAnswer report={report} onUseReply={actions?.onUseReply} />
+              <ReportAnswer report={report} onUseReply={actions?.onUseReply} followUp={!isActive(status) && <FollowUpComposer id={row.id} />} />
             </div>
           )}
 
@@ -1594,7 +1603,6 @@ export function InvestigationDetail({
           <div ref={endRef} />
         </div>
       </div>
-      {!isActive(status) && (report || turn > 1) && <FollowUpComposer id={row.id} />}
     </div>
   );
 }
