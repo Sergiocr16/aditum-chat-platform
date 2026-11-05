@@ -8,7 +8,12 @@ describe('grantsProblem', () => {
   it('accepts exactly a read-only user on the database', () => {
     expect(grantsProblem([usage, select], 'aditum')).toBeNull();
   });
+  it('accepts a read-only user that can also see view definitions', () => {
+    expect(grantsProblem([usage, 'GRANT SELECT, SHOW VIEW ON `aditum`.* TO `ro`@`%`'], 'aditum')).toBeNull();
+  });
   it.each([
+    ['writing along with SHOW VIEW', 'GRANT SELECT, SHOW VIEW, UPDATE ON `aditum`.* TO `ro`@`%`'],
+    ['SHOW VIEW on another database', 'GRANT SELECT, SHOW VIEW ON `other`.* TO `ro`@`%`'],
     ['all privileges', 'GRANT ALL PRIVILEGES ON *.* TO `root`@`%`'],
     ['reading another database', 'GRANT SELECT ON `other`.* TO `ro`@`%`'],
     ['reading everything', 'GRANT SELECT ON *.* TO `ro`@`%`'],

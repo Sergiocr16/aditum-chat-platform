@@ -18,9 +18,9 @@ export interface DbConnection {
 /** With a CA file the server is verified. Without one the link is still encrypted, and the check says so. */
 export const sslOptions = (ca: string | null) => (ca ? { ca, rejectUnauthorized: true } : { rejectUnauthorized: false });
 
-/** Null when the grants are exactly what a read-only user on that database should have. */
+/** Null when the user can only read that database. SHOW VIEW only reveals how its views are defined. */
 export function grantsProblem(grants: string[], database: string): string | null {
-  const selectOnDatabase = new RegExp(`^GRANT SELECT ON \`${database.replace(/[^\w$]/g, '')}\`\\.\\* TO `, 'i');
+  const selectOnDatabase = new RegExp(`^GRANT SELECT(, SHOW VIEW)? ON \`${database.replace(/[^\w$]/g, '')}\`\\.\\* TO `, 'i');
   const usage = /^GRANT USAGE ON \*\.\* TO /i;
   const extra = grants.filter((grant) => !usage.test(grant) && !selectOnDatabase.test(grant));
   if (extra.length > 0) return `El usuario tiene más permisos de los permitidos: ${extra[0].replace(/ TO .*/i, '')}`;

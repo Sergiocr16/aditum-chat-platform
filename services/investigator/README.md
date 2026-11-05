@@ -7,7 +7,7 @@ production code and, only if needed, from production data. It analyzes; it write
 Console → requestInvestigation → investigations/{id} (Firestore)
                                        ↑ outbound HTTPS, no open ports
 Pi: runner ──── claude -p (Read, Grep, Glob + MCP) ── checkout of one commit
-                    └── mysql-gateway (own OS user) ── read-only user on `aditum`
+                    └── mysql-gateway (own OS user) ── read-only user on the production database
 ```
 
 ## Safeguards, and what enforces each one
@@ -15,7 +15,7 @@ Pi: runner ──── claude -p (Read, Grep, Glob + MCP) ── checkout of on
 | Rule | Enforced by |
 |---|---|
 | Code first, database only if needed | The gateway refuses every database tool until `request_db_access` gets code evidence it has checked |
-| No writes | MySQL: the user only has `SELECT` on `aditum` |
+| No writes | MySQL: the user only has `SELECT` on the production database |
 | Personal data is not masked | A decision: Claude reads real data. The prompt asks it to read and cite only what it needs, but nothing enforces that. Cited values reach Firestore, where agents can read them |
 | Claude can't reach credentials | Separate OS users; the password reaches only the gateway, with its own secret |
 | A broader user can't be pasted in | The gateway checks `SHOW GRANTS` and won't use anything beyond `SELECT` on that database |
@@ -77,4 +77,4 @@ row counts and the values cited as evidence.
 ## Masked views (not in use)
 
 `classify`, `generate-views` and `piiMap.ts` generate a schema of masked views from a reviewed `pii-map.yml`.
-Production doesn't use them today: the analyzer reads `aditum` directly. They stay here in case that changes.
+Production doesn't use them today: the analyzer reads the production database directly. They stay here in case that changes.

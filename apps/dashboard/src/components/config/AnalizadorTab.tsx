@@ -468,7 +468,7 @@ export function AnalizadorTab() {
   const [port, setPort] = useState('3306');
   const [user, setUser] = useState('');
   const [password, setPassword] = useState('');
-  const [database, setDatabase] = useState('aditum');
+  const [database, setDatabase] = useState('');
   const [loadedVersion, setLoadedVersion] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
