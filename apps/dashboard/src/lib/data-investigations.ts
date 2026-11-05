@@ -229,8 +229,8 @@ export async function investigationFileUrl(storagePath: string): Promise<string>
   return getDownloadURL(ref(storage, storagePath));
 }
 
-export async function requestFollowUp(id: string, question: string): Promise<void> {
-  await httpsCallable(fns, 'requestFollowUp')({ id, question });
+export async function requestFollowUp(id: string, question: string, uploads: { storagePath: string; name: string }[] = []): Promise<void> {
+  await httpsCallable(fns, 'requestFollowUp')({ id, question, ...(uploads.length > 0 && { uploads }) });
 }
 
 export async function cancelInvestigation(id: string): Promise<void> {
@@ -248,8 +248,9 @@ export function useGatewayOnline(state: InvestigatorGatewayState | null): boolea
 }
 
 /** One click and the row exists. `force` creates it even though Claude found a similar one. */
-export async function addInvestigationToBacklog(id: string, force = false): Promise<void> {
-  await httpsCallable(fns, 'addInvestigationToBacklog')({ id, force });
+/** With `ticket`, it also opens the client's ticket in the chat, or adds it to a row that's already on the board. */
+export async function addInvestigationToBacklog(id: string, force = false, ticket = false): Promise<void> {
+  await httpsCallable(fns, 'addInvestigationToBacklog')({ id, force, ticket });
 }
 
 export async function saveInvestigatorBacklog(input: { database: string; token: string }): Promise<void> {

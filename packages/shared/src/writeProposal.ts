@@ -43,11 +43,22 @@ const rowIdentity = (operation: WriteOperation) =>
     ? `${operation.table}:${JSON.stringify(Object.entries(operation.key).sort(([a], [b]) => a.localeCompare(b)))}`
     : null;
 
-/** Why this proposal can't go on to an admin. Empty means it can. */
+/**
+ * Why this proposal can't go on to an admin. Empty means it can.
+ *
+ * A cause that is still a hypothesis doesn't stop it: the admin is told, and decides on the
+ * rehearsal. What does stop it is having no checked evidence at all, or a citation of its own
+ * (who reads these data) that isn't in the code.
+ */
 export function writeProposalProblems(draft: WriteProposalDraft, report: Pick<InvestigationReport, 'conclusion' | 'codeEvidence'>): string[] {
   const problems: string[] = [];
-  if (report.conclusion !== 'confirmed') problems.push('La conclusión no quedó confirmada.');
+  if (report.conclusion === 'undetermined') problems.push('Ninguna evidencia de la investigación se pudo comprobar.');
   if (report.codeEvidence.length === 0) problems.push('No hay evidencia de código.');
+  if (report.conclusion !== 'confirmed') {
+    // A confirmed conclusion already means no citation was rejected. Otherwise the Pi has to say so itself.
+    if (!Array.isArray(draft.consequenceRejected)) problems.push('La Pi no revisó las citas de esta propuesta. Actualizala desde Configuración, Investigador.');
+    else if (draft.consequenceRejected.length > 0) problems.push(`Una cita sobre quién usa estos datos no se pudo comprobar: ${draft.consequenceRejected.join('; ')}.`);
+  }
   if (!draft.reason?.trim()) problems.push('Falta explicar por qué este cambio corrige el problema.');
   if (!draft.consequence?.trim() || !draft.consequenceEvidence?.length) problems.push('Falta quién usa estos datos, con evidencia del código.');
   if (!['low', 'medium', 'high', 'undetermined'].includes(draft.riskLevel) || !draft.risk?.trim()) problems.push('Falta el riesgo.');

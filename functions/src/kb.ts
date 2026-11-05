@@ -2,12 +2,14 @@ import { onObjectFinalized } from 'firebase-functions/v2/storage';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
-import { FieldValue as AdminFieldValue } from 'firebase-admin/firestore';
+import { FieldValue as AdminFieldValue, type DocumentReference } from 'firebase-admin/firestore';
 import { defineSecret } from 'firebase-functions/params';
 import type { KbDoc } from '@aditum-chat/shared';
 import { embed, KB_EMBEDDINGS } from './embeddings.js';
 import type { EvidenceSource } from './evidence.js';
 import { db, storage } from './lib/admin.js';
+import { requireActiveAdmin } from './lib/guards.js';
+import { isKbDocId, ownKbFile } from './kbPaths.js';
 
 // Embeddings via Voyage (Claude doesn't generate them). Without VOYAGE_API_KEY
 // (local dev) the KB falls back to keyword search.
@@ -169,15 +171,22 @@ async function ingestStoredFile(docId: string, filePath: string, ext: string, bu
       texto = buffer.toString('utf8');
     }
     const chunks = await indexDoc(docId, (snap.data() as KbDoc).nombre, texto);
-    await ref.update({
-      estado: 'indexado',
-      chunks,
-      ...(paginas !== undefined ? { paginas } : {}),
-      updatedAt: AdminFieldValue.serverTimestamp(),
-    });
+    await finishIndexing(ref, { estado: 'indexado', chunks, ...(paginas !== undefined ? { paginas } : {}) });
   } catch (err) {
     logger.error('kbIngestPdf falló', { filePath, message: (err as Error).message });
-    await ref.update({ estado: 'error', updatedAt: AdminFieldValue.serverTimestamp() });
+    await finishIndexing(ref, { estado: 'error' });
+  }
+}
+
+/**
+ * Records how an indexing run ended. A doc deleted while it was being indexed gets
+ * nothing recorded, and the chunks that run wrote go with it.
+ */
+async function finishIndexing(ref: DocumentReference, fields: Record<string, unknown>): Promise<void> {
+  if ((await ref.get()).exists) {
+    await ref.update({ ...fields, updatedAt: AdminFieldValue.serverTimestamp() });
+  } else {
+    await db.recursiveDelete(ref);
   }
 }
 
@@ -238,6 +247,22 @@ export const kbReindexAll = onCall(
   },
 );
 
+/**
+ * Deletes a KB document with its chunks and its file, so the bot stops answering from it.
+ * The doc goes last: if a step fails it is still listed, and the delete can be repeated.
+ */
+export const kbDeleteDoc = onCall({ region: 'us-central1', timeoutSeconds: 300 }, async (req) => {
+  await requireActiveAdmin(req.auth);
+  const docId = (req.data as { docId?: unknown } | null)?.docId;
+  if (!isKbDocId(docId)) throw new HttpsError('invalid-argument', 'Documento inválido.');
+  const ref = db.doc(`kb/${docId}`);
+  const file = ownKbFile(docId, (await ref.get()).data()?.storagePath);
+  if (file) await storage.bucket().file(file).delete({ ignoreNotFound: true });
+  await db.recursiveDelete(ref);
+  logger.info('KB document deleted', { docId, by: req.auth?.uid });
+  return { ok: true };
+});
+
 async function reindexDoc(docId: string, doc: KbDoc): Promise<void> {
   if (doc.tipo === 'url') return syncUrlDoc(docId, doc);
   if (!doc.storagePath) return;
@@ -260,9 +285,9 @@ async function syncUrlDoc(docId: string, doc: KbDoc): Promise<void> {
       .replace(/<[^>]+>/g, ' ')
       .replace(/&[a-z]+;/gi, ' ');
     const chunks = await indexDoc(docId, doc.nombre, texto);
-    await ref.update({ estado: 'indexado', chunks, updatedAt: AdminFieldValue.serverTimestamp() });
+    await finishIndexing(ref, { estado: 'indexado', chunks });
   } catch (err) {
-    await ref.update({ estado: 'error', updatedAt: AdminFieldValue.serverTimestamp() });
+    await finishIndexing(ref, { estado: 'error' });
     throw err;
   }
 }

@@ -2,8 +2,10 @@
 
 A self-hosted, Freshchat-style customer support platform for condominium / property
 management. It bundles an embeddable multitenant chat **widget**, an agent **console**, a native
-**ticketing** system, per-client **group chat**, and an **AI bot powered by Claude** with a
-retrieval-augmented knowledge base.
+**ticketing** system, per-client **group chat**, an **AI bot powered by Claude** that answers only
+with quoted evidence from a knowledge base and a private index of the host app's code, and
+**investigations**: an agent asks why something happened and Claude Code answers from the
+production code and read-only data.
 
 Reference design: the "Aditum Chat: Sistema de Soporte" Claude Design project (18 screens) —
 see [`docs/design-spec.md`](docs/design-spec.md).
@@ -49,23 +51,41 @@ see [`docs/design-spec.md`](docs/design-spec.md).
 - **Context panel** — a resident/team sidebar with the **resolved-conversation history** (filter by
   category, CSAT stars, and a kebab menu to create a ticket from a conversation or open the
   ticket(s) already linked to it) and client tickets as compact cards.
+- **En espera** — an agent can park a conversation while waiting on the customer. It leaves the
+  working filters, comes back when the customer replies, and resolves by itself after a
+  configurable number of hours without an answer.
+- **Investigaciones** — the "Investigar" button next to "Enviar" opens a resizable side panel: mark
+  the messages the case is about, attach files, ask. The report comes back with a verdict, the
+  evidence and a suggested reply, and the agent can keep asking. A confirmed bug or an
+  improvement goes to a Notion backlog with one click, which can also open the client's ticket for it. `/investigaciones` lists every investigation across chats. See
+  [Investigations](#investigations).
 - **Contactos** — auto-populated contact directory with tags.
-- **Bot** — configure the bot, upload knowledge-base PDFs/URLs, and test it live.
+- **Bot** — configure the bot, upload knowledge-base PDFs/URLs, switch on answers from the
+  production code and see the state of its index, and test it live. Changes apply on **Guardar
+  cambios**.
 - **Reportes** — real aggregates over `metrics_daily` + `csat`: KPI deltas vs the previous period,
   SLA compliance against the configured `settings/sla` target, CSAT distribution (5★→1★), trend,
   and per-agent / bot-helpfulness tables. Full-width on desktop.
 - **Configuración** — sites, widget appearance (including per-button text/icon and welcome/auto-reply
   messages), SLA policy, team (invite, edit, **delete agents and reset their passwords** — the
-  generated temp password shows once with a copy button), tags, closing categories.
+  generated temp password shows once with a copy button), tags, closing categories, and
+  **Investigador** (admins: the Raspberry Pi, the read-only database connection, the backlog and
+  production writes).
 - Desktop push (FCM Web Push) so agents get notified even with the tab closed.
 - **Installable PWA** — standalone display (no URL bar), plum icon set (maskable included), iOS
   safe-area handling; the console carries its own plum brand (`#2C1C2C`) distinct from the
   widget's Aditum navy.
 - Same in-app attachment viewer and WhatsApp-style composer as the widget.
+- Usable on a phone: small controls grow on touch devices (the `touch:` Tailwind variant, gated on
+  `(hover: none)`).
 
 **Bot (Claude)**
-- First-line answers with an agentic tool loop: `escalar_a_agente` and `crear_ticket`.
-- RAG grounding over your knowledge base (PDFs + help-center URLs).
+- First-line answers, with `escalar_a_agente` and `crear_ticket` as tools.
+- **Answers only with evidence**: every factual reply must quote the sources it was given. A reply
+  that can't be backed is replaced by a fixed "couldn't confirm that" message offering an agent.
+- Sources are your knowledge base (PDFs + help-center URLs) and, per site, a **private index of the
+  host app's code**: the bot explains how the system works without ever showing code. It has no
+  access to the production database.
 
 ---
 
@@ -88,8 +108,15 @@ Host app (JHipster/etc.)                 This project
    ┌───────────────────────────────┐                ┌──────────────────────────────┐
    │  Cloud Functions v2 (Node 22) │   Anthropic    │  Next.js console (agents)     │
    │  bot · tickets · SLA · KB ·   │ ─────────────▶ │  static export → Hosting       │
-   │  metrics · push · team        │  Claude API    └──────────────────────────────┘
-   └───────────────────────────────┘   Voyage AI (embeddings)
+   │  metrics · push · team ·      │  Claude API    └──────────────────────────────┘
+   │  code index · investigations  │   Voyage AI (embeddings + rerank)
+   └───────────────▲───────────────┘
+                   │ outbound HTTPS only, no open ports
+   ┌───────────────┴───────────────┐
+   │  Raspberry Pi (investigator)  │   read-only user    ┌──────────────────────────┐
+   │  runner → Claude Code         │ ──────────────────▶ │  Host app's production   │
+   │  gateway (MySQL) · writer     │   approved writes   │  database (MySQL)        │
+   └───────────────────────────────┘                     └──────────────────────────┘
 ```
 
 Multitenancy is two levels deep: **sites** (connected host apps) → **clients/condominiums** →
@@ -103,7 +130,9 @@ sensitive write (tickets, keys, team, KB, metrics) goes through Cloud Functions 
 ```
 apps/widget      Embeddable widget — Preact + Vite → dist/widget.js (IIFE, Shadow DOM) + demo/
 apps/dashboard   Agent console — Next.js 15 App Router + Tailwind 4 (static export)
-functions        Cloud Functions v2 — widgetSession, botReply, createTicket, SLA, KB, push…
+functions        Cloud Functions v2 — widgetSession, botReply, createTicket, SLA, KB, code index,
+                 investigations, production writes, push…
+services/investigator  Runs on a Raspberry Pi — runner (Claude Code), MySQL gateway, writer
 packages/shared  Data-model types, design tokens, i18n catalogs (es/en), helpers
 ```
 
@@ -119,7 +148,9 @@ consumer.
 | Runtime | Node **20** (root, `.nvmrc` `v20.20.2`) · Node **22** (functions) |
 | Widget | Preact `^10.26`, Vite `^6.3` (IIFE build) |
 | Console | Next.js `^15.3`, React `^19.1`, Tailwind CSS `^4.1` |
-| Functions | firebase-functions `^6.4`, firebase-admin `^13.4`, `@anthropic-ai/sdk` `^0.110`, pdf-parse |
+| Functions | firebase-functions `^6.4`, firebase-admin `^13.4`, `@anthropic-ai/sdk` `^0.110`, pdf-parse, ssh2 |
+| Investigator | Node, Claude Code (`claude -p`), mysql2 |
+| Tests | vitest (`functions`, `services/investigator`) |
 | Client SDK | firebase `^11.10` |
 | Language | TypeScript `^5.8` |
 
@@ -176,6 +207,22 @@ node scripts/verify-widget-flow.mjs    # encrypted session + multitenant widget 
 node scripts/verify-console-flow.mjs   # agent flow + createTicket
 ```
 
+**Unit tests** (no emulators needed):
+
+```sh
+pnpm --filter @aditum-chat/functions test       # evidence gate, code index, investigations, writes…
+pnpm --filter @aditum-chat/investigator test    # runner, gateway checks, writer
+```
+
+**Bot evals** — runs the bot against `functions/evals/questions.json` in the emulators. It calls
+Claude with your key, so each run costs real money (cents):
+
+```sh
+npx firebase emulators:exec --project demo-aditum-chat \
+  --only auth,firestore,functions,storage,database \
+  "pnpm --filter @aditum-chat/functions eval:bot"
+```
+
 ### Scripts reference
 
 ```sh
@@ -200,19 +247,38 @@ No `.env` files are committed. Production Firebase **web** config is baked in as
 `NEXT_PUBLIC_FB_AUTH_DOMAIN`, `NEXT_PUBLIC_FB_DATABASE_URL`, `NEXT_PUBLIC_FB_PROJECT_ID`,
 `NEXT_PUBLIC_FB_SENDER_ID`, `NEXT_PUBLIC_FB_STORAGE_BUCKET`, `NEXT_PUBLIC_FB_VAPID_KEY`.
 
-**Functions (real secrets).** Locally, create `functions/.secret.local`:
+**Functions (real secrets).** Locally, copy `functions/.secret.local.example` to
+`functions/.secret.local`:
 
 ```
 ANTHROPIC_API_KEY=sk-ant-...
-VOYAGE_API_KEY=pa-...          # optional: without it the KB falls back to keyword search
+VOYAGE_API_KEY=pa-...          # optional: without it search falls back to keywords
 CONFIG_KEK=<hex-64>            # AES-256-GCM KEK; generate with: openssl rand -hex 32
+GITHUB_CODE_TOKEN=github_pat_...   # read-only (Contents: read) on the indexed repository
+RUNNER_SHARED_SECRET=<hex-64>      # shared with the investigator's runner on the Pi
+GATEWAY_SHARED_SECRET=<hex-64>     # only for the Pi's MySQL gateway
+WRITER_SHARED_SECRET=<hex-64>      # only for the Pi's writer
 ```
 
-Models are fixed in code (`functions/src/bot.ts`): `claude-haiku-4-5` for the widget bot and
+**Functions (settings).** Which repository the code index and the investigator read is a setting,
+because this repo is public and doesn't name it. Copy `functions/.env.example` to `functions/.env`:
+
+```
+CODE_REPO=owner/repo@branch
+CODE_JAVA_PACKAGE=com/example/app
+```
+
+Firebase loads that file for the emulators and on deploy. Without those values the code sync stops
+with an error instead of indexing less.
+
+> Both files are gitignored, so they exist only on your machine. Keep them in the main checkout
+> (not only in a temporary worktree) and keep a copy somewhere else.
+
+Models are fixed in code (`functions/src/bot.ts`): `claude-haiku-5-5` for the widget bot and
 "Probar el bot", `claude-sonnet-5` for the agent AI assist — no env override.
 
-In production: `firebase functions:secrets:set ANTHROPIC_API_KEY` (and `VOYAGE_API_KEY`,
-`CONFIG_KEK`).
+In production: `firebase functions:secrets:set <NAME>` for each of the seven. A deploy fails if a
+secret a function declares doesn't exist.
 
 ---
 
@@ -254,6 +320,8 @@ groupName?, groupChatEnabled?, groupClients?, deviceToken?, language? ('es'|'en'
 - `groupChatEnabled` — the host declares whether the group has the group chat feature; combined
   with a `role` containing "admin", it provisions the group conversation and shows the tab in the
   widget. The site-level `botonChatEquipo` toggle remains as a platform kill-switch.
+- `role` — also decides whether the bot may answer from the code index: only `Administrador` and
+  `Contador` (case-insensitive) do. Any other label, or none, gets knowledge-base answers only.
 
 ### Node (reference)
 
@@ -344,6 +412,11 @@ A **chat** (the continuous thread) is unique per **(contact, subcanal)** for dir
   and `useGroupThread` (grupo), both built on the shared `useConvThread`; rows dedup by `convId+msgId`.
 - The group chat is segmented the same way: multiple `tipo:'grupo'` docs per client, discovered via
   `participantes array-contains contactId` (widget) or `tipo+clientId` (console).
+- **Waiting on the customer** is `estado: 'pending'`: the agent parks the conversation from its
+  header. It stays the active segment but shows only under "En espera" in the inbox. The customer's
+  next message sets it back to `open` (`reopenOnCustomerReply` — contacts can't write `estado`).
+  With no reply, `slaEngine` resolves it after `settings/sla.autoResolveWaitingHours` (default 24,
+  0 = off); an agent message restarts the window.
 
 ## Data model (Firestore)
 
@@ -366,6 +439,16 @@ A **chat** (the continuous thread) is unique per **(contact, subcanal)** for dir
 - **`csat/{id}`** — 1–5 rating tied to conversation/ticket/contact/agent. The widget reads its own
   ratings (`subscribeMyCsat`) so it never re-prompts.
 - **`kb/{docId}` + `kb/{docId}/chunks/{id}`** — RAG docs and embedded chunks (`FieldValue.vector`).
+- **`code_chunks`**, **`code_files`** — the private code index and its manifest (one entry per
+  indexed path with its blob SHA). Denied to every client, admins included. **`code_index/state`**
+  holds sync progress (commit, counts, last error; no code) for admins.
+- **`bot_evidence/{messageId}`** — references behind each bot reply (agents only, never on the
+  message). **`bot_gate_events`** — each reply the evidence gate blocked, with its reason (admins).
+- **`investigations/{id}`** — question, status, report, rounds and progress events (agents read,
+  only functions write). What the investigator received, its secrets and the writer's jobs live in
+  collections with no rule, so no client can read them. **`investigator/{doc}`** holds its state
+  and settings. **`prod_write_audit`** records every step of every production write (admins read,
+  nothing deletes).
 - **`team/{uid}`** — agents (rol admin|agente, sites, FCM tokens, presence).
 - **`settings/global`**, **`settings/sla`** — global defaults and SLA policy.
 - **`metrics_daily/{date}`**, **`notifications/{id}`**, **`counters/tickets`** — functions-only.
@@ -391,18 +474,36 @@ design** — the per-agent "sites" field only routes push notifications, not dat
 
 ## The Claude bot
 
-- Models are **fixed in code** (`functions/src/bot.ts`): `claude-haiku-4-5` for the widget bot and
+- Models are **fixed in code** (`functions/src/bot.ts`): `claude-haiku-5-5` for the widget bot and
   "Probar el bot" (cheapest functional tier), `claude-sonnet-5` for `aiAssist` (low volume,
   writing quality matters). Via `@anthropic-ai/sdk`, key `ANTHROPIC_API_KEY`.
 - **Prompt caching**: the system prompt is split into a stable block (identity + instructions +
   tone, marked `cache_control: ephemeral`) and a variable block (user context, open tickets, KB
   context) — the repeated part bills at ~10% under sustained traffic (`buildSystemBlocks`).
 - `botReply` fires on new `user` messages in `directa` conversations still in `estado: 'bot'`. It
-  gathers context (contact, open tickets, and **RAG context from the KB**), builds a bilingual
-  (es/en) system prompt, and runs an agentic **tool loop (up to 3 turns)**:
+  gathers context (contact, open tickets, and the retrieved **KB and code sources**), builds a
+  bilingual (es/en) system prompt, and makes **one model call** whose reply is always a tool call:
+  - `answer_with_evidence(text, evidence[])` — a factual answer with the quotes that back it.
+  - `reply_without_evidence` — courtesy, a clarifying question, or "I can't confirm that".
   - `escalar_a_agente(motivo)` — hands off to a human agent sub-channel.
   - `crear_ticket(asunto, descripcion, prioridad)` — when auto-ticket creation is enabled.
-  - Auto-escalates after N failed attempts.
+
+  All four are terminal: side effects run afterwards with a fixed message, so the model can't
+  announce an outcome that didn't happen. It auto-escalates after N failed attempts and never
+  answers more than 12 times in one conversation.
+- **Evidence gate** (`functions/src/evidence.ts`). Only `text` reaches the user, and only if every
+  quote really is in the source it names, every figure appears in a quote, a second pass confirms
+  the claims against the cited sources, and, when code was in context, the reply exposes no
+  implementation detail. A rejected draft gets one correction; if that fails too, the user gets the
+  fixed "couldn't confirm that" message and the reason is logged to `bot_gate_events`. Every check
+  fails closed: a wrong "I couldn't confirm" is recoverable, an invented answer is not.
+- **Code index** (`functions/src/code/`). `codeSync` (every 30 minutes) and `codeSyncNow` (the
+  button in `/bot`) diff the configured repository against a manifest and index what changed, so a
+  long first sync resumes across runs. The allowlist is deny-by-default, a secret scan skips a
+  whole file on a hit before anything is sent out, and each file is tagged with who may get answers
+  from it, following the host's own authorities. It is off by default: switch it on per site in
+  `/bot` → "Código del sistema como evidencia". Only contacts whose role is administrator or
+  accountant get code-backed answers. The bot has no database credentials.
 - Replies may use **light markdown** (`**bold**`, `-`/`1.` lists, inline `code`) — the widget and
   console render it safely (node-based mini-markdown, no raw HTML); headings/tables are not
   interpreted.
@@ -412,10 +513,48 @@ design** — the per-agent "sites" field only routes push notifications, not dat
   the active conversation only** (that doc's messages, never the contact's stitched history), and the
   console surfaces it in an **editable review modal**, never auto-inserted. Both are agent-only callables.
 - **Knowledge base** (`/bot`): accepts **PDF, TXT and MD** — file picker or **drag & drop** (multi
-  file), with a search box over the document list. `kbIngestPdf` (storage trigger) parses PDFs with
+  file), with a search box over the document list. Each row has a delete button that asks in
+  place: `kbDeleteDoc` (admins) removes the document, its chunks and its file, so the bot stops
+  answering from it. `kbIngestPdf` (storage trigger) parses PDFs with
   `pdf-parse` and ingests text files as UTF-8; URLs re-sync daily.
-- **Embeddings** use **Voyage AI** (`voyage-3.5-lite`, 1024-dim) with a keyword-search fallback
-  when `VOYAGE_API_KEY` is unset; semantic search uses Firestore `findNearest` (COSINE).
+- **Embeddings** use **Voyage AI**: `voyage-3.5-lite` for the KB and `voyage-code-4` for code (both
+  1024-dim), with a keyword-search fallback when `VOYAGE_API_KEY` is unset. Search uses Firestore
+  `findNearest` (COSINE); code is searched per file type and then reranked (`rerank-2.5-lite`),
+  because a Spanish question otherwise retrieves almost only Java.
+
+---
+
+## Investigations
+
+Separate from the bot. An agent presses **Investigar** in a chat, marks the messages the case is
+about (none start marked), optionally attaches files and picks the clients involved, and asks. A
+Raspberry Pi picks the job up and runs Claude Code over a checkout of the production code:
+
+- **Code first.** Claude gets database tools only after showing code evidence that it needs data,
+  and then reads with a user that can only `SELECT`.
+- **Checked reports.** Every citation is verified in code before a conclusion counts as
+  `confirmed`; one bad citation downgrades it and drops the suggested reply.
+- **Follow-ups.** The agent can keep asking, and attach more files to a later question. Each round
+  resumes Claude's session when the commit hasn't changed, or starts from the history otherwise.
+- **Files.** Attachments of the marked messages and files the agent uploads (images, PDF, text,
+  CSV, Excel, Word). The Pi fetches each by id and deletes them after the job.
+- **Backlog.** A confirmed bug or an improvement to the product goes to a Notion database with one
+  click, as a `Bug` or a `Missing Feature`. When a case works as built, the agent can ask Claude to
+  define the improvement it leaves. The same click can open the client's ticket in the chat for the
+  same thing, or add it later: the ticket carries the definition in product language, and the links
+  to the row and the investigation stay in an internal note.
+- **Production writes (off by default).** When bad data is the cause, Claude can *propose* a
+  change: structured operations, one row each by primary key, no SQL text and no deletes. It has no
+  way to run it. A separate writer on the Pi applies it only after an admin rehearses it (a
+  transaction that rolls back) and confirms three steps with a typed phrase and a fresh login.
+  Nothing retries by itself, and every step is recorded. A proposal needs evidence that checked
+  out; when the cause stayed a hypothesis it still reaches the admin, with a warning on it.
+
+While one runs, the agent sees a rough phase with Claude's mascot acting it out, not the raw log.
+The Pi only makes outbound calls: no ports stay open. An admin sets it up from Configuración →
+Investigador, which installs and updates the services over SSH from a checkout of `main`.
+
+Setup, safeguards and what enforces each one: [`services/investigator/README.md`](services/investigator/README.md).
 
 ---
 
@@ -476,7 +615,7 @@ Production project `aditum-chat-1a5cd` (`.firebaserc`). Firebase Hosting targets
 
 | Target | Public dir | Notes |
 |---|---|---|
-| `dashboard` | `apps/dashboard/out` | Next.js static export, `cleanUrls` — **committed** to git |
+| `dashboard` | `apps/dashboard/out` | Next.js static export, `cleanUrls` — **committed** to git. Pages are `no-cache` (a deploy shows on the next load); `/_next/static/**` is immutable for a year |
 | `widget` | `apps/widget/dist` | `widget.js`, `Access-Control-Allow-Origin: *`, `max-age=300` — gitignored |
 
 Functions deploy on `nodejs22`, region `us-central1`.
@@ -495,13 +634,19 @@ rm -rf apps/dashboard/.next                                    # don't run while
 NEXT_PUBLIC_USE_EMULATORS=false pnpm --filter @aditum-chat/dashboard build   # → apps/dashboard/out
 
 npx firebase deploy --project aditum-chat-1a5cd \
-  --only firestore:rules,storage,functions:<changed>,hosting:dashboard,hosting:widget
+  --only firestore:rules,firestore:indexes,storage,functions:<changed>,hosting:dashboard,hosting:widget
 ```
 
 List explicit `functions:<name>` targets (e.g. `widgetSession,botReply,aiAssist`); with `--only` you
 don't need `--force` and Firebase won't prompt or delete other functions. Prod functions rely on
-their secrets already being set there (`ANTHROPIC_API_KEY`, `CONFIG_KEK`). A trailing "cleaning up
+their secrets already being set there (see [Environment & secrets](#environment--secrets)), and
+`functions/.env` must be present in the checkout you deploy from. Vector indexes live in
+`firestore.indexes.json`, so include `firestore:indexes` when they change. A trailing "cleaning up
 build images" warning is harmless (minor GCR cost; self-corrects on the next deploy).
+
+**The Pi is not part of `firebase deploy`.** It installs `services/investigator` from this
+repository's `main`: after pushing a change there, an admin presses **Actualizar la Pi** under
+Configuración → Investigador.
 
 ---
 
@@ -514,4 +659,6 @@ build images" warning is harmless (minor GCR cost; self-corrects on the next dep
   `apps/dashboard/src/app/globals.css` — the `navy*` names are historic, the values are plum);
   the widget keeps Aditum corporate navy `#123C68` (`packages/shared/src/tokens.ts`).
   **Do not use teal.**
+- New code (identifiers, comments, logs) is in English; UI copy stays es/en through i18n.
+- **This repo is public** — nothing that describes production's internals gets committed.
 - Timezone: America/Costa_Rica.

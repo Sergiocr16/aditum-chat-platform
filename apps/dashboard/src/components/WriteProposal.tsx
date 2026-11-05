@@ -276,6 +276,9 @@ function ProposalCard({ investigationId, row, canFollowUp }: { investigationId: 
         <span className={`text-[12.5px] font-semibold ${STATUS_TONE[status]}`}>{t(`wp.estado.${status}`)}</span>
       </header>
       <div className="space-y-3">
+        {proposal.conclusion === 'hypothesis' && (
+          <p role="note" className="rounded-[10px] bg-warn-bg px-3 py-2 text-[13px] font-semibold leading-snug text-warn-dark">{t('wp.hipotesis')}</p>
+        )}
         <p className="max-w-[70ch] whitespace-pre-wrap break-words text-[13.5px] leading-snug text-ink">{proposal.reason}</p>
         <SqlBlock proposal={proposal} />
 

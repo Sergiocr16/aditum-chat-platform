@@ -155,11 +155,11 @@ which repository is production's. Without it the code index stops syncing and th
   a read-only user, after showing code evidence. It can also propose a change (`write_proposal`,
   `packages/shared/src/writeProposal.ts`): structured operations, one row each by primary key. Only
   the writer on the Pi applies it, after an admin rehearses it and confirms 3 steps (`functions/writes.ts`,
-  `WriteProposal.tsx`); writes start off, and nothing retries by itself. A confirmed bug can go to the Notion backlog with one click
-  (`functions/backlog.ts`), and an agent can keep asking (`requestFollowUp`), each round resuming Claude's session on the same commit, or starting from the history otherwise. See `services/investigator/README.md`.
+  `WriteProposal.tsx`); writes start off, and nothing retries by itself. A confirmed bug or an improvement can go to the Notion backlog with one click
+  (`functions/backlog.ts`), which can also open the client's ticket in the chat for it; an agent can ask Claude to define an improvement for a case that isn't a bug. And an agent can keep asking (`requestFollowUp`), each round resuming Claude's session on the same commit, or starting from the history otherwise. See `services/investigator/README.md`.
   In the console they open from the "Investigar" button next to "Enviar", as a resizable side panel next to the chat, which each chat remembers: every
   investigation stays in its list, and while one runs the agent sees only a rough phase taken from its
   latest progress event (`useInvestigationPhase`), with Claude's mascot acting out the phase.
   They can read files: the attachments of the selected messages (only under that conversation's own
-  `adjuntos/{convId}/`, same check as `botReply`) and what the agent uploads. The Pi fetches each by id,
+  `adjuntos/{convId}/`, same check as `botReply`) and what the agent uploads, with the first question or with a later one. The Pi fetches each by id,
   turns Excel and Word into text in a separate process as Claude's user, and deletes them after the job.

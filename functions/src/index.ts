@@ -7,7 +7,7 @@ export { demoPayload } from './demo.js';
 export { createTicket } from './tickets.js';
 export { botReply, testBot, aiAssist } from './bot.js';
 export { onBotFeedbackWrite } from './botFeedback.js';
-export { kbIngestPdf, kbSyncHelpCenter, kbSyncNow, kbReindexAll } from './kb.js';
+export { kbIngestPdf, kbSyncHelpCenter, kbSyncNow, kbReindexAll, kbDeleteDoc } from './kb.js';
 export { codeSync, codeSyncNow } from './code/codeIndex.js';
 export { manageTeam, rotateSiteKey } from './team.js';
 export { ticketSlaInit, firstResponseTracker, slaEngine } from './sla.js';

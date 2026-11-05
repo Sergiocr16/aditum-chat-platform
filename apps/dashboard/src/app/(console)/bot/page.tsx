@@ -16,6 +16,7 @@ import { useSiteFilter } from '@/components/Shell';
 import { useSites, type Row } from '@/lib/data';
 import {
   agregarUrlKb,
+  deleteKbDoc,
   guardarBotOverride,
   guardarWidgetMensajes,
   isKbFile,
@@ -72,6 +73,11 @@ const M = {
     urlPrompt: 'URL del artículo o centro de ayuda:',
     nombrePrompt: 'Nombre para mostrar:',
     kbError: 'No se pudo agregar el documento. Probá de nuevo.',
+    kbEliminar: 'Eliminar',
+    kbEliminarPregunta: '¿Eliminarlo? El bot deja de usarlo y no se puede deshacer.',
+    kbEliminando: 'Eliminando…',
+    kbEliminarError: 'No se pudo eliminar el documento. Probá de nuevo.',
+    kbCancelar: 'Cancelar',
     identidad: 'Identidad del bot',
     identidadNombre: 'Nombre del bot',
     identidadNombreHint: 'Aparece en el encabezado del chat y junto a cada mensaje',
@@ -159,6 +165,11 @@ const M = {
     urlPrompt: 'Article or help center URL:',
     nombrePrompt: 'Display name:',
     kbError: 'The document could not be added. Try again.',
+    kbEliminar: 'Delete',
+    kbEliminarPregunta: 'Delete it? The bot stops using it and this can\'t be undone.',
+    kbEliminando: 'Deleting…',
+    kbEliminarError: 'The document could not be deleted. Try again.',
+    kbCancelar: 'Cancel',
     identidad: 'Bot identity',
     identidadNombre: 'Bot name',
     identidadNombreHint: 'Shown in the chat header and next to each message',
@@ -544,6 +555,22 @@ function CardKb({
   const [error, setError] = useState<string | null>(null);
   const [busqueda, setBusqueda] = useState('');
   const [arrastrando, setArrastrando] = useState(false);
+  // One row at a time asks for confirmation, in place.
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const onDelete = async (docId: string) => {
+    setDeletingId(docId);
+    setError(null);
+    try {
+      await deleteKbDoc(docId);
+    } catch {
+      setError(m.kbEliminarError);
+    } finally {
+      setDeletingId(null);
+      setConfirmingId(null);
+    }
+  };
 
   const sitioDestino = () => (ambito === 'TODOS' ? 'TODOS' : (siteId ?? 'TODOS'));
 
@@ -689,6 +716,8 @@ function CardKb({
         <div className="divide-y divide-cream-3">
           {filtrados.map((d) => {
             const kd = d.data;
+            const confirming = confirmingId === d.id;
+            const deleting = deletingId === d.id;
             return (
               <div key={d.id} className="flex items-center gap-3 py-2.5">
                 <div className="h-8 w-8 rounded-lg bg-cream-2 text-warm-gray flex-none flex items-center justify-center">
@@ -696,20 +725,54 @@ function CardKb({
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="text-[12.5px] font-semibold truncate">{kd.nombre}</div>
-                  <div className="text-[11px] text-warm-gray-2">{metaDe(kd)}</div>
+                  {confirming ? (
+                    <div className="text-[11px] text-danger">{m.kbEliminarPregunta}</div>
+                  ) : (
+                    <div className="text-[11px] text-warm-gray-2">{metaDe(kd)}</div>
+                  )}
                 </div>
-                <span
-                  className={`text-[8.5px] font-bold tracking-wider px-1.5 py-0.5 rounded flex-none ${
-                    kd.sitio === 'TODOS' ? 'bg-cream-2 text-warm-gray' : 'bg-tag-blue-bg text-navy'
-                  }`}
-                >
-                  {kd.sitio === 'TODOS' ? m.todos : (siteNombre[kd.sitio] ?? kd.sitio).toUpperCase()}
-                </span>
-                <span
-                  className={`text-[8.5px] font-bold tracking-wider px-1.5 py-0.5 rounded-full flex-none ${KB_ESTADO_CLS[kd.estado]}`}
-                >
-                  {estadoLabel[kd.estado].toUpperCase()}
-                </span>
+                {confirming ? (
+                  <>
+                    <button
+                      onClick={() => setConfirmingId(null)}
+                      disabled={deleting}
+                      className="flex-none text-[11.5px] font-semibold border border-warm-border rounded-lg px-2.5 py-1.5 touch:min-h-9 text-ink-2 hover:border-navy disabled:opacity-40 transition-colors"
+                    >
+                      {m.kbCancelar}
+                    </button>
+                    <button
+                      onClick={() => onDelete(d.id)}
+                      disabled={deleting}
+                      className="flex-none text-[11.5px] font-semibold rounded-lg px-2.5 py-1.5 touch:min-h-9 bg-danger text-white hover:bg-danger-bright disabled:opacity-60 transition-colors"
+                    >
+                      {deleting ? m.kbEliminando : m.kbEliminar}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <span
+                      className={`text-[8.5px] font-bold tracking-wider px-1.5 py-0.5 rounded flex-none ${
+                        kd.sitio === 'TODOS' ? 'bg-cream-2 text-warm-gray' : 'bg-tag-blue-bg text-navy'
+                      }`}
+                    >
+                      {kd.sitio === 'TODOS' ? m.todos : (siteNombre[kd.sitio] ?? kd.sitio).toUpperCase()}
+                    </span>
+                    <span
+                      className={`text-[8.5px] font-bold tracking-wider px-1.5 py-0.5 rounded-full flex-none ${KB_ESTADO_CLS[kd.estado]}`}
+                    >
+                      {estadoLabel[kd.estado].toUpperCase()}
+                    </span>
+                    <button
+                      onClick={() => setConfirmingId(d.id)}
+                      disabled={deletingId !== null}
+                      title={m.kbEliminar}
+                      aria-label={`${m.kbEliminar}: ${kd.nombre}`}
+                      className="flex-none h-7 w-7 touch:h-9 touch:w-9 flex items-center justify-center rounded-lg text-warm-gray-2 hover:text-danger hover:bg-danger-bg disabled:opacity-40 transition-colors"
+                    >
+                      <span className="msr text-[16px]">delete</span>
+                    </button>
+                  </>
+                )}
               </div>
             );
           })}

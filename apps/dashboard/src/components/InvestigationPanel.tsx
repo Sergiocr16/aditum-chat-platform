@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type RefObject, type SetStateAction } from 'react';
 import type {
   Group,
   InvestigationCondominium,
@@ -18,6 +18,7 @@ import type {
   Message,
 } from '@aditum-chat/shared';
 import {
+  formatTicketNumber,
   INVESTIGATION_FILE_ACCEPT,
   INVESTIGATION_MAX_FILE_BYTES,
   INVESTIGATION_MAX_FILES,
@@ -40,6 +41,7 @@ import {
 } from '@/lib/data-investigations';
 import { useT } from '@/lib/i18n';
 import { ClaudeLogo, InvestigatorMascot } from './InvestigatorMascot';
+import { TicketDetailModal } from './TicketDetailModal';
 import { WriteProposals } from './WriteProposal';
 
 const MAX_MESSAGES = 100;
@@ -77,6 +79,24 @@ interface Upload {
   size: number;
   storagePath: string | null;
   problem: 'inv.archivoTipo' | 'inv.archivoGrande' | 'inv.archivoError' | null;
+}
+
+/** Checks each file and uploads the ones that can be analyzed, reporting into the list as each one ends. */
+function queueUploads(list: FileList | File[], uid: string | undefined, setUploads: Dispatch<SetStateAction<Upload[]>>) {
+  for (const file of Array.from(list)) {
+    const key = `${file.name}_${Date.now()}_${Math.random()}`;
+    const problem = !investigationFileKind(file.type, file.name)
+      ? 'inv.archivoTipo'
+      : file.size > INVESTIGATION_MAX_FILE_BYTES
+        ? 'inv.archivoGrande'
+        : null;
+    setUploads((current) => [...current, { key, name: file.name, size: file.size, storagePath: null, problem }]);
+    if (problem || !uid) continue;
+    const update = (patch: Partial<Upload>) => setUploads((current) => current.map((u) => (u.key === key ? { ...u, ...patch } : u)));
+    uploadInvestigationFile(uid, file)
+      .then((storagePath) => update({ storagePath }))
+      .catch(() => update({ problem: 'inv.archivoError' }));
+  }
 }
 
 /** One view at a time: the list, the form, or one investigation. */
@@ -775,23 +795,7 @@ function NewInvestigation({
   const missingCondominium = condominiums.length === 0 && condominiumOptions.length > 0;
   const canSend = typed >= MIN_QUESTION_CHARS && marked.size > 0 && !sending && !uploading && !tooManyFiles && !missingCondominium;
 
-  function addFiles(list: FileList | File[]) {
-    for (const file of Array.from(list)) {
-      const key = `${file.name}_${Date.now()}_${Math.random()}`;
-      const problem = !investigationFileKind(file.type, file.name)
-        ? 'inv.archivoTipo'
-        : file.size > INVESTIGATION_MAX_FILE_BYTES
-          ? 'inv.archivoGrande'
-          : null;
-      setUploads((current) => [...current, { key, name: file.name, size: file.size, storagePath: null, problem }]);
-      if (problem || !agent) continue;
-      const update = (patch: Partial<Upload>) =>
-        setUploads((current) => current.map((u) => (u.key === key ? { ...u, ...patch } : u)));
-      uploadInvestigationFile(agent.uid, file)
-        .then((storagePath) => update({ storagePath }))
-        .catch(() => update({ problem: 'inv.archivoError' }));
-    }
-  }
+  const addFiles = (list: FileList | File[]) => queueUploads(list, agent?.uid, setUploads);
 
   const templates = QUESTION_TEMPLATES.map((id) => ({
     id,
@@ -1354,6 +1358,7 @@ function ReportEvidence({ report }: { report: InvestigationReport }) {
 
 function BacklogDefinition({ draft }: { draft: InvestigationBacklogDraft }) {
   const t = useT();
+  const improvement = draft.type === 'Missing Feature';
   const line = (title: string, value: string) =>
     value && (
       <div>
@@ -1386,8 +1391,8 @@ function BacklogDefinition({ draft }: { draft: InvestigationBacklogDraft }) {
       <dl className="mt-2 space-y-2.5 text-[13px] leading-snug text-ink">
         {line(t('inv.backlogNombre'), draft.name)}
         {line(t('inv.backlogDetalle'), [draft.priority, ...draft.modules, ...draft.roles].join(' · '))}
-        {line(t('inv.backlogQuePasa'), draft.problem)}
-        {line(t('inv.backlogEsperado'), draft.expected)}
+        {line(t(improvement ? 'inv.backlogQueSeNecesita' : 'inv.backlogQuePasa'), draft.problem)}
+        {line(t(improvement ? 'inv.backlogResultado' : 'inv.backlogEsperado'), draft.expected)}
         {items(t('inv.backlogPasos'), draft.steps, '#')}
         {line(t('inv.backlogPantalla'), [draft.screenName, draft.howToReach].filter(Boolean).join(': '))}
         {items(t('inv.backlogCriterios'), draft.acceptance, '–')}
@@ -1397,35 +1402,25 @@ function BacklogDefinition({ draft }: { draft: InvestigationBacklogDraft }) {
   );
 }
 
-/** A confirmed bug can go to the product backlog as it is: one click, without confirming the definition. */
+/**
+ * A confirmed bug or an improvement can go to the product backlog as it is: one click, without
+ * confirming the definition. The same click can open the client's ticket in the chat for it.
+ */
 function BacklogOffer({ row }: { row: Row<Investigation> }) {
   const t = useT();
   const board = useDoc<InvestigatorBacklogConfig>('investigator/backlog');
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
+  const [withTicket, setWithTicket] = useState(false);
+  const [showingTicket, setShowingTicket] = useState(false);
   const item = row.data.backlogItem;
   const draft = row.data.report?.backlogDraft;
 
-  if (item?.status === 'created' && item.url) {
-    return (
-      <p className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-[10px] bg-ok-bg px-3.5 py-2.5 text-[13.5px] font-semibold text-ok-dark">
-        <span aria-hidden className="msr text-[18px]">check_circle</span>
-        {t('inv.backlogListo')}
-        <a href={item.url} target="_blank" rel="noreferrer" className="font-semibold underline underline-offset-2">
-          {t('inv.backlogVer')}
-        </a>
-        <span className="font-normal text-ink-2">· {item.by.nombre}</span>
-      </p>
-    );
-  }
-  if (!draft) return null;
-
-  const creating = busy || item?.status === 'creating';
-  async function add(force: boolean) {
+  async function add(force: boolean, ticket: boolean) {
     setBusy(true);
     setFailed(null);
     try {
-      await addInvestigationToBacklog(row.id, force);
+      await addInvestigationToBacklog(row.id, force, ticket);
     } catch (e) {
       const { code, message } = e as { code?: string; message?: string };
       setFailed(code === 'functions/failed-precondition' || code === 'functions/unavailable' ? (message ?? t('inv.backlogError')) : t('inv.backlogError'));
@@ -1434,32 +1429,93 @@ function BacklogOffer({ row }: { row: Row<Investigation> }) {
     }
   }
 
+  if (item?.status === 'created' && item.url) {
+    const ticket = item.ticket;
+    const creatingTicket = busy || ticket?.status === 'creating';
+    return (
+      <div className="rounded-[10px] bg-ok-bg px-3.5 py-2.5 text-[13.5px] text-ok-dark">
+        <p className="flex flex-wrap items-center gap-x-2 gap-y-1 font-semibold">
+          <span aria-hidden className="msr text-[18px]">check_circle</span>
+          {t('inv.backlogListo')}
+          <a href={item.url} target="_blank" rel="noreferrer" className="font-semibold underline underline-offset-2">
+            {t('inv.backlogVer')}
+          </a>
+          <span className="font-normal text-ink-2">· {item.by.nombre}</span>
+        </p>
+        {ticket?.status === 'created' && ticket.ticketId && ticket.numero !== null ? (
+          <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 font-semibold">
+            <span aria-hidden className="msr text-[18px]">confirmation_number</span>
+            {t('inv.backlogTicketListo')}
+            <button
+              onClick={() => setShowingTicket(true)}
+              className="font-semibold underline underline-offset-2 touch:min-h-10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-navy"
+            >
+              {formatTicketNumber(ticket.numero)}
+            </button>
+          </p>
+        ) : (
+          draft && (
+            <button
+              onClick={() => void add(false, true)}
+              disabled={creatingTicket}
+              className="mt-2 h-[34px] rounded-lg border border-warm-border bg-white px-3.5 text-[13.5px] font-semibold text-ink hover:bg-cream-1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-navy disabled:opacity-50 touch:h-10"
+            >
+              {creatingTicket ? t('inv.backlogTicketCreando') : t('inv.backlogCrearTicket')}
+            </button>
+          )
+        )}
+        {failed && <p className="mt-2 break-words text-[12.5px] font-normal text-warn-dark">{failed}</p>}
+        {showingTicket && ticket?.ticketId && <TicketDetailModal ticketId={ticket.ticketId} onClose={() => setShowingTicket(false)} />}
+      </div>
+    );
+  }
+  if (!draft) return null;
+
+  const improvement = draft.type === 'Missing Feature';
+  const creating = busy || item?.status === 'creating';
   const connected = board?.data.test.status === 'ok';
   return (
     <div className="rounded-[10px] border border-warm-border px-3.5 py-3">
       {draft.duplicateOf ? (
         <p className="text-[14px] leading-snug text-ink">
-          {t('inv.backlogDuplicado')}{' '}
+          {t(improvement ? 'inv.backlogDuplicadoMejora' : 'inv.backlogDuplicado')}{' '}
           <a href={draft.duplicateOf.url} target="_blank" rel="noreferrer" className="font-semibold text-navy underline underline-offset-2">
             {draft.duplicateOf.title || t('inv.backlogVer')}
           </a>
         </p>
       ) : (
-        <p className="text-[14px] font-semibold leading-snug text-ink">{t('inv.backlogPregunta')}</p>
+        <p className="text-[14px] font-semibold leading-snug text-ink">{t(improvement ? 'inv.backlogPreguntaMejora' : 'inv.backlogPregunta')}</p>
       )}
       {connected ? (
-        <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1">
-          <button
-            onClick={() => void add(!!draft.duplicateOf)}
-            disabled={creating}
-            className={`h-[34px] rounded-lg px-3.5 text-[13.5px] font-semibold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-navy disabled:opacity-50 ${
-              draft.duplicateOf ? 'border border-warm-border text-ink hover:bg-cream-1' : 'bg-navy text-white hover:bg-navy-light'
-            }`}
-          >
-            {creating ? t('inv.backlogAgregando') : t(draft.duplicateOf ? 'inv.backlogCrearIgual' : 'inv.backlogAgregar')}
-          </button>
-          {!draft.duplicateChecked && <p className="text-[12px] text-warm-gray">{t('inv.backlogSinRevisar')}</p>}
-        </div>
+        <>
+          <label className="mt-2.5 flex cursor-pointer gap-2.5 touch:min-h-10">
+            <input
+              type="checkbox"
+              checked={withTicket}
+              disabled={creating}
+              onChange={(e) => setWithTicket(e.target.checked)}
+              className="mt-0.5 h-4 w-4 flex-none self-start accent-[var(--color-ai)]"
+            />
+            <span className="min-w-0 text-[13.5px] leading-snug text-ink">
+              {t('inv.backlogConTicket')}
+              <span className="block text-[12px] text-warm-gray">{t('inv.backlogConTicketAyuda')}</span>
+            </span>
+          </label>
+          <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+            <button
+              onClick={() => void add(!!draft.duplicateOf, withTicket)}
+              disabled={creating}
+              className={`h-[34px] rounded-lg px-3.5 text-[13.5px] font-semibold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-navy disabled:opacity-50 touch:h-10 ${
+                draft.duplicateOf ? 'border border-warm-border text-ink hover:bg-cream-1' : 'bg-navy text-white hover:bg-navy-light'
+              }`}
+            >
+              {creating
+                ? t('inv.backlogAgregando')
+                : t(draft.duplicateOf ? 'inv.backlogCrearIgual' : withTicket ? 'inv.backlogAgregarConTicket' : 'inv.backlogAgregar')}
+            </button>
+            {!draft.duplicateChecked && <p className="text-[12px] text-warm-gray">{t('inv.backlogSinRevisar')}</p>}
+          </div>
+        </>
       ) : (
         <p className="mt-1.5 text-[12.5px] text-warm-gray">{t('inv.backlogSinConectar')}</p>
       )}
@@ -1469,11 +1525,58 @@ function BacklogOffer({ row }: { row: Row<Investigation> }) {
   );
 }
 
+/**
+ * A case that isn't a bug can still leave something to improve. Claude defines it in another round,
+ * and then it's offered for the backlog like any other.
+ */
+function ImprovementOffer({ id }: { id: string }) {
+  const t = useT();
+  const [asking, setAsking] = useState(false);
+  const [failed, setFailed] = useState<string | null>(null);
+
+  async function ask() {
+    setAsking(true);
+    setFailed(null);
+    try {
+      await requestFollowUp(id, t('inv.mejoraPregunta'));
+    } catch (e) {
+      const { code, message } = e as { code?: string; message?: string };
+      const explained = code === 'functions/failed-precondition' || code === 'functions/resource-exhausted';
+      setFailed(explained && message ? message : t('inv.errorEnviar'));
+    } finally {
+      setAsking(false);
+    }
+  }
+
+  return (
+    <div className="rounded-[10px] border border-warm-border px-3.5 py-3">
+      <p className="text-[13.5px] leading-snug text-ink-2">{t('inv.mejoraOferta')}</p>
+      <button
+        onClick={() => void ask()}
+        disabled={asking}
+        className="mt-2.5 h-[34px] rounded-lg border border-warm-border px-3.5 text-[13.5px] font-semibold text-ink hover:bg-cream-1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-navy disabled:opacity-50 touch:h-10"
+      >
+        {asking ? t('inv.mejoraPidiendo') : t('inv.mejoraBoton')}
+      </button>
+      {failed && <p className="mt-2 break-words text-[12.5px] text-warn-dark">{failed}</p>}
+    </div>
+  );
+}
+
 /** The agent's words in the thread, set apart from Claude's answers. */
-function AskedBubble({ question, by, at }: { question: string; by: string; at?: unknown }) {
+/** The files that came with a follow-up question. */
+const filesOfTurn = (files: InvestigationFile[] | undefined, turn: number) => (files ?? []).filter((file) => file.turn === turn);
+
+function AskedBubble({ question, by, at, files = [] }: { question: string; by: string; at?: unknown; files?: InvestigationFile[] }) {
   return (
     <div className="ml-auto w-fit max-w-[90%] rounded-[10px] bg-claude-bg px-3 py-2">
       <p className="whitespace-pre-wrap break-words text-[14px] leading-snug text-ink">{question}</p>
+      {files.map((file) => (
+        <p key={file.id} className="mt-1 flex items-center gap-1 text-[12px] text-ink-2">
+          <span aria-hidden className="msr flex-none text-[14px]">attach_file</span>
+          <span className="min-w-0 break-words">{file.name}</span>
+        </p>
+      ))}
       <p className="mt-1 text-[11.5px] text-warm-gray">
         {by}
         {!!at && <> · {fmtFecha(at, true)}</>}
@@ -1495,7 +1598,7 @@ function outcomeLabel(t: ReturnType<typeof useT>, turn: Pick<InvestigationTurn, 
 }
 
 /** A round that's over. The last one starts open when nothing newer has an answer yet. */
-function PastTurn({ turn, defaultOpen }: { turn: InvestigationTurn; defaultOpen: boolean }) {
+function PastTurn({ turn, defaultOpen, files }: { turn: InvestigationTurn; defaultOpen: boolean; files?: InvestigationFile[] }) {
   const t = useT();
   const { report, status } = turn;
   const tone = report ? CONCLUSION_TONE[report.conclusion] : STATUS_TONE[status];
@@ -1513,7 +1616,7 @@ function PastTurn({ turn, defaultOpen }: { turn: InvestigationTurn; defaultOpen:
         <span className={`flex-none text-[12px] font-semibold ${tone}`}>{outcomeLabel(t, turn)}</span>
       </summary>
       <div className="space-y-3 pb-4">
-        {turn.n > 1 && <AskedBubble question={turn.question} by={turn.by.nombre} at={turn.askedAt} />}
+        {turn.n > 1 && <AskedBubble question={turn.question} by={turn.by.nombre} at={turn.askedAt} files={filesOfTurn(files, turn.n)} />}
         {report ? (
           <>
             <ReportAnswer report={report} />
@@ -1528,20 +1631,29 @@ function PastTurn({ turn, defaultOpen }: { turn: InvestigationTurn; defaultOpen:
 }
 
 /** Under the answer it continues, or under the error when a round failed. */
-function FollowUpComposer({ id }: { id: string }) {
+function FollowUpComposer({ id, caseFiles }: { id: string; /** How many files the case already has: the limit is over all of them. */ caseFiles: number }) {
   const t = useT();
+  const { agent } = useAuth();
   const [question, setQuestion] = useState('');
+  const [uploads, setUploads] = useState<Upload[]>([]);
   const [sending, setSending] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const typed = question.trim().length;
+  const readyUploads = uploads.filter((u) => u.storagePath && !u.problem);
+  const uploading = uploads.some((u) => !u.storagePath && !u.problem);
+  const tooManyFiles = readyUploads.length > 0 && caseFiles + readyUploads.length > INVESTIGATION_MAX_FILES;
+  const canSend = typed >= MIN_FOLLOW_UP_CHARS && !sending && !uploading && !tooManyFiles;
+  const addFiles = (list: FileList | File[]) => queueUploads(list, agent?.uid, setUploads);
 
   async function send() {
-    if (typed < MIN_FOLLOW_UP_CHARS || sending) return;
+    if (!canSend) return;
     setSending(true);
     setFailed(null);
     try {
-      await requestFollowUp(id, question.trim());
+      await requestFollowUp(id, question.trim(), readyUploads.map((u) => ({ storagePath: u.storagePath!, name: u.name })));
       setQuestion('');
+      setUploads([]);
     } catch (e) {
       const { code, message } = e as { code?: string; message?: string };
       const explained = code === 'functions/failed-precondition' || code === 'functions/resource-exhausted' || code === 'functions/invalid-argument';
@@ -1554,32 +1666,75 @@ function FollowUpComposer({ id }: { id: string }) {
   return (
     <div>
       {failed && <p className="mb-1.5 text-[12.5px] text-warn-dark">{failed}</p>}
-      <div className="flex items-end gap-2 rounded-[10px] border-[1.5px] border-warm-border bg-white py-1.5 pl-3 pr-1.5 focus-within:border-ai-light focus-within:ring-[3px] focus-within:ring-ai-bg">
-        <textarea
-          value={question}
-          onChange={(e) => setQuestion(e.target.value)}
-          onKeyDown={(e) => {
-            // On touch, Enter stays a newline, as in the chat's composer.
-            if (e.key === 'Enter' && !e.shiftKey && !window.matchMedia('(hover: none)').matches) {
-              e.preventDefault();
-              void send();
-            }
-          }}
-          aria-label={t('inv.seguirPreguntando')}
-          placeholder={t('inv.seguirPreguntando')}
-          rows={1}
-          maxLength={1000}
-          className="max-h-32 min-h-[30px] min-w-0 flex-1 resize-none bg-transparent py-1 text-[14px] leading-snug text-ink outline-none [field-sizing:content] placeholder:text-warm-gray-2"
-        />
-        <button
-          onClick={() => void send()}
-          disabled={typed < MIN_FOLLOW_UP_CHARS || sending}
-          aria-label={t('inv.enviar')}
-          title={t('inv.enviar')}
-          className="flex h-[30px] w-[30px] flex-none items-center justify-center rounded-md bg-navy text-white touch:h-10 touch:w-10 hover:bg-navy-light focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-navy disabled:opacity-40"
-        >
-          <span aria-hidden className="msr text-[18px]">arrow_upward</span>
-        </button>
+      {tooManyFiles && <p className="mb-1.5 text-[12.5px] text-warn-dark">{t('inv.archivosDemasiadosCaso', { n: caseFiles, max: INVESTIGATION_MAX_FILES })}</p>}
+      <div
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => {
+          e.preventDefault();
+          addFiles(e.dataTransfer.files);
+        }}
+        className="rounded-[10px] border-[1.5px] border-warm-border bg-white focus-within:border-ai-light focus-within:ring-[3px] focus-within:ring-ai-bg"
+      >
+        {uploads.length > 0 && (
+          <ul className="flex max-h-24 flex-wrap gap-1.5 overflow-y-auto px-2.5 pt-2">
+            {uploads.map((upload) => (
+              <UploadChip key={upload.key} upload={upload} onRemove={() => setUploads((current) => current.filter((u) => u.key !== upload.key))} />
+            ))}
+          </ul>
+        )}
+        <div className="flex items-end gap-1.5 py-1.5 pl-1.5 pr-1.5">
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            aria-label={t('inv.adjuntar')}
+            title={`${t('inv.adjuntar')} · ${t('inv.archivosPista')}`}
+            className="flex h-[30px] w-[30px] flex-none items-center justify-center rounded-md text-warm-gray touch:h-10 touch:w-10 hover:bg-ai-bg hover:text-navy focus-visible:outline-2 focus-visible:outline-ai"
+          >
+            <span aria-hidden className="msr text-[19px]">attach_file</span>
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept={INVESTIGATION_FILE_ACCEPT}
+            className="hidden"
+            onChange={(e) => {
+              if (e.target.files) addFiles(e.target.files);
+              e.target.value = '';
+            }}
+          />
+          <textarea
+            value={question}
+            onChange={(e) => setQuestion(e.target.value)}
+            onPaste={(e) => {
+              if (e.clipboardData.files.length > 0) {
+                e.preventDefault();
+                addFiles(e.clipboardData.files);
+              }
+            }}
+            onKeyDown={(e) => {
+              // On touch, Enter stays a newline, as in the chat's composer.
+              if (e.key === 'Enter' && !e.shiftKey && !window.matchMedia('(hover: none)').matches) {
+                e.preventDefault();
+                void send();
+              }
+            }}
+            aria-label={t('inv.seguirPreguntando')}
+            placeholder={t('inv.seguirPreguntando')}
+            rows={1}
+            maxLength={1000}
+            className="max-h-32 min-h-[30px] min-w-0 flex-1 resize-none bg-transparent py-1 text-[14px] leading-snug text-ink outline-none [field-sizing:content] placeholder:text-warm-gray-2"
+          />
+          <button
+            onClick={() => void send()}
+            disabled={!canSend}
+            aria-label={t('inv.enviar')}
+            title={t('inv.enviar')}
+            className="flex h-[30px] w-[30px] flex-none items-center justify-center rounded-md bg-navy text-white touch:h-10 touch:w-10 hover:bg-navy-light focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-navy disabled:opacity-40"
+          >
+            <span aria-hidden className="msr text-[18px]">arrow_upward</span>
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -1652,14 +1807,14 @@ export function InvestigationDetail({
             <div className={isActive(status) ? '' : 'mt-4 border-t border-cream-3'}>
               {/* Folded while a new round runs. Only a round that failed leaves the last answer as the one to read. */}
               {pastTurns.map((past, i) => (
-                <PastTurn key={past.id} turn={past.data} defaultOpen={i === pastTurns.length - 1 && unfinished} />
+                <PastTurn key={past.id} turn={past.data} defaultOpen={i === pastTurns.length - 1 && unfinished} files={files} />
               ))}
             </div>
           )}
 
           {followUp && (
             <div className="mt-4">
-              <AskedBubble question={followUp.question} by={followUp.by.nombre} at={queuedAt} />
+              <AskedBubble question={followUp.question} by={followUp.by.nombre} at={queuedAt} files={filesOfTurn(files, turn)} />
             </div>
           )}
 
@@ -1692,21 +1847,27 @@ export function InvestigationDetail({
           {/* A round that failed has no report to sit under, and this is how to try it again. */}
           {!report && unfinished && turn > 1 && (
             <div className="mt-4">
-              <FollowUpComposer id={row.id} />
+              <FollowUpComposer id={row.id} caseFiles={files?.length ?? 0} />
             </div>
           )}
 
           {report && (
             <div className="mt-4">
               {tookNow && <p className="mb-2 text-[12px] text-warm-gray">{t('inv.duro', { tiempo: tookNow })}</p>}
-              <ReportAnswer report={report} onUseReply={actions?.onUseReply} followUp={!isActive(status) && <FollowUpComposer id={row.id} />} />
+              <ReportAnswer report={report} onUseReply={actions?.onUseReply} followUp={!isActive(status) && <FollowUpComposer id={row.id} caseFiles={files?.length ?? 0} />} />
             </div>
           )}
 
-          {(report?.backlogDraft || row.data.backlogItem) && (
+          {report?.backlogDraft || row.data.backlogItem ? (
             <div className="mt-4">
               <BacklogOffer row={row} />
             </div>
+          ) : (
+            status === 'done' && report && report.conclusion !== 'undetermined' && (
+              <div className="mt-4">
+                <ImprovementOffer id={row.id} />
+              </div>
+            )
           )}
 
           <WriteProposals id={row.id} report={report} canFollowUp={!isActive(status)} />

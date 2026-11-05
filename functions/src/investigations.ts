@@ -158,6 +158,17 @@ export function validateUploads(uploads: unknown, uid: string, inherited: Readon
   return valid ? null : 'Los archivos no son válidos.';
 }
 
+/**
+ * The case's files plus the ones a follow-up brings, marked with their round. Ids go on from the
+ * last one, because the Pi asks for a file by id and names it on disk by its position.
+ */
+export function withAddedFiles<T extends { id: string; storagePath: string }>(existing: T[], added: T[], turn: number): (T & { turn?: number })[] {
+  const known = new Set(existing.map((file) => file.storagePath));
+  const last = existing.reduce((max, file) => Math.max(max, Number(/^f(\d+)$/.exec(file.id)?.[1] ?? 0)), 0);
+  const fresh = added.filter((file, index) => !known.has(file.storagePath) && added.findIndex((other) => other.storagePath === file.storagePath) === index);
+  return [...existing, ...fresh.map((file, index) => ({ ...file, id: `f${last + index + 1}`, turn }))];
+}
+
 /** Checks that apply once every file's real size is known. */
 export function filesProblem(files: { size: number }[]): string | null {
   if (files.length > INVESTIGATION_MAX_FILES) return `Se pueden analizar hasta ${INVESTIGATION_MAX_FILES} archivos. Quitá algunos o desmarcá mensajes.`;
@@ -356,10 +367,18 @@ export function archivedTurn(investigation: Investigation): InvestigationTurn {
 
 export const requestFollowUp = onCall({ region: 'us-central1' }, async (req) => {
   if (req.auth?.token.kind !== 'agent') throw new HttpsError('permission-denied', 'Solo agentes.');
-  const { id, question } = req.data as { id?: unknown; question?: unknown };
-  const invalid = followUpProblem(question);
+  const { id, question, uploads } = req.data as { id?: unknown; question?: unknown; uploads?: { storagePath: string; name: string }[] };
+  const invalid = followUpProblem(question) ?? validateUploads(uploads, req.auth.uid);
   if (invalid || typeof id !== 'string' || !id) throw new HttpsError('invalid-argument', invalid ?? 'Falta la investigación.');
   const uid = req.auth.uid;
+  // Type and size come from Storage, as with the first question. The id is given inside the transaction.
+  const added: InvestigationInputFile[] = [];
+  for (const upload of uploads ?? []) {
+    const file = await fileFromStorage('', 'agent', upload.storagePath, upload.name);
+    if (!file) throw new HttpsError('invalid-argument', `No se puede analizar ${upload.name}.`);
+    added.push(file);
+  }
+  const inputRef = db.doc(`investigation_inputs/${id}`);
   const agent = (await db.doc(`team/${uid}`).get()).data() as { nombre?: string } | undefined;
   const by = { uid, nombre: agent?.nombre ?? req.auth.token.email ?? 'Agente' };
   const ref = db.doc(`investigations/${id}`);
@@ -380,6 +399,17 @@ export const requestFollowUp = onCall({ region: 'us-central1' }, async (req) => 
     const count = ((await tx.get(counterRef)).data()?.count as number | undefined) ?? 0;
     if (count >= MAX_PER_AGENT_PER_DAY) {
       throw new HttpsError('resource-exhausted', `Se alcanzó el límite de ${MAX_PER_AGENT_PER_DAY} investigaciones por día.`);
+    }
+    if (added.length > 0) {
+      // Every round downloads all of the case's files, so the limits are over the whole case.
+      const input = (await tx.get(inputRef)).data() as { files?: InvestigationInputFile[] } | undefined;
+      const files = withAddedFiles(input?.files ?? [], added, turn + 1);
+      const tooMany = filesProblem(files);
+      if (tooMany) throw new HttpsError('invalid-argument', tooMany);
+      tx.set(inputRef, { files }, { merge: true });
+      tx.update(ref, {
+        files: files.map(({ id: fileId, source, storagePath, name, mimeType, size, turn: round }) => ({ id: fileId, source, storagePath, name, mimeType, size, ...(round && { turn: round }) })),
+      });
     }
     tx.set(counterRef, { count: count + 1 }, { merge: true });
     tx.set(ref.collection('turns').doc(String(turn)), archivedTurn(investigation));

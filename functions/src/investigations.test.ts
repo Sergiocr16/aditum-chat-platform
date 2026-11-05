@@ -14,6 +14,7 @@ import {
   roundTimes,
   sameTarget,
   validateUploads,
+  withAddedFiles,
   secretMatches,
   threadKeyOf,
   validateRequest,
@@ -273,5 +274,20 @@ describe('investigationSource', () => {
       clientId: null,
       clientNombre: 'Horizonte',
     });
+  });
+});
+
+describe('withAddedFiles', () => {
+  const file = (id: string, storagePath: string) => ({ id, storagePath, name: storagePath });
+  it('numbers a follow-up\'s files after the last one and marks their round', () => {
+    const files = withAddedFiles([file('f1', 'a'), file('f2', 'b')], [file('', 'c'), file('', 'd')], 3);
+    expect(files.map(({ id, turn }) => [id, turn])).toEqual([['f1', undefined], ['f2', undefined], ['f3', 3], ['f4', 3]]);
+  });
+  it('starts at f1 for a case that had none', () => {
+    expect(withAddedFiles([], [file('', 'a')], 2).map((f) => f.id)).toEqual(['f1']);
+  });
+  it('never reuses an id, and takes a file only once', () => {
+    const files = withAddedFiles([file('f1', 'a'), file('f5', 'b')], [file('', 'a'), file('', 'c'), file('', 'c')], 2);
+    expect(files.map((f) => f.id)).toEqual(['f1', 'f5', 'f6']);
   });
 });

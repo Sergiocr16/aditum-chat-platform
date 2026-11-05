@@ -100,11 +100,25 @@ describe('backlogDraftFrom', () => {
   const rows = [{ id: 'row-1', url: 'https://notion/row-1', title: 'Mora', description: '', modules: ['Cobros'] }];
   const bug = raw({ classification: 'bug', backlog_item: item });
 
-  it('defines a ticket only for a confirmed bug', () => {
-    expect(backlogDraftFrom(bug, 'confirmed', rows)).toMatchObject({ name: 'Mora mal', steps: ['uno'], screenName: 's', duplicateChecked: true });
+  it('defines a bug only when it is confirmed', () => {
+    expect(backlogDraftFrom(bug, 'confirmed', rows)).toMatchObject({ type: 'Bug', name: 'Mora mal', steps: ['uno'], screenName: 's', duplicateChecked: true });
     expect(backlogDraftFrom(bug, 'hypothesis', rows)).toBeNull();
-    expect(backlogDraftFrom(raw({ classification: 'data_error', backlog_item: item }), 'confirmed', rows)).toBeNull();
     expect(backlogDraftFrom(raw({ classification: 'bug' }), 'confirmed', rows)).toBeNull();
+  });
+
+  it('defines an improvement for something missing or working as built, without steps', () => {
+    for (const classification of ['missing_feature', 'expected_behavior'] as const) {
+      const improvement = raw({ classification, backlog_item: item });
+      expect(backlogDraftFrom(improvement, 'confirmed', rows)).toMatchObject({ type: 'Missing Feature', name: 'Mora mal', problem: 'p', steps: [] });
+      expect(backlogDraftFrom(improvement, 'hypothesis', rows)?.type).toBe('Missing Feature');
+      expect(backlogDraftFrom(improvement, 'undetermined', rows)).toBeNull();
+    }
+  });
+
+  it('defines nothing for a data error, a question or an unknown, whatever the model filled in', () => {
+    for (const classification of ['data_error', 'question', 'unknown'] as const) {
+      expect(backlogDraftFrom(raw({ classification, backlog_item: item }), 'confirmed', rows)).toBeNull();
+    }
   });
 
   it('loses the ticket when the check lowers the conclusion', () => {
@@ -155,6 +169,32 @@ describe('verifyReport', () => {
 
   it('gives no reply unless confirmed, even if the model wrote one', () => {
     expect(verifyReport(raw({ conclusion: 'hypothesis' }), dir, []).suggestedReply).toBeNull();
+  });
+
+  it('says apart which of a proposal\'s own citations failed', () => {
+    const proposal = (quote: string) => ({
+      reason: 'r',
+      operations: [],
+      consequence: 'c',
+      consequence_evidence: [{ path: 'src/Mora.java', start_line: 2, end_line: 2, quote }],
+      risk_level: 'low' as const,
+      risk: 'x',
+      cache: 'y',
+    });
+    const good = verifyReport(raw({ write_proposal: proposal('int dias = 30;') }), dir, []);
+    expect(good.conclusion).toBe('confirmed');
+    expect(good.writeProposal?.consequenceRejected).toEqual([]);
+    const invented = verifyReport(raw({ write_proposal: proposal('nadie lo lee') }), dir, []);
+    expect(invented.conclusion).toBe('hypothesis');
+    expect(invented.writeProposal?.consequenceRejected).toEqual([expect.stringMatching(/no aparece/)]);
+    // A bad citation of the cause lowers the conclusion without touching the proposal's own.
+    const other = verifyReport(
+      raw({ write_proposal: proposal('int dias = 30;'), code_evidence: [...raw().code_evidence, { path: 'src/Mora.java', start_line: 3, end_line: 3, quote: 'inventado aquí' }] }),
+      dir,
+      [],
+    );
+    expect(other.conclusion).toBe('hypothesis');
+    expect(other.writeProposal?.consequenceRejected).toEqual([]);
   });
 
   it('accepts data evidence from this job only', () => {

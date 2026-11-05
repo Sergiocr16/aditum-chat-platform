@@ -2,6 +2,7 @@ import { readFileSync, realpathSync } from 'node:fs';
 import { isAbsolute, join, relative } from 'node:path';
 import type {
   InvestigationBacklogDraft,
+  InvestigationBacklogType,
   InvestigationBacklogRow,
   InvestigationClassification,
   InvestigationCodeEvidence,
@@ -252,8 +253,18 @@ export const REPORT_SCHEMA = {
 const cleanList = (items: string[]) => items.map((item) => item.trim()).filter(Boolean);
 
 /**
- * Only a confirmed bug goes to the backlog, whatever the model filled in. A duplicate has to be a
- * row it was really shown: `rows` is null when the board couldn't be read.
+ * What a case can become on the board, whatever the model filled in. A bug claims the product is
+ * wrong, so it has to be confirmed. An improvement is a request: it only needs evidence that held.
+ */
+export function backlogTypeFor(classification: InvestigationClassification, conclusion: InvestigationConclusion): InvestigationBacklogType | null {
+  if (classification === 'bug') return conclusion === 'confirmed' ? 'Bug' : null;
+  if (classification === 'missing_feature' || classification === 'expected_behavior') return conclusion === 'undetermined' ? null : 'Missing Feature';
+  return null;
+}
+
+/**
+ * The type comes from the classification, never from the model. A duplicate has to be a row it was
+ * really shown: `rows` is null when the board couldn't be read.
  */
 export function backlogDraftFrom(
   raw: RawReport,
@@ -261,9 +272,11 @@ export function backlogDraftFrom(
   rows: InvestigationBacklogRow[] | null | undefined,
 ): InvestigationBacklogDraft | null {
   const item = raw.backlog_item;
-  if (!item || conclusion !== 'confirmed' || raw.classification !== 'bug') return null;
+  const type = backlogTypeFor(raw.classification, conclusion);
+  if (!item || !type) return null;
   const duplicate = rows?.find((row) => row.id === item.duplicate_of);
   return {
+    type,
     name: item.name.trim(),
     description: item.description.trim(),
     priority: item.priority,
@@ -271,7 +284,8 @@ export function backlogDraftFrom(
     roles: cleanList(item.roles),
     problem: item.problem.trim(),
     expected: item.expected.trim(),
-    steps: cleanList(item.steps),
+    // An improvement has nothing to reproduce.
+    steps: type === 'Bug' ? cleanList(item.steps) : [],
     screenName: item.screen_name.trim(),
     howToReach: item.how_to_reach.trim(),
     acceptance: cleanList(item.acceptance),
@@ -307,12 +321,14 @@ export function verifyReport(
   }));
   const validCode = code.filter((e) => codeEvidenceProblem(e, checkoutDir) === null);
   const validData = data.filter((e) => dataEvidenceProblem(e, queries) === null);
+  const isProblem = (problem: string | null): problem is string => problem !== null;
+  // Claiming who reads the data with an invented citation is as bad as inventing the cause.
+  const consequenceRejected = consequenceEvidence.map((e) => codeEvidenceProblem(e, checkoutDir)).filter(isProblem);
   const rejected = [
     ...code.map((e) => codeEvidenceProblem(e, checkoutDir)),
-    // Claiming who reads the data with an invented citation is as bad as inventing the cause.
-    ...consequenceEvidence.map((e) => codeEvidenceProblem(e, checkoutDir)),
+    ...consequenceRejected,
     ...data.map((e) => dataEvidenceProblem(e, queries)),
-  ].filter((problem): problem is string => problem !== null);
+  ].filter(isProblem);
   const hasEvidence = validCode.length + validData.length > 0;
 
   let conclusion = raw.conclusion;
@@ -337,6 +353,8 @@ export function verifyReport(
       operations: proposal.operations,
       consequence: proposal.consequence.trim(),
       consequenceEvidence,
+      // A hypothesis can still reach an admin, but never on a citation of its own that doesn't hold.
+      consequenceRejected,
       riskLevel: proposal.risk_level,
       risk: proposal.risk.trim(),
       cache: proposal.cache.trim(),

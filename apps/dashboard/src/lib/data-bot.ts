@@ -135,6 +135,11 @@ export async function agregarUrlKb(url: string, nombre: string, sitio: string): 
   return ref.id;
 }
 
+/** Deletes a KB document with its chunks and its file. Chunks are closed to clients, so this goes through a function. */
+export async function deleteKbDoc(docId: string): Promise<void> {
+  await httpsCallable(fns, 'kbDeleteDoc')({ docId });
+}
+
 /** Sube la imagen del bot a Storage y devuelve la URL pública. */
 export async function subirAvatarBot(siteId: string, file: File): Promise<string> {
   const ref = storageRef(storage, `perfiles/bot-${siteId}.png`);

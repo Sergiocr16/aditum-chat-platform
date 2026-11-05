@@ -22,9 +22,14 @@ describe('writeProposalProblems', () => {
   it('lets a complete proposal through', () => {
     expect(problemsFor({})).toEqual([]);
   });
-  it('needs a confirmed conclusion and code evidence', () => {
-    expect(problemsFor({}, { conclusion: 'hypothesis' }).join()).toMatch(/confirmada/);
+  it('needs checked evidence, and code evidence among it', () => {
+    expect(problemsFor({}, { conclusion: 'undetermined' }).join()).toMatch(/comprobar/);
     expect(problemsFor({}, { codeEvidence: [] }).join()).toMatch(/evidencia/);
+  });
+  it('lets a hypothesis through only when the Pi checked its own citations and all held', () => {
+    expect(problemsFor({ consequenceRejected: [] }, { conclusion: 'hypothesis' })).toEqual([]);
+    expect(problemsFor({}, { conclusion: 'hypothesis' }).join()).toMatch(/La Pi no revisó/);
+    expect(problemsFor({ consequenceRejected: ['la cita no aparece en a.java:1-1'] }, { conclusion: 'hypothesis' }).join()).toMatch(/quién usa estos datos/);
   });
   it('needs the consequence, its evidence, the risk and the cache', () => {
     expect(problemsFor({ consequence: ' ' }).join()).toMatch(/quién usa/);
@@ -67,13 +72,20 @@ describe('proposalFrom', () => {
   it('turns a valid draft into a document, and the report only points at it', () => {
     const { proposal, problems } = proposalFrom(report(), 2);
     expect(problems).toEqual([]);
-    expect(proposal).toMatchObject({ turn: 2, status: 'proposed', opsHash: operationsHash([update]) });
+    expect(proposal).toMatchObject({ turn: 2, status: 'proposed', conclusion: 'confirmed', opsHash: operationsHash([update]) });
     const stored = reportWithProposal(report(), 't2', []);
     expect(stored.writeProposal).toBeUndefined();
     expect(stored.proposalId).toBe('t2');
   });
+  it('records that the cause was a hypothesis, for the admin to see', () => {
+    const unsure = report({ conclusion: 'hypothesis', writeProposal: { ...draft, consequenceRejected: [] } });
+    const { proposal, problems } = proposalFrom(unsure, 1);
+    expect(problems).toEqual([]);
+    expect(proposal?.conclusion).toBe('hypothesis');
+    expect(proposal).not.toHaveProperty('consequenceRejected');
+  });
   it('keeps what was wrong with an invalid one, for the agent to see', () => {
-    const invalid = report({ conclusion: 'hypothesis' });
+    const invalid = report({ conclusion: 'undetermined' });
     const { proposal, problems } = proposalFrom(invalid, 1);
     expect(proposal).toBeNull();
     expect(reportWithProposal(invalid, null, problems).proposalProblems).toEqual(problems);

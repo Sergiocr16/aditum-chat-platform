@@ -57,7 +57,7 @@ export async function prepareFiles(
         path = join(dir, safeFileName(index, file.name, '.txt'));
         write(path, text);
       }
-      ready.push({ id: file.id, source: file.source, name: file.name, path, converted });
+      ready.push({ id: file.id, source: file.source, name: file.name, path, converted, ...(file.turn && { turn: file.turn }) });
     } catch (e) {
       console.error(`file ${file.id}`, (e as Error).message);
       unreadable.push(file.name);

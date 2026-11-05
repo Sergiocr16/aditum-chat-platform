@@ -72,11 +72,13 @@ export function proposalFrom(report: InvestigationReport, turn: number): { propo
   if (!draft) return { proposal: null, problems: [] };
   const problems = writeProposalProblems(draft, report);
   if (problems.length > 0) return { proposal: null, problems };
+  const { consequenceRejected: _checked, ...kept } = draft;
   return {
     problems: [],
     proposal: {
-      ...draft,
+      ...kept,
       turn,
+      conclusion: report.conclusion,
       status: 'proposed',
       opsHash: operationsHash(draft.operations),
       createdAt: FieldValue.serverTimestamp(),

@@ -119,6 +119,15 @@ describe('buildPrompt follow-ups', () => {
     queries: [{ purpose: 'ver pagos', sql: 'SELECT id FROM payment', rowCount: 3, error: null }],
   };
 
+  it('marks the files attached to the question being asked now', () => {
+    const file = (id: string, turn?: number) => ({ id, source: 'agent' as const, name: `${id}.pdf`, path: `/files/${id}.pdf`, converted: false, ...(turn && { turn }) });
+    const prompt = buildPrompt({ ...base, turn: 2, followUp: 'mirá este estado de cuenta', history: [turn] }, [file('f1'), file('f2', 2)]);
+    expect(prompt).toMatch(/<file id="f1"[^>]*path=/);
+    expect(prompt).not.toMatch(/<file id="f1"[^>]*nuevo/);
+    expect(prompt).toMatch(/<file id="f2"[^>]*nuevo="si"/);
+    expect(buildPrompt(base, [file('f1')])).not.toContain('nuevo');
+  });
+
   it("keeps a client's text from posing as the prompt's own tags", () => {
     const prompt = buildPrompt({
       ...base,
@@ -228,6 +237,16 @@ describe('buildResumedPrompt', () => {
 
   it('keeps the agent from closing the tags', () => {
     expect(buildResumedPrompt(job, 1).match(/<\/previous_turns>/g)).toHaveLength(1);
+  });
+
+  it('lists only the files the session has not seen, marking the ones for this question', () => {
+    const file = (id: string, turn?: number) => ({ id, source: 'agent' as const, name: `${id}.pdf`, path: `/files/${id}.pdf`, converted: false, ...(turn && { turn }) });
+    const prompt = buildResumedPrompt(job, 1, [file('f1'), file('f2', 2), file('f3', 3)]);
+    expect(prompt).not.toContain('f1.pdf');
+    expect(prompt).toMatch(/<file id="f2"[^>]*path="\/files\/f2.pdf" \/>/);
+    expect(prompt).not.toMatch(/<file id="f2"[^>]*nuevo/);
+    expect(prompt).toMatch(/<file id="f3"[^>]*nuevo="si"/);
+    expect(buildResumedPrompt(job, 3, [file('f1'), file('f3', 3)])).not.toContain('<files>');
   });
 });
 

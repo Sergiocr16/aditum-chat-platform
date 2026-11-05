@@ -749,16 +749,32 @@ export interface InvestigationBacklogRow {
   modules: string[];
 }
 
-/** The ticket Claude defined for a confirmed bug, following the backlog's template. */
+/** The board's `Tipo` column. An improvement is a `Missing Feature` there. */
+export type InvestigationBacklogType = 'Bug' | 'Missing Feature';
+
+/** The client's ticket created along with a backlog row. `creating` holds it while the click is in flight. */
+export interface InvestigationBacklogTicket {
+  status: 'creating' | 'created';
+  ticketId: string | null;
+  numero: number | null;
+  at: unknown;
+}
+
+/** The ticket Claude defined for a bug or an improvement, following the backlog's template for its type. */
 export interface InvestigationBacklogDraft {
+  /** Decided by the Pi from the classification, never by the model. Missing on drafts from before improvements: a bug. */
+  type?: InvestigationBacklogType;
   name: string;
   /** One or two lines. The detail goes in the fields below. */
   description: string;
   priority: 'Urgente' | 'Alta' | 'Media' | 'Baja';
   modules: string[];
   roles: string[];
+  /** For an improvement: what is needed and what for. */
   problem: string;
+  /** For an improvement: how it looks or is used once it's there. */
   expected: string;
+  /** Empty for an improvement. */
   steps: string[];
   screenName: string;
   howToReach: string;
@@ -792,7 +808,7 @@ export interface InvestigationReport {
   rejectedEvidence: string[];
   /** Missing on reports from before it existed. */
   classification?: InvestigationClassification;
-  /** Only for a confirmed bug. */
+  /** For a confirmed bug, or an improvement to the product. */
   backlogDraft?: InvestigationBacklogDraft | null;
   /** Comes from the Pi, and functions moves it out to `proposals` once it passes. */
   writeProposal?: WriteProposalDraft | null;
@@ -818,6 +834,8 @@ export interface InvestigationFile {
   name: string;
   mimeType: string;
   size: number;
+  /** The round that brought it in, for one attached to a follow-up. Missing means the first. */
+  turn?: number;
 }
 
 /** Who the chat was with when the investigation was requested. A group chat has no single contact. */
@@ -883,7 +901,16 @@ export interface Investigation {
   /** When it last went into the queue, which is what orders the queue. */
   queuedAt?: unknown;
   /** The row it became in the backlog. `creating` holds it while the click is in flight. */
-  backlogItem?: { status: 'creating' | 'created'; url: string | null; by: { uid: string; nombre: string }; at: unknown };
+  backlogItem?: {
+    status: 'creating' | 'created';
+    url: string | null;
+    /** The Notion page, to note the client's ticket on it later. Missing on rows from before that. */
+    pageId?: string | null;
+    by: { uid: string; nombre: string };
+    at: unknown;
+    /** The client's ticket in this chat for the same thing, when the agent asked for one. */
+    ticket?: InvestigationBacklogTicket;
+  };
   /** The latest approved write that changed production, or may have. The rows are in its proposal. */
   productionWrite?: InvestigationProductionWrite;
   /** Commit of the production branch that was read. */
@@ -958,6 +985,11 @@ export interface WriteProposalDraft {
   /** Who or what reads these data. */
   consequence: string;
   consequenceEvidence: InvestigationCodeEvidence[];
+  /**
+   * What was wrong with each consequence citation that didn't check out. Set by the Pi; absent
+   * from one that doesn't check them apart, which only a confirmed conclusion then covers.
+   */
+  consequenceRejected?: string[];
   riskLevel: WriteRiskLevel;
   risk: string;
   /** What stays out of date, since a direct write skips the app's cache eviction. */
@@ -1045,6 +1077,8 @@ export interface WriteExecution {
 /** investigations/{id}/proposals/{proposalId}. Agents read, only functions writes. */
 export interface WriteProposal extends WriteProposalDraft {
   turn: number;
+  /** How sure the investigation was of the cause. Absent on older ones, which needed `confirmed`. */
+  conclusion?: InvestigationConclusion;
   status: WriteProposalStatus;
   opsHash: string;
   createdAt: unknown;

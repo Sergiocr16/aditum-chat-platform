@@ -328,7 +328,7 @@ export async function runJob(config: Config, job: InvestigationJob): Promise<Job
         stdio: ['pipe', 'pipe', 'pipe'],
         detached: true,
       });
-      child.stdin!.end(resume ? buildResumedPrompt(job, resume.turn) : buildPrompt(job, files));
+      child.stdin!.end(resume ? buildResumedPrompt(job, resume.turn, files) : buildPrompt(job, files));
 
       let stderr = '';
       child.stderr!.on('data', (chunk) => {

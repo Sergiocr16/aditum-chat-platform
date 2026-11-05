@@ -35,12 +35,13 @@ Pi: writer (own OS user) ── write user limited by its GRANTs, password only 
 | An open admin session can't collect the saved credentials | The Pi's and the read-only passwords are only reused for the host, port and user they were saved for (`sameTarget`); another address also drops the saved Claude token. Installing, which sends the Pi its secrets, needs a fresh login |
 | Claude can't reach credentials | Separate OS users; the password reaches only the gateway, with its own secret |
 | A broader user can't be pasted in | The gateway checks `SHOW GRANTS` and won't use anything beyond `SELECT` on that database |
-| Files only from their own chat | `requestInvestigation` takes attachments under that conversation's `adjuntos/{convId}/`, and uploads under the agent's own `investigaciones/{uid}/`; the Pi can only fetch a running job's files, by id |
+| Files only from their own chat | `requestInvestigation` takes attachments under that conversation's `adjuntos/{convId}/`, and uploads under the agent's own `investigaciones/{uid}/`, which is also all a follow-up can add; the Pi can only fetch a running job's files, by id |
 | A hostile file can't reach the runner's secrets | Excel and Word are converted in a separate process as Claude's user, with only `PATH` in its environment and capped memory and time. Files are deleted after the job |
 | Claude reads only what its OS user can | `--allowedTools Read` isn't confined to the checkout or the files folder: a probe read a file outside both. What holds is that `investigator-claude` can't read the secrets |
 | A case's transcript stays with that case | A later round resumes Claude's session only on the same commit. Each job has its own `CLAUDE_CONFIG_DIR`, emptied when it ends. Between rounds the transcript and rows sit in `sessions/`, where `investigator-claude` can't enter, for 7 days. Without one, the round starts from the history Firestore sends |
 | Claude can't send data out | It has no Bash, write or web tools (`--tools`), so its only output is the report |
 | Nothing invented | `verifyReport` checks every citation in code. One bad citation loses `confirmed` and the suggested reply |
+| A proposal rests on checked evidence | `writeProposalProblems`: it needs code evidence that held and every citation of its own (who reads the data) to hold. A cause that stayed a hypothesis doesn't stop it, a decision: the admin sees a warning on the proposal and decides on the rehearsal. With no checked evidence at all it never reaches an admin |
 | The chat can't steer it | Messages go in as marked untrusted data, and the limits above don't depend on the model obeying |
 
 `pii-map.yml` and the generated SQL describe the whole production schema and this repo is public, so
