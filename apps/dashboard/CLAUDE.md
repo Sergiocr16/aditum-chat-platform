@@ -59,12 +59,13 @@ src/lib/            firebase.ts (SDK + emulator wiring), auth.tsx, i18n.ts, soun
   each as a `historial` event; internal notes are editable (`updateTicketNote`). The context panels
   (`ContextPanel` / `GroupContextPanel`) use `PanelLista` + `ConvHistorialRow` + `TicketCard`.
 
+- **Production writes** (`WriteProposal.tsx`, `lib/data-writes.ts`): under a report, the change Claude proposed. Admins rehearse it and go through three steps in the page (no modals), the last one with a typed phrase and their password via `reauthenticateWithCredential`. All checks are server-side (`stepProblem` in functions); this only shows the state. Connection, permissions, switch and log are in `AnalizadorTab`.
 - **Investigations** (`InvestigationPanel`, mounted by `ConversationView`) open from the "Investigar" button next
   to "Enviar", which always goes to the form, as a side panel next to the chat, resizable by dragging
   (`useColumnWidth`), taking the context panel's place while open. Opening a chat remounts the view, so each chat's
   panel (open or not, its view, the half-written form) is kept in a module-level map in `InvestigationPanel`, until
   the page reloads. Each investigation keeps who the chat was with (`source`) and the messages sent to the analyzer
-  (`investigations/{id}/sent/messages`), frozen at request time. The context panels have a button that opens the chat's list (`InvestigationsButton`). Below 1280px there's no room, so it covers the chat until closed. A single column, one view at a time: the saved list, the form, or one
+  (`investigations/{id}/sent/messages`), frozen at request time. The context panels have a button that opens the chat's list (`InvestigationsButton`). Below 1280px there's no room, so it covers the chat until closed. A single column, one view at a time: the saved list (the same `InvestigationRow` as the `/investigaciones` page, its search and filters, and marks for a backlog ticket and a production write, from `backlogItem` and `productionWrite` on the investigation), the form, or one
   investigation, which opens with its verdict and suggested reply. The steps an investigation takes
   are never listed: only a phase and Claude's mascot acting it out (`InvestigatorMascot`, keyframes in `globals.css`). Files:
   attachments on marked messages go along by themselves, and the agent can add more, uploaded to

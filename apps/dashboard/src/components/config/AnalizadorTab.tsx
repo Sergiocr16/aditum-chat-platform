@@ -6,25 +6,39 @@
 import { useEffect, useState } from 'react';
 import type {
   Idioma,
+  InvestigatorBacklogConfig,
   InvestigatorDbCheck,
   InvestigatorDbConfig,
   InvestigatorGatewayState,
   InvestigatorPiCheck,
   InvestigatorPiConfig,
   InvestigatorPiInstallStep,
+  InvestigatorWriterConfig,
+  InvestigatorWriterState,
+  InvestigatorWritesSwitch,
 } from '@aditum-chat/shared';
 import { useAuth } from '@/lib/auth';
 import { fmtFecha, useDoc } from '@/lib/data';
 import {
   installInvestigatorOnPi,
+  removeInvestigatorBacklog,
   removeInvestigatorDb,
   removeInvestigatorPi,
+  saveInvestigatorBacklog,
   saveInvestigatorDb,
   saveInvestigatorPi,
+  testInvestigatorBacklog,
   testInvestigatorDb,
   testInvestigatorPi,
   useGatewayOnline,
 } from '@/lib/data-investigations';
+import {
+  removeInvestigatorWriter,
+  saveInvestigatorWriter,
+  setWritesEnabled,
+  testInvestigatorWriter,
+  useWriteAudit,
+} from '@/lib/data-writes';
 import { Campo } from './ui';
 
 const M = {
@@ -53,6 +67,60 @@ const M = {
     ipFirewall: 'MySQL debe permitir conexiones desde',
     sinPrueba: 'Todavía no hay una conexión guardada.',
     piApagada: 'El analizador no responde en la Pi, así que la prueba corre cuando vuelva.',
+    escrituras: {
+      titulo: 'Escrituras en producción',
+      subtitulo: 'Con esta conexión se aplican los cambios que un admin aprueba en una investigación',
+      aviso: 'Creá este usuario con los GRANT por tabla de create-write-user.sql: esas tablas son todo lo que puede tocar. Se rechaza si tiene algo más que SELECT, INSERT o UPDATE por tabla.',
+      contrasenaGuardada: 'Guardada. Hay que volver a escribirla si cambiás el host, el usuario o el certificado.',
+      host: 'Host',
+      ca: 'Certificado del servidor (PEM)',
+      caGuardado: 'Guardado. Dejalo vacío para no cambiarlo.',
+      caAyuda: 'Sin este certificado no se conecta. Usá en el host el nombre que aparece en el certificado, no una IP.',
+      sinPrueba: 'Todavía no hay conexión de escritura.',
+      pendiente: 'Probando desde la Pi…',
+      correcta: 'Conexión correcta',
+      fallida: 'No se puede usar esta conexión',
+      tablas: 'Tablas que puede tocar',
+      writerConectado: 'Writer conectado',
+      writerDesconectado: 'El writer de la Pi no está conectado',
+      ipSalida: 'Sale a internet con la IP {ip}',
+      interruptor: 'Escrituras encendidas',
+      interruptorAyuda: 'Apagadas no se puede ensayar ni aplicar nada. Cambiar la conexión las apaga.',
+      encender: 'Encender',
+      apagar: 'Apagar',
+      encendidas: 'Encendidas por {name}',
+      apagadas: 'Apagadas',
+      registro: 'Registro reciente',
+      sinRegistro: 'Todavía no hay movimientos.',
+      quitar: 'Quitar conexión',
+      quitarConfirmar: '¿Seguro? Se borra la contraseña y las escrituras se apagan.',
+      eventos: {
+        rehearsal_requested: 'Pidió un ensayo',
+        rehearsed: 'Ensayo correcto',
+        rehearsal_failed: 'El ensayo falló',
+        step_confirmed: 'Confirmó un paso',
+        approval_cancelled: 'Canceló la aprobación',
+        execution_requested: 'Pidió aplicarlo',
+        executed: 'Aplicado en producción',
+        aborted: 'No se aplicó',
+        unknown: 'Resultado desconocido',
+        switch_changed: 'Cambió el interruptor',
+        reversal_proposed: 'Preparó una reversa',
+      },
+    },
+    backlog: {
+      titulo: 'Backlog en Notion',
+      subtitulo: 'Adonde van los bugs que encuentra una investigación',
+      tablero: 'Enlace del tablero',
+      token: 'Token de la integración',
+      tokenGuardado: 'Guardado. Dejalo vacío para no cambiarlo.',
+      aviso: 'En Notion, conectá la integración al tablero desde el menú de conexiones. Necesita leer e insertar contenido.',
+      sinPrueba: 'Todavía no hay un tablero conectado. Mientras tanto, las investigaciones no ofrecen agregar el bug.',
+      correcta: 'Tablero conectado',
+      fallida: 'No se pudo usar este tablero',
+      quitar: 'Quitar tablero',
+      quitarConfirmar: '¿Seguro? Las investigaciones dejan de ofrecer agregar el bug.',
+    },
     pi: {
       titulo: 'Raspberry Pi',
       subtitulo: 'La máquina donde corre el analizador',
@@ -75,7 +143,7 @@ const M = {
         boton: 'Instalar en la Pi',
         actualizar: 'Actualizar la Pi',
         confirmar:
-          'Va a crear sus propios usuarios y carpetas en /opt, /var/lib y /etc, y dos servicios. No toca nada más de la máquina. ¿Comparaste la huella con la de tu Pi?',
+          'Va a crear sus propios usuarios y carpetas en /opt, /var/lib y /etc, y tres servicios. No toca nada más de la máquina. ¿Comparaste la huella con la de tu Pi?',
         confirmarSi: 'Sí, instalar',
         corriendo: 'Instalando…',
         listo: 'Instalación terminada',
@@ -132,6 +200,60 @@ const M = {
     ipFirewall: 'MySQL must allow connections from',
     sinPrueba: 'No connection saved yet.',
     piApagada: "The analyzer isn't responding on the Pi, so the test runs when it returns.",
+    escrituras: {
+      titulo: 'Production writes',
+      subtitulo: 'This connection applies the changes an admin approves in an investigation',
+      aviso: 'Create this user with the per-table GRANTs in create-write-user.sql: those tables are all it can touch. It is refused if it has anything beyond SELECT, INSERT or UPDATE per table.',
+      contrasenaGuardada: 'Saved. Type it again if you change the host, the user or the certificate.',
+      host: 'Host',
+      ca: 'Server certificate (PEM)',
+      caGuardado: 'Saved. Leave it empty to keep it.',
+      caAyuda: 'It will not connect without this certificate. Use the name on the certificate as the host, not an IP.',
+      sinPrueba: 'There is no write connection yet.',
+      pendiente: 'Testing from the Pi…',
+      correcta: 'Connection works',
+      fallida: 'This connection cannot be used',
+      tablas: 'Tables it can touch',
+      writerConectado: 'Writer connected',
+      writerDesconectado: 'The writer on the Pi is not connected',
+      ipSalida: 'It reaches the internet from {ip}',
+      interruptor: 'Writes on',
+      interruptorAyuda: 'While off, nothing can be rehearsed or applied. Changing the connection turns them off.',
+      encender: 'Turn on',
+      apagar: 'Turn off',
+      encendidas: 'Turned on by {name}',
+      apagadas: 'Off',
+      registro: 'Recent log',
+      sinRegistro: 'Nothing yet.',
+      quitar: 'Remove connection',
+      quitarConfirmar: 'Sure? The password is deleted and writes turn off.',
+      eventos: {
+        rehearsal_requested: 'Requested a rehearsal',
+        rehearsed: 'Rehearsal passed',
+        rehearsal_failed: 'Rehearsal failed',
+        step_confirmed: 'Confirmed a step',
+        approval_cancelled: 'Cancelled the approval',
+        execution_requested: 'Requested applying it',
+        executed: 'Applied in production',
+        aborted: 'Not applied',
+        unknown: 'Unknown outcome',
+        switch_changed: 'Changed the switch',
+        reversal_proposed: 'Prepared a reversal',
+      },
+    },
+    backlog: {
+      titulo: 'Backlog in Notion',
+      subtitulo: 'Where the bugs an investigation finds go',
+      tablero: 'Board link',
+      token: 'Integration token',
+      tokenGuardado: 'Saved. Leave it empty to keep it.',
+      aviso: 'In Notion, connect the integration to the board from its connections menu. It needs to read and insert content.',
+      sinPrueba: "No board connected yet. Until then, investigations won't offer to add the bug.",
+      correcta: 'Board connected',
+      fallida: "This board can't be used",
+      quitar: 'Remove board',
+      quitarConfirmar: "Are you sure? Investigations will stop offering to add the bug.",
+    },
     pi: {
       titulo: 'Raspberry Pi',
       subtitulo: 'The machine that runs the analyzer',
@@ -154,7 +276,7 @@ const M = {
         boton: 'Install on the Pi',
         actualizar: 'Update the Pi',
         confirmar:
-          'It creates its own users and folders in /opt, /var/lib and /etc, and two services. Nothing else on the machine changes. Did you compare the fingerprint with your Pi?',
+          'It creates its own users and folders in /opt, /var/lib and /etc, and three services. Nothing else on the machine changes. Did you compare the fingerprint with your Pi?',
         confirmarSi: 'Yes, install',
         corriendo: 'Installing…',
         listo: 'Install finished',
@@ -639,6 +761,342 @@ function PiSection({ idioma, config }: { idioma: Idioma; config: InvestigatorPiC
   );
 }
 
+const WRITER_OFFLINE_MS = 90_000;
+
+function WriterSection({ idioma }: { idioma: Idioma }) {
+  const m = M[idioma];
+  const e = m.escrituras;
+  const saved = useDoc<InvestigatorWriterConfig>('investigator/writer');
+  const state = useDoc<InvestigatorWriterState>('investigator/writerState');
+  const writes = useDoc<InvestigatorWritesSwitch>('investigator/writes');
+  const audit = useWriteAudit(true);
+  const [host, setHost] = useState('');
+  const [port, setPort] = useState('3306');
+  const [user, setUser] = useState('');
+  const [database, setDatabase] = useState('');
+  const [password, setPassword] = useState('');
+  const [ca, setCa] = useState('');
+  const [loadedVersion, setLoadedVersion] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const version = saved?.data.version ?? null;
+  useEffect(() => {
+    if (!saved || version === loadedVersion) return;
+    setHost(saved.data.host);
+    setPort(String(saved.data.port));
+    setUser(saved.data.user);
+    setDatabase(saved.data.database);
+    setPassword('');
+    setCa('');
+    setLoadedVersion(version);
+  }, [saved, version, loadedVersion]);
+
+  async function run(action: () => Promise<void>) {
+    setBusy(true);
+    setError(null);
+    try {
+      await action();
+    } catch (err) {
+      setError((err as { message?: string }).message || m.error);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const test = saved?.data.test;
+  const hasSaved = Boolean(saved);
+  const seen = (state?.data.lastSeenAt as { toMillis?: () => number } | undefined)?.toMillis?.() ?? 0;
+  const online = now - seen < WRITER_OFFLINE_MS;
+  const enabled = writes?.data.enabled === true;
+  return (
+    <Section
+      icon="edit_note"
+      title={e.titulo}
+      subtitle={e.subtitulo}
+      testId="writer-section"
+      status={
+        <>
+          {!test ? (
+            <StatusEmpty>{e.sinPrueba}</StatusEmpty>
+          ) : (
+            <>
+              <StatusTitle tone={toneOf(test.status)}>{test.status === 'pending' ? e.pendiente : test.status === 'ok' ? e.correcta : e.fallida}</StatusTitle>
+              {test.checks && (
+                <ul className="mt-2 space-y-1 text-[12.5px] leading-snug text-ink-2">
+                  {test.checks.map((check) => (
+                    <li key={check.id} className={`break-words ${check.ok ? '' : 'text-warn-dark'}`}>{check.detail}</li>
+                  ))}
+                </ul>
+              )}
+              {(test.tables?.length ?? 0) > 0 && (
+                <div className="mt-2.5">
+                  <p className="text-[12px] font-semibold text-warm-gray">{e.tablas}</p>
+                  <ul className="mt-0.5 space-y-0.5 text-[12px] leading-snug">
+                    {test.tables!.map((table) => (
+                      <li key={table.name} className="break-words"><span className="font-mono">{table.name}</span> <span className="text-warm-gray">{table.privileges.join(', ')}</span></li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </>
+          )}
+          <p className={`mt-3 flex items-center gap-1.5 text-[12.5px] font-semibold ${online ? 'text-ok-dark' : 'text-warn-dark'}`}>
+            {online ? e.writerConectado : e.writerDesconectado}
+          </p>
+          {state?.data.publicIp && <Meta>{e.ipSalida.replace('{ip}', state.data.publicIp)}</Meta>}
+          <div className="mt-3 border-t border-cream-3 pt-3">
+            <p className="text-[13px] font-bold text-ink">{enabled ? e.encendidas.replace('{name}', writes!.data.by) : e.apagadas}</p>
+            <p className="mt-0.5 text-[12px] leading-snug text-warm-gray">{e.interruptorAyuda}</p>
+            <button
+              type="button"
+              disabled={busy || (!enabled && test?.status !== 'ok')}
+              onClick={() => void run(() => setWritesEnabled(!enabled))}
+              className={`${enabled ? secondaryButton : primaryButton} mt-2`}
+            >
+              {enabled ? e.apagar : e.encender}
+            </button>
+          </div>
+        </>
+      }
+    >
+      <form
+        onSubmit={(ev) => {
+          ev.preventDefault();
+          void run(async () => {
+            await saveInvestigatorWriter({ host: host.trim(), port: Number(port), user: user.trim(), database: database.trim(), password, ca: ca.trim() });
+            setPassword('');
+            setCa('');
+          });
+        }}
+        className="space-y-3"
+        autoComplete="off"
+      >
+        <div className="grid gap-3 sm:grid-cols-[1fr_100px]">
+          <Campo label={e.host}>
+            <input value={host} onChange={(ev) => setHost(ev.target.value)} spellCheck={false} className={inputClass} />
+          </Campo>
+          <Campo label={m.puerto}>
+            <input value={port} onChange={(ev) => setPort(ev.target.value)} inputMode="numeric" className={inputClass} />
+          </Campo>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Campo label={m.usuario}>
+            <input value={user} onChange={(ev) => setUser(ev.target.value)} spellCheck={false} autoComplete="off" className={inputClass} />
+          </Campo>
+          <Campo label={m.base}>
+            <input value={database} onChange={(ev) => setDatabase(ev.target.value)} spellCheck={false} className={inputClass} />
+          </Campo>
+        </div>
+        <Campo label={m.contrasena}>
+          <input
+            type="password"
+            value={password}
+            onChange={(ev) => setPassword(ev.target.value)}
+            autoComplete="new-password"
+            placeholder={hasSaved ? e.contrasenaGuardada : ''}
+            className={inputClass}
+          />
+        </Campo>
+        <Campo label={e.ca}>
+          <textarea
+            value={ca}
+            onChange={(ev) => setCa(ev.target.value)}
+            rows={3}
+            spellCheck={false}
+            placeholder={saved?.data.hasCa ? e.caGuardado : '-----BEGIN CERTIFICATE-----'}
+            className={`${inputClass} font-mono text-[11.5px]`}
+          />
+        </Campo>
+        <p className="text-[11.5px] leading-snug text-warm-gray">{e.caAyuda}</p>
+        <p className="text-[11.5px] leading-snug text-warm-gray">{e.aviso}</p>
+        {error && <p className="text-[12px] text-warn-dark">{error}</p>}
+        <div className="flex flex-wrap items-center gap-2">
+          <button type="submit" disabled={!host.trim() || !user.trim() || !database.trim() || (!password && !hasSaved) || (!ca.trim() && !saved?.data.hasCa) || busy} className={primaryButton}>
+            {busy ? m.guardando : m.guardar}
+          </button>
+          {hasSaved && (
+            <button type="button" disabled={busy} onClick={() => void run(testInvestigatorWriter)} className={secondaryButton}>
+              {m.probar}
+            </button>
+          )}
+          {hasSaved && !confirmRemove && (
+            <button type="button" onClick={() => setConfirmRemove(true)} className="ml-auto text-[12px] font-semibold text-warn-dark hover:underline">
+              {e.quitar}
+            </button>
+          )}
+        </div>
+        {confirmRemove && (
+          <div className="flex flex-wrap items-center gap-2 text-[12.5px] text-ink">
+            <span>{e.quitarConfirmar}</span>
+            <button
+              type="button"
+              onClick={() => {
+                setConfirmRemove(false);
+                setLoadedVersion(null);
+                setHost('');
+                setUser('');
+                setDatabase('');
+                setPassword('');
+                void run(removeInvestigatorWriter);
+              }}
+              className="font-semibold text-warn-dark hover:underline"
+            >
+              {e.quitar}
+            </button>
+            <button type="button" onClick={() => setConfirmRemove(false)} className="font-semibold text-warm-gray hover:underline">
+              {m.cancelar}
+            </button>
+          </div>
+        )}
+      </form>
+      <div className="mt-5 border-t border-cream-3 pt-3">
+        <p className="text-[12.5px] font-semibold text-warm-gray">{e.registro}</p>
+        {audit.length === 0 ? (
+          <p className="mt-1 text-[12.5px] text-warm-gray">{e.sinRegistro}</p>
+        ) : (
+          <ul className="mt-1.5 space-y-1">
+            {audit.map((entry) => (
+              <li key={entry.id} className="flex flex-wrap items-baseline gap-x-2 text-[12.5px] leading-snug">
+                <span className="font-semibold text-ink">{e.eventos[entry.data.event]}</span>
+                {entry.data.by && <span className="text-ink-2">{entry.data.by.nombre}</span>}
+                <span className="text-warm-gray">{fmtFecha(entry.data.at, true)}</span>
+                {entry.data.detail && <span className="w-full break-words text-[12px] text-ink-2">{entry.data.detail}</span>}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </Section>
+  );
+}
+
+function BacklogSection({ idioma }: { idioma: Idioma }) {
+  const m = M[idioma];
+  const b = m.backlog;
+  const saved = useDoc<InvestigatorBacklogConfig>('investigator/backlog');
+  const [database, setDatabase] = useState('');
+  const [token, setToken] = useState('');
+  const [loadedVersion, setLoadedVersion] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [confirmRemove, setConfirmRemove] = useState(false);
+
+  const version = saved?.data.version ?? null;
+  useEffect(() => {
+    if (!saved || version === loadedVersion) return;
+    setDatabase(saved.data.databaseId);
+    setToken('');
+    setLoadedVersion(version);
+  }, [saved, version, loadedVersion]);
+
+  async function run(action: () => Promise<void>) {
+    setBusy(true);
+    setError(null);
+    try {
+      await action();
+    } catch (e) {
+      setError((e as { message?: string }).message || m.error);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const test = saved?.data.test;
+  const hasSaved = Boolean(saved);
+  return (
+    <Section
+      icon="view_kanban"
+      title={b.titulo}
+      subtitle={b.subtitulo}
+      testId="backlog-section"
+      status={
+        !test ? (
+          <StatusEmpty>{b.sinPrueba}</StatusEmpty>
+        ) : (
+          <>
+            <StatusTitle tone={toneOf(test.status)}>{test.status === 'ok' ? b.correcta : b.fallida}</StatusTitle>
+            {test.title && <Meta>{test.title}</Meta>}
+            {test.problems.length > 0 && (
+              <ul className="mt-2 space-y-1 text-[12.5px] leading-snug text-ink-2">
+                {test.problems.map((problem) => <li key={problem} className="break-words">{problem}</li>)}
+              </ul>
+            )}
+            <Meta>
+              {saved!.data.updatedBy} · {fmtFecha(test.finishedAt, true)}
+            </Meta>
+          </>
+        )
+      }
+    >
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          void run(async () => {
+            await saveInvestigatorBacklog({ database: database.trim(), token: token.trim() });
+            setToken('');
+          });
+        }}
+        className="space-y-3"
+        autoComplete="off"
+      >
+        <Campo label={b.tablero}>
+          <input value={database} onChange={(e) => setDatabase(e.target.value)} spellCheck={false} className={inputClass} />
+        </Campo>
+        <Campo label={b.token}>
+          <input
+            type="password"
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+            autoComplete="new-password"
+            placeholder={hasSaved ? b.tokenGuardado : ''}
+            className={inputClass}
+          />
+        </Campo>
+        <p className="text-[11.5px] text-warm-gray">{b.aviso}</p>
+        {error && <p className="text-[12px] text-warn-dark">{error}</p>}
+        <div className="flex flex-wrap items-center gap-2">
+          <button type="submit" disabled={!database.trim() || (!token.trim() && !hasSaved) || busy} className={primaryButton}>
+            {busy ? m.guardando : m.guardar}
+          </button>
+          {hasSaved && (
+            <button type="button" disabled={busy} onClick={() => void run(testInvestigatorBacklog)} className={secondaryButton}>
+              {m.probar}
+            </button>
+          )}
+          {hasSaved && !confirmRemove && (
+            <button type="button" onClick={() => setConfirmRemove(true)} className="ml-auto text-[12px] font-semibold text-warn-dark hover:underline">
+              {b.quitar}
+            </button>
+          )}
+        </div>
+        {confirmRemove && (
+          <ConfirmBar
+            text={b.quitarConfirmar}
+            cancel={m.cancelar}
+            confirm={m.quitarSi}
+            onCancel={() => setConfirmRemove(false)}
+            onConfirm={() => {
+              setConfirmRemove(false);
+              setLoadedVersion(null);
+              setDatabase('');
+              setToken('');
+              void run(removeInvestigatorBacklog);
+            }}
+          />
+        )}
+      </form>
+    </Section>
+  );
+}
+
 export function AnalizadorTab() {
   const { agent } = useAuth();
   const idioma: Idioma = agent?.idioma ?? 'es';
@@ -689,7 +1147,7 @@ export function AnalizadorTab() {
   const piConfig = pi?.data ?? null;
 
   return (
-    <div className="max-w-6xl space-y-4">
+    <div className="space-y-4">
       <PiSection idioma={idioma} config={piConfig} />
       <AnalyzerSection idioma={idioma} config={piConfig} gatewayOnline={gatewayOnline} />
       <Section
@@ -784,6 +1242,8 @@ export function AnalizadorTab() {
           )}
         </form>
       </Section>
+      <BacklogSection idioma={idioma} />
+      <WriterSection idioma={idioma} />
     </div>
   );
 }

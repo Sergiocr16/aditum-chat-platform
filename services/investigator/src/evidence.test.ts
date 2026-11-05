@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { codeEvidenceProblem, dataEvidenceProblem, verifyReport, type LoggedQuery, type RawReport } from './evidence.js';
+import { codeEvidenceProblem, dataEvidenceProblem, REPORT_SCHEMA, verifyReport, type LoggedQuery, type RawReport, backlogDraftFrom, type RawBacklogItem } from './evidence.js';
 
 let dir: string;
 beforeAll(() => {
@@ -64,6 +64,8 @@ describe('dataEvidenceProblem', () => {
 });
 
 const raw = (over: Partial<RawReport> = {}): RawReport => ({
+  classification: 'unknown',
+  backlog_item: null,
   conclusion: 'confirmed',
   summary: 's',
   cause: 'c',
@@ -73,6 +75,52 @@ const raw = (over: Partial<RawReport> = {}): RawReport => ({
   code_evidence: [{ path: 'src/Mora.java', start_line: 2, end_line: 2, quote: 'int dias = 30;' }],
   data_evidence: [],
   ...over,
+});
+
+describe('backlogDraftFrom', () => {
+  const item: RawBacklogItem = {
+    name: ' Mora mal ',
+    description: 'd',
+    priority: 'Alta',
+    modules: ['Cobros'],
+    roles: ['Administrador'],
+    problem: 'p',
+    expected: 'e',
+    steps: ['uno', ' '],
+    screen_name: 's',
+    how_to_reach: 'h',
+    acceptance: ['a'],
+    notes: '',
+    duplicate_of: null,
+  };
+  const rows = [{ id: 'row-1', url: 'https://notion/row-1', title: 'Mora', description: '', modules: ['Cobros'] }];
+  const bug = raw({ classification: 'bug', backlog_item: item });
+
+  it('defines a ticket only for a confirmed bug', () => {
+    expect(backlogDraftFrom(bug, 'confirmed', rows)).toMatchObject({ name: 'Mora mal', steps: ['uno'], screenName: 's', duplicateChecked: true });
+    expect(backlogDraftFrom(bug, 'hypothesis', rows)).toBeNull();
+    expect(backlogDraftFrom(raw({ classification: 'data_error', backlog_item: item }), 'confirmed', rows)).toBeNull();
+    expect(backlogDraftFrom(raw({ classification: 'bug' }), 'confirmed', rows)).toBeNull();
+  });
+
+  it('loses the ticket when the check lowers the conclusion', () => {
+    const invented = raw({ ...bug, code_evidence: [{ path: 'src/Mora.java', start_line: 2, end_line: 2, quote: 'esto no está en el archivo' }] });
+    const report = verifyReport(invented, dir, [], rows);
+    expect(report.conclusion).toBe('undetermined');
+    expect(report.backlogDraft).toBeNull();
+  });
+
+  it('takes a duplicate only from the rows it was shown, with their real link', () => {
+    const duplicate = raw({ classification: 'bug', backlog_item: { ...item, duplicate_of: 'row-1' } });
+    expect(backlogDraftFrom(duplicate, 'confirmed', rows)?.duplicateOf).toEqual({ id: 'row-1', title: 'Mora', url: 'https://notion/row-1' });
+    const invented = raw({ classification: 'bug', backlog_item: { ...item, duplicate_of: 'no-existe' } });
+    expect(backlogDraftFrom(invented, 'confirmed', rows)?.duplicateOf).toBeNull();
+  });
+
+  it('says so when the board could not be read', () => {
+    expect(backlogDraftFrom(bug, 'confirmed', null)?.duplicateChecked).toBe(false);
+    expect(backlogDraftFrom(bug, 'confirmed', [])?.duplicateChecked).toBe(true);
+  });
 });
 
 describe('verifyReport', () => {
@@ -109,5 +157,19 @@ describe('verifyReport', () => {
     const data = { query_id: 'j-1', values: ['42'] };
     expect(verifyReport(raw({ data_evidence: [data] }), dir, [query()]).conclusion).toBe('confirmed');
     expect(verifyReport(raw({ data_evidence: [data] }), dir, []).conclusion).toBe('hypothesis');
+  });
+});
+
+describe('REPORT_SCHEMA', () => {
+  it('sticks to what the CLI accepts in strict mode, which it only enforces on the parts the model fills in', () => {
+    const walk = (node: unknown): void => {
+      if (Array.isArray(node)) return node.forEach(walk);
+      if (typeof node !== 'object' || node === null) return;
+      const schema = node as Record<string, unknown>;
+      // Only "this or null" may be written as a list.
+      if (Array.isArray(schema.type)) expect(schema.type.filter((type) => type !== 'null')).toHaveLength(1);
+      Object.values(schema).forEach(walk);
+    };
+    walk(REPORT_SCHEMA);
   });
 });

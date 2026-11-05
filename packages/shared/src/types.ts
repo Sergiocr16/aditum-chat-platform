@@ -737,6 +737,39 @@ export interface InvestigationCodeEvidence {
   quote: string;
 }
 
+/** What kind of thing it turned out to be, which decides what can be done about it. */
+export type InvestigationClassification = 'bug' | 'data_error' | 'missing_feature' | 'expected_behavior' | 'question' | 'unknown';
+
+/** A row of the product backlog in Notion, as compared against. */
+export interface InvestigationBacklogRow {
+  id: string;
+  url: string;
+  title: string;
+  description: string;
+  modules: string[];
+}
+
+/** The ticket Claude defined for a confirmed bug, following the backlog's template. */
+export interface InvestigationBacklogDraft {
+  name: string;
+  /** One or two lines. The detail goes in the fields below. */
+  description: string;
+  priority: 'Urgente' | 'Alta' | 'Media' | 'Baja';
+  modules: string[];
+  roles: string[];
+  problem: string;
+  expected: string;
+  steps: string[];
+  screenName: string;
+  howToReach: string;
+  acceptance: string[];
+  notes: string;
+  /** An open task on the board about the same thing, when Claude found one. */
+  duplicateOf: Pick<InvestigationBacklogRow, 'id' | 'title' | 'url'> | null;
+  /** False when the board couldn't be read, so "no duplicate" means nothing. */
+  duplicateChecked: boolean;
+}
+
 export interface InvestigationDataEvidence {
   queryId: string;
   values: string[];
@@ -757,6 +790,16 @@ export interface InvestigationReport {
   dataEvidence: InvestigationDataEvidence[];
   /** Why each evidence item the model gave didn't check out. */
   rejectedEvidence: string[];
+  /** Missing on reports from before it existed. */
+  classification?: InvestigationClassification;
+  /** Only for a confirmed bug. */
+  backlogDraft?: InvestigationBacklogDraft | null;
+  /** Comes from the Pi, and functions moves it out to `proposals` once it passes. */
+  writeProposal?: WriteProposalDraft | null;
+  /** investigations/{id}/proposals/{proposalId}, when this round proposed a change that passed. */
+  proposalId?: string | null;
+  /** Why the change it proposed never reached an admin. */
+  proposalProblems?: string[];
 }
 
 /** A selected message: conversations can span segments, so it carries its own. */
@@ -822,6 +865,16 @@ export interface Investigation {
   contentHash: string;
   requestedBy: { uid: string; nombre: string };
   status: InvestigationStatus;
+  /** Which round of questions this is. Missing means the first one. */
+  turn?: number;
+  /** What the current round asks, from the second one on. `question` stays the original. */
+  followUp?: { question: string; by: { uid: string; nombre: string } } | null;
+  /** When it last went into the queue, which is what orders the queue. */
+  queuedAt?: unknown;
+  /** The row it became in the backlog. `creating` holds it while the click is in flight. */
+  backlogItem?: { status: 'creating' | 'created'; url: string | null; by: { uid: string; nombre: string }; at: unknown };
+  /** The latest approved write that changed production, or may have. The rows are in its proposal. */
+  productionWrite?: InvestigationProductionWrite;
   /** Commit of the production branch that was read. */
   sha?: string | null;
   report?: InvestigationReport | null;
@@ -834,6 +887,22 @@ export interface Investigation {
   heartbeatAt?: unknown;
 }
 
+/** investigations/{id}/turns/{n}: a finished round, moved here when the agent asks something else. */
+export interface InvestigationTurn {
+  n: number;
+  question: string;
+  by: { uid: string; nombre: string };
+  status: InvestigationStatus;
+  report: InvestigationReport | null;
+  error: string | null;
+  sha: string | null;
+  usedDatabase: boolean;
+  costUsd: number | null;
+  unreadableFiles: string[];
+  askedAt: unknown;
+  finishedAt: unknown;
+}
+
 /** investigations/{id}/events/{eventId}: progress shown while it runs. */
 export interface InvestigationEvent {
   kind: 'code' | 'database' | 'attachment' | 'status';
@@ -843,6 +912,8 @@ export interface InvestigationEvent {
 
 /** investigations/{id}/queries/{queryId}: what was asked of production. Rows stay on the Pi. */
 export interface InvestigationQueryRecord {
+  /** The round that ran it. Missing means the first one. */
+  turn?: number;
   dataQuestion: string;
   purpose: string;
   sql: string;
@@ -851,6 +922,198 @@ export interface InvestigationQueryRecord {
   ms: number;
   error: string | null;
   at: unknown;
+}
+
+export type WriteValue = string | number | boolean | null;
+
+/** One row each, by its full primary key. There's no way to express a condition, or to delete. */
+export type WriteOperation =
+  | { op: 'update'; table: string; key: Record<string, WriteValue>; set: Record<string, WriteValue> }
+  | { op: 'insert'; table: string; values: Record<string, WriteValue> };
+
+export type WriteRiskLevel = 'low' | 'medium' | 'high' | 'undetermined';
+
+/** What Claude proposes running in production. It never has a tool to run it. */
+export interface WriteProposalDraft {
+  reason: string;
+  operations: WriteOperation[];
+  /** Who or what reads these data. */
+  consequence: string;
+  consequenceEvidence: InvestigationCodeEvidence[];
+  riskLevel: WriteRiskLevel;
+  risk: string;
+  /** What stays out of date, since a direct write skips the app's cache eviction. */
+  cache: string;
+}
+
+export type WriteProposalStatus =
+  | 'proposed'
+  | 'superseded'
+  | 'rehearsing'
+  | 'rehearsed'
+  | 'rehearsal_failed'
+  | 'executing'
+  | 'executed'
+  | 'aborted'
+  | 'unknown';
+
+/** One row, as the database really left it. Only the columns involved, so nothing else is kept here. */
+export interface WriteRowResult {
+  op: 'update' | 'insert';
+  table: string;
+  key: Record<string, WriteValue>;
+  before: Record<string, WriteValue> | null;
+  after: Record<string, WriteValue>;
+  /** Every column of the row, hashed: detects a change without keeping the rest of its data. */
+  beforeHash: string | null;
+  /** Leaves out what legitimately differs between two runs, to compare a run with its rehearsal. */
+  afterHash: string;
+  /** Every column as this run left it: what tells afterwards whether this run's COMMIT landed. */
+  afterFullHash: string;
+  /** Columns that ended up different, including what triggers changed. */
+  changed: string[];
+  /** Columns the operation set that didn't end up with that value, because a trigger overrode it. */
+  notAsRequested: string[];
+  /** Changed columns MySQL computes, which can't be set back. */
+  generated: string[];
+  affected: number;
+}
+
+/** How to undo it. Built from what the database returned, never by the model. */
+export interface WriteReversal {
+  operations: WriteOperation[];
+  /** What can't be undone this way, like an insert: the writer has no permission to delete. */
+  manual: string[];
+}
+
+export interface WriteRehearsal {
+  rows: WriteRowResult[];
+  reversal: WriteReversal;
+  /** What the approval is given over: these operations and this result. */
+  hash: string;
+  by: { uid: string; nombre: string };
+  at: unknown;
+}
+
+export interface WriteApproval {
+  by: { uid: string; nombre: string };
+  startedAt: unknown;
+  /** The last step confirmed. */
+  step: 1 | 2;
+  hash: string;
+}
+
+export interface InvestigationProductionWrite {
+  proposalId: string;
+  /** `unknown`: it may have been applied, and someone has to check the rows. */
+  status: 'executed' | 'unknown';
+  /** It undid an earlier write. */
+  reversal: boolean;
+  rows: number;
+  by: { uid: string; nombre: string };
+  at: unknown;
+}
+
+export interface WriteExecution {
+  by: { uid: string; nombre: string };
+  requestedAt: unknown;
+  finishedAt?: unknown;
+  rows?: WriteRowResult[];
+  reversal?: WriteReversal;
+  /** Why it stopped without changing anything, or why the outcome isn't known. */
+  detail?: string | null;
+}
+
+/** investigations/{id}/proposals/{proposalId}. Agents read, only functions writes. */
+export interface WriteProposal extends WriteProposalDraft {
+  turn: number;
+  status: WriteProposalStatus;
+  opsHash: string;
+  createdAt: unknown;
+  /** The proposal this one undoes. */
+  reverseOf?: string | null;
+  rehearsalRequestedAt?: unknown;
+  /** The job whose result counts: an older one reporting late doesn't. */
+  rehearsalJobId?: string | null;
+  rehearsedBy?: { uid: string; nombre: string };
+  error?: string | null;
+  rehearsal?: WriteRehearsal | null;
+  approval?: WriteApproval | null;
+  execution?: WriteExecution | null;
+}
+
+/** investigator/writes: whether writing is on at all. Starts off, and only a function changes it. */
+export interface InvestigatorWritesSwitch {
+  enabled: boolean;
+  by: string;
+  at: unknown;
+}
+
+export interface InvestigatorWriterCheck {
+  id: 'connect' | 'tls' | 'grants';
+  ok: boolean;
+  detail: string;
+}
+
+/** investigator/writer: the write connection, admins only. The password is kept apart, encrypted. */
+export interface InvestigatorWriterConfig {
+  host: string;
+  port: number;
+  user: string;
+  database: string;
+  /** Whether the certificate that verifies the server is saved. Writes need it. */
+  hasCa: boolean;
+  version: string;
+  updatedBy: string;
+  updatedAt: unknown;
+  test: {
+    status: 'pending' | 'ok' | 'failed';
+    requestedAt: unknown;
+    finishedAt?: unknown;
+    checks?: InvestigatorWriterCheck[];
+    /** What its GRANTs allow, which is all it can touch. */
+    tables?: { name: string; privileges: string[] }[];
+  };
+}
+
+/** investigator/writerState: whether the writer on the Pi is alive. */
+export interface InvestigatorWriterState {
+  lastSeenAt: unknown;
+  publicIp?: string | null;
+}
+
+export type WriteAuditEvent =
+  | 'rehearsal_requested'
+  | 'rehearsed'
+  | 'rehearsal_failed'
+  | 'step_confirmed'
+  | 'approval_cancelled'
+  | 'execution_requested'
+  | 'executed'
+  | 'aborted'
+  | 'unknown'
+  | 'switch_changed'
+  | 'reversal_proposed';
+
+/** prod_write_audit/{id}: every step of every write. Admins read, functions writes, and nothing deletes it. */
+export interface WriteAuditEntry {
+  event: WriteAuditEvent;
+  at: unknown;
+  by: { uid: string; nombre: string } | null;
+  investigationId?: string;
+  proposalId?: string;
+  hash?: string;
+  detail?: string | null;
+  rows?: WriteRowResult[];
+}
+
+/** investigator/backlog: which Notion board bugs go to. The token is kept apart, encrypted. Agents read it. */
+export interface InvestigatorBacklogConfig {
+  databaseId: string;
+  version: string;
+  updatedBy: string;
+  updatedAt: unknown;
+  test: { status: 'ok' | 'failed'; title: string | null; problems: string[]; finishedAt: unknown };
 }
 
 /** investigator/runner: lets the console tell when the analyzer is offline. */

@@ -5,33 +5,21 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { Conversation, Investigation } from '@aditum-chat/shared';
-import { InvestigationDetail, InvestigationStatusChip, sourceLabel, TOKEN_WARNING_DAYS } from '@/components/InvestigationPanel';
+import {
+  InvestigationDetail,
+  InvestigationFilters,
+  InvestigationRow,
+  matchesInvestigationFilters,
+  sourceLabel,
+  TOKEN_WARNING_DAYS,
+  type InvestigationFilter as Filter,
+} from '@/components/InvestigationPanel';
 import { useSiteFilter } from '@/components/Shell';
 import { fmtFecha, useDoc, type Row } from '@/lib/data';
 import { useInvestigationList, useInvestigationStats, useRunnerOnline, type InvestigationStats } from '@/lib/data-investigations';
 import { useT } from '@/lib/i18n';
 
 const PAGE_SIZE = 50;
-
-type Filter = 'todas' | 'enCurso' | 'confirmadas' | 'hipotesis' | 'sinDeterminar' | 'sinResultado';
-const FILTERS: Filter[] = ['todas', 'enCurso', 'confirmadas', 'hipotesis', 'sinDeterminar', 'sinResultado'];
-
-function matchesFilter({ status, report }: Investigation, filter: Filter): boolean {
-  switch (filter) {
-    case 'todas':
-      return true;
-    case 'enCurso':
-      return status === 'queued' || status === 'running';
-    case 'confirmadas':
-      return status === 'done' && report?.conclusion === 'confirmed';
-    case 'hipotesis':
-      return status === 'done' && report?.conclusion === 'hypothesis';
-    case 'sinDeterminar':
-      return status === 'done' && report?.conclusion === 'undetermined';
-    case 'sinResultado':
-      return status === 'failed' || status === 'rate_limited' || status === 'cancelled';
-  }
-}
 
 /** Who the chat is with. Older investigations didn't save it, so theirs comes from the conversation. */
 function useChatLabel(investigation: Investigation): string {
@@ -42,25 +30,7 @@ function useChatLabel(investigation: Investigation): string {
 }
 
 function ListRow({ row, selected, onOpen }: { row: Row<Investigation>; selected: boolean; onOpen(): void }) {
-  const chat = useChatLabel(row.data);
-  return (
-    <button
-      onClick={onOpen}
-      aria-current={selected}
-      className={`w-full border-b border-cream-3 px-4 py-3 text-left focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ai ${
-        selected ? 'bg-ai-bg' : 'hover:bg-cream-1'
-      }`}
-    >
-      <span className="line-clamp-2 text-[13px] font-semibold leading-snug text-ink">{row.data.question}</span>
-      {chat && <span className="mt-0.5 block truncate text-[12px] text-ink-2">{chat}</span>}
-      <span className="mt-1.5 flex items-center gap-1.5">
-        <InvestigationStatusChip row={row} />
-        <span className="truncate text-[11px] text-warm-gray">
-          {fmtFecha(row.data.createdAt, true)} · {row.data.requestedBy.nombre}
-        </span>
-      </span>
-    </button>
-  );
+  return <InvestigationRow row={row} chat={useChatLabel(row.data)} selected={selected} onOpen={onOpen} />;
 }
 
 function Origin({ row }: { row: Row<Investigation> }) {
@@ -237,16 +207,10 @@ export default function InvestigacionesPage() {
   }, []);
   const runner = useRunnerOnline(now);
 
-  const rows = useMemo(() => {
-    const term = search.trim().toLowerCase();
-    return list.rows.filter(
-      ({ data }) =>
-        (!siteId || data.siteId === siteId) &&
-        matchesFilter(data, filter) &&
-        (!term ||
-          [data.question, data.requestedBy.nombre, sourceLabel(data)].some((text) => text.toLowerCase().includes(term))),
-    );
-  }, [list.rows, siteId, filter, search]);
+  const rows = useMemo(
+    () => list.rows.filter(({ data }) => (!siteId || data.siteId === siteId) && matchesInvestigationFilters(data, filter, search)),
+    [list.rows, siteId, filter, search],
+  );
 
   const hasAny = list.rows.length > 0;
   const refreshKey = useMemo(() => list.rows.map((r) => `${r.id}:${r.data.status}`).join(), [list.rows]);
@@ -266,31 +230,7 @@ export default function InvestigacionesPage() {
       <div className={`min-h-0 w-full flex-none flex-col border-r border-warm-border bg-white md:flex md:w-[380px] ${selectedId ? 'hidden' : 'flex'}`}>
         <header className="flex-none border-b border-cream-3 px-4 pb-3 pt-4">
           <h1 className="text-[19px] font-bold text-ink">{t('inv.titulo')}</h1>
-          <div className="relative mt-2.5">
-            <span className="msr pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[17px] text-warm-gray">search</span>
-            <input
-              type="search"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder={t('inv.buscar')}
-              aria-label={t('inv.buscar')}
-              className="w-full rounded-lg border border-warm-border bg-cream-0 py-1.5 pl-8 pr-2.5 text-[12.5px] outline-none focus:border-ai"
-            />
-          </div>
-          <div className="mt-2.5 flex flex-wrap gap-1.5">
-            {FILTERS.map((value) => (
-              <button
-                key={value}
-                onClick={() => setFilter(value)}
-                aria-pressed={filter === value}
-                className={`rounded-full border px-2.5 py-1 text-[11.5px] font-semibold focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-navy ${
-                  filter === value ? 'border-navy bg-navy text-white' : 'border-warm-border text-ink-2 hover:border-navy'
-                }`}
-              >
-                {t(`inv.filtro.${value}`)}
-              </button>
-            ))}
-          </div>
+          <InvestigationFilters search={search} onSearch={setSearch} filter={filter} onFilter={setFilter} />
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto">

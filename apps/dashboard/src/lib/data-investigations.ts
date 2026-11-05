@@ -21,6 +21,7 @@ import type {
   InvestigationEvent,
   InvestigationMessageRef,
   InvestigationQueryRecord,
+  InvestigationTurn,
   InvestigatorGatewayState,
   InvestigatorRunnerState,
 } from '@aditum-chat/shared';
@@ -112,14 +113,24 @@ const PHASE_OF: Record<InvestigationEvent['kind'], InvestigationPhase> = {
   database: 'database',
 };
 
-/** A progress flush shares one timestamp, and the database wins inside it: it's the rarer, more telling step. */
-export function useInvestigationPhase(id: string | null): InvestigationPhase {
+/**
+ * A progress flush shares one timestamp, and the database wins inside it: it's the rarer, more telling
+ * step. `sinceMs` leaves out what earlier rounds of the same investigation did.
+ */
+export function useInvestigationPhase(id: string | null, sinceMs = 0): InvestigationPhase {
   const constraints = useMemo<QueryConstraint[]>(() => [orderBy('at', 'desc'), fsLimit(10)], []);
-  const events = useRows<InvestigationEvent>(id ? `investigations/${id}/events` : null, constraints);
+  const rows = useRows<InvestigationEvent>(id ? `investigations/${id}/events` : null, constraints);
+  const millisOf = (e: Row<InvestigationEvent>) => (e.data.at as { toMillis?: () => number } | null)?.toMillis?.() ?? 0;
+  const events = rows.filter((e) => millisOf(e) >= sinceMs);
   if (events.length === 0) return 'starting';
-  const latestAt = (events[0].data.at as { toMillis?: () => number } | null)?.toMillis?.();
-  const latest = events.filter((e) => (e.data.at as { toMillis?: () => number } | null)?.toMillis?.() === latestAt);
+  const latest = events.filter((e) => millisOf(e) === millisOf(events[0]));
   return latest.some((e) => e.data.kind === 'database') ? 'database' : PHASE_OF[latest[0].data.kind];
+}
+
+/** The rounds already over, oldest first. The current one is on the investigation itself. */
+export function useInvestigationTurns(id: string | null): Row<InvestigationTurn>[] {
+  const constraints = useMemo<QueryConstraint[]>(() => [orderBy('n', 'asc')], []);
+  return useRows<InvestigationTurn>(id ? `investigations/${id}/turns` : null, constraints);
 }
 
 export function useInvestigationQueries(id: string | null): Row<InvestigationQueryRecord>[] {
@@ -213,6 +224,10 @@ export async function investigationFileUrl(storagePath: string): Promise<string>
   return getDownloadURL(ref(storage, storagePath));
 }
 
+export async function requestFollowUp(id: string, question: string): Promise<void> {
+  await httpsCallable(fns, 'requestFollowUp')({ id, question });
+}
+
 export async function cancelInvestigation(id: string): Promise<void> {
   await httpsCallable(fns, 'cancelInvestigation')({ id });
 }
@@ -225,6 +240,23 @@ export function useGatewayOnline(state: InvestigatorGatewayState | null): boolea
   }, []);
   const seen = (state?.lastSeenAt as { toMillis?: () => number } | undefined)?.toMillis?.();
   return seen !== undefined && now - seen < RUNNER_OFFLINE_MS;
+}
+
+/** One click and the row exists. `force` creates it even though Claude found a similar one. */
+export async function addInvestigationToBacklog(id: string, force = false): Promise<void> {
+  await httpsCallable(fns, 'addInvestigationToBacklog')({ id, force });
+}
+
+export async function saveInvestigatorBacklog(input: { database: string; token: string }): Promise<void> {
+  await httpsCallable(fns, 'setInvestigatorBacklog')(input);
+}
+
+export async function testInvestigatorBacklog(): Promise<void> {
+  await httpsCallable(fns, 'testInvestigatorBacklog')({});
+}
+
+export async function removeInvestigatorBacklog(): Promise<void> {
+  await httpsCallable(fns, 'setInvestigatorBacklog')({ remove: true });
 }
 
 export async function saveInvestigatorDb(input: {

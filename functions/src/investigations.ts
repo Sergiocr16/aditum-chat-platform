@@ -10,6 +10,8 @@ import {
   type InvestigationFileKind,
 } from '@aditum-chat/shared';
 import type {
+  InvestigationBacklogDraft,
+  InvestigationTurn,
   InvestigationSentMessage,
   InvestigationSource,
   InvestigatorPiConfig,
@@ -25,12 +27,16 @@ import type {
   InvestigatorDbCheck,
   InvestigatorDbConfig,
   Message,
+  WriteProposal,
 } from '@aditum-chat/shared';
+import { activeBacklogRows } from './backlog.js';
 import { db, FieldValue, storage } from './lib/admin.js';
 import { decryptJson, encryptJson } from './lib/crypto.js';
+import { requireActiveAdmin } from './lib/guards.js';
 import { getKek } from './pushConfig.js';
 import { checkPi } from './piCheck.js';
 import { installOnPi, isCleanSetting } from './piInstall.js';
+import { proposalFrom, REPLACEABLE, reportWithProposal } from './writes.js';
 
 /**
  * Agents ask from the console, the analyzer on the Raspberry Pi does the work. The Pi
@@ -42,11 +48,17 @@ import { installOnPi, isCleanSetting } from './piInstall.js';
  */
 
 const runnerSecret = defineSecret('RUNNER_SHARED_SECRET');
+const configKek = defineSecret('CONFIG_KEK');
 
 const MAX_MESSAGES = 100;
 const MIN_QUESTION_CHARS = 10;
 const MAX_QUESTION_CHARS = 1000;
 const MAX_PER_AGENT_PER_DAY = 30;
+const MIN_FOLLOW_UP_CHARS = 3;
+const MAX_TURNS_PER_INVESTIGATION = 20;
+/** Old rounds go back to Claude as context. This keeps a long conversation from filling the prompt. */
+const MAX_HISTORY_CHARS = 40_000;
+const MAX_HISTORY_QUERIES = 200;
 /** A running job reports every few seconds. This long without news means the Pi lost it. */
 const STALE_RUNNING_MS = 10 * 60_000;
 const MAX_REPORT_BYTES = 500_000;
@@ -237,6 +249,8 @@ export const requestInvestigation = onCall({ region: 'us-central1' }, async (req
     contentHash: contentHash(trimmed, transcript, files),
     requestedBy: { uid: req.auth.uid, nombre: agent?.nombre ?? req.auth.token.email ?? 'Agente' },
     status: 'queued',
+    turn: 1,
+    queuedAt: FieldValue.serverTimestamp(),
     createdAt: FieldValue.serverTimestamp(),
   };
 
@@ -263,6 +277,78 @@ export const requestInvestigation = onCall({ region: 'us-central1' }, async (req
     });
   });
   return { id: ref.id };
+});
+
+export function followUpProblem(question: unknown): string | null {
+  if (typeof question !== 'string') return 'Falta la pregunta.';
+  const length = question.trim().length;
+  if (length < MIN_FOLLOW_UP_CHARS || length > MAX_QUESTION_CHARS) {
+    return `La pregunta debe tener entre ${MIN_FOLLOW_UP_CHARS} y ${MAX_QUESTION_CHARS} caracteres.`;
+  }
+  return null;
+}
+
+/** The round as it ended, without the fields that only make sense while one is under way. */
+export function archivedTurn(investigation: Investigation): InvestigationTurn {
+  return {
+    n: investigation.turn ?? 1,
+    question: investigation.followUp?.question ?? investigation.question,
+    by: investigation.followUp?.by ?? investigation.requestedBy,
+    status: investigation.status,
+    report: investigation.report ?? null,
+    error: investigation.error ?? null,
+    sha: investigation.sha ?? null,
+    usedDatabase: investigation.usedDatabase === true,
+    costUsd: investigation.costUsd ?? null,
+    unreadableFiles: investigation.unreadableFiles ?? [],
+    askedAt: investigation.queuedAt ?? investigation.createdAt,
+    finishedAt: investigation.finishedAt ?? null,
+  };
+}
+
+export const requestFollowUp = onCall({ region: 'us-central1' }, async (req) => {
+  if (req.auth?.token.kind !== 'agent') throw new HttpsError('permission-denied', 'Solo agentes.');
+  const { id, question } = req.data as { id?: unknown; question?: unknown };
+  const invalid = followUpProblem(question);
+  if (invalid || typeof id !== 'string' || !id) throw new HttpsError('invalid-argument', invalid ?? 'Falta la investigación.');
+  const uid = req.auth.uid;
+  const agent = (await db.doc(`team/${uid}`).get()).data() as { nombre?: string } | undefined;
+  const by = { uid, nombre: agent?.nombre ?? req.auth.token.email ?? 'Agente' };
+  const ref = db.doc(`investigations/${id}`);
+  const counterRef = db.doc(`counters/investigations_${uid}_${dayKey()}`);
+
+  await db.runTransaction(async (tx) => {
+    const investigation = (await tx.get(ref)).data() as Investigation | undefined;
+    if (!investigation) throw new HttpsError('not-found', 'No existe la investigación.');
+    if (investigation.status === 'queued' || investigation.status === 'running') {
+      throw new HttpsError('failed-precondition', 'Esperá a que termine esta respuesta.');
+    }
+    const turn = investigation.turn ?? 1;
+    // Without a first answer there's nothing to continue: that's asking again.
+    if (turn === 1 && !investigation.report) throw new HttpsError('failed-precondition', 'Esta investigación no tiene respuesta todavía.');
+    if (turn >= MAX_TURNS_PER_INVESTIGATION) {
+      throw new HttpsError('resource-exhausted', `Se llegó al máximo de ${MAX_TURNS_PER_INVESTIGATION} preguntas en una investigación.`);
+    }
+    const count = ((await tx.get(counterRef)).data()?.count as number | undefined) ?? 0;
+    if (count >= MAX_PER_AGENT_PER_DAY) {
+      throw new HttpsError('resource-exhausted', `Se alcanzó el límite de ${MAX_PER_AGENT_PER_DAY} investigaciones por día.`);
+    }
+    tx.set(counterRef, { count: count + 1 }, { merge: true });
+    tx.set(ref.collection('turns').doc(String(turn)), archivedTurn(investigation));
+    // The report moves out, so the totals only ever count an investigation's latest conclusion.
+    tx.update(ref, {
+      turn: turn + 1,
+      followUp: { question: (question as string).trim(), by },
+      status: 'queued',
+      queuedAt: FieldValue.serverTimestamp(),
+      report: null,
+      error: null,
+      startedAt: FieldValue.delete(),
+      heartbeatAt: FieldValue.delete(),
+      finishedAt: FieldValue.delete(),
+    });
+  });
+  return { ok: true };
 });
 
 export const cancelInvestigation = onCall({ region: 'us-central1' }, async (req) => {
@@ -295,8 +381,70 @@ async function failStaleJobs() {
   );
 }
 
+/** A past round as Claude gets it. Query results never go back: it has to look at the data again. */
+export interface JobTurn {
+  n: number;
+  question: string;
+  status: InvestigationStatus;
+  conclusion: InvestigationReport['conclusion'] | null;
+  summary: string;
+  cause: string;
+  recommendation: string;
+  missing: string[];
+  queries: { purpose: string; sql: string; rowCount: number; error: string | null }[];
+  /** The ticket it defined, so the agent can ask for changes to it. */
+  backlogDraft: InvestigationBacklogDraft | null;
+  /** The change it proposed and what became of it, so a failed rehearsal can be corrected. */
+  proposal: { status: string; error: string | null; operations: unknown[] } | null;
+}
+
+/** Most recent rounds first in line for the space: what the agent is reacting to is the last one. */
+export function boundedHistory(turns: JobTurn[], maxChars = MAX_HISTORY_CHARS): { history: JobTurn[]; omittedTurns: number } {
+  const kept: JobTurn[] = [];
+  let used = 0;
+  for (const turn of [...turns].sort((a, b) => b.n - a.n)) {
+    used += JSON.stringify(turn).length;
+    if (used > maxChars) break;
+    kept.unshift(turn);
+  }
+  return { history: kept, omittedTurns: turns.length - kept.length };
+}
+
+async function historyOf(ref: FirebaseFirestore.DocumentReference) {
+  const [turns, queries, proposals] = await Promise.all([
+    ref.collection('turns').orderBy('n', 'asc').get(),
+    ref.collection('queries').orderBy('at', 'asc').limit(MAX_HISTORY_QUERIES).get(),
+    ref.collection('proposals').get(),
+  ]);
+  const records = queries.docs.map((doc) => doc.data() as InvestigationQueryRecord);
+  const proposalOf = (id: string | null | undefined) => {
+    const proposal = proposals.docs.find((doc) => doc.id === id)?.data() as WriteProposal | undefined;
+    return proposal ? { status: proposal.status, error: proposal.error ?? proposal.execution?.detail ?? null, operations: proposal.operations } : null;
+  };
+  return boundedHistory(
+    turns.docs.map((doc) => {
+      const turn = doc.data() as InvestigationTurn;
+      return {
+        n: turn.n,
+        question: turn.question,
+        status: turn.status,
+        conclusion: turn.report?.conclusion ?? null,
+        summary: turn.report?.summary ?? '',
+        cause: turn.report?.cause ?? '',
+        recommendation: turn.report?.recommendation ?? '',
+        missing: turn.report?.missing ?? [],
+        backlogDraft: turn.report?.backlogDraft ?? null,
+        proposal: proposalOf(turn.report?.proposalId),
+        queries: records
+          .filter((record) => (record.turn ?? 1) === turn.n)
+          .map(({ purpose, sql, rowCount, error }) => ({ purpose, sql, rowCount, error })),
+      };
+    }),
+  );
+}
+
 async function claimNext() {
-  const queued = await db.collection('investigations').where('status', '==', 'queued').orderBy('createdAt', 'asc').limit(1).get();
+  const queued = await db.collection('investigations').where('status', '==', 'queued').orderBy('queuedAt', 'asc').limit(1).get();
   const doc = queued.docs[0];
   if (!doc) return null;
   const claimed = await db.runTransaction(async (tx) => {
@@ -310,35 +458,60 @@ async function claimNext() {
   });
   if (!claimed) return null;
   const input = (await db.doc(`investigation_inputs/${doc.id}`).get()).data();
-  return { id: doc.id, ...input };
+  const { turn = 1, followUp } = doc.data() as Investigation;
+  return {
+    id: doc.id,
+    ...input,
+    turn,
+    followUp: followUp?.question ?? null,
+    backlogRows: await activeBacklogRows(),
+    ...(turn > 1 && (await historyOf(doc.ref))),
+  };
 }
 
 interface ProgressBody {
   id: string;
+  /** Which round the Pi is working on. An older Pi doesn't say, so it counts as the current one. */
+  turn?: number;
+  /** Lets the console know the Pi is alive during a long round, when it isn't claiming anything. */
+  heartbeat?: boolean;
   events?: Pick<InvestigationEvent, 'kind' | 'text'>[];
   queries?: (Omit<InvestigationQueryRecord, 'at'> & { queryId: string })[];
 }
 
-async function saveProgress({ id, events = [], queries = [] }: ProgressBody) {
+/** A round is over for the Pi once it's cancelled, or once the agent has already moved on to another. */
+export function isCurrentRound(investigation: Pick<Investigation, 'status' | 'turn'> | undefined, turn: number | undefined): boolean {
+  if (investigation?.status !== 'running') return false;
+  return turn === undefined || turn === (investigation.turn ?? 1);
+}
+
+async function saveProgress({ id, turn, heartbeat, events = [], queries = [] }: ProgressBody) {
   const ref = db.doc(`investigations/${id}`);
+  const investigation = (await ref.get()).data() as Investigation | undefined;
+  const current = isCurrentRound(investigation, turn);
   const batch = db.batch();
   const at = FieldValue.serverTimestamp();
-  for (const { kind, text } of events) {
-    batch.set(ref.collection('events').doc(), { kind, text: String(text).slice(0, 500), at });
+  if (heartbeat) batch.set(db.doc('investigator/runner'), { lastSeenAt: at }, { merge: true });
+  if (current) {
+    batch.update(ref, { heartbeatAt: at });
+    for (const { kind, text } of events) {
+      batch.set(ref.collection('events').doc(), { kind, text: String(text).slice(0, 500), at });
+    }
   }
+  // Kept even for a round that's over: it's the record of what was asked of production.
   for (const { queryId, dataQuestion, purpose, sql, rowCount, truncated, ms, error } of queries) {
-    batch.set(ref.collection('queries').doc(queryId), { dataQuestion, purpose, sql, rowCount, truncated, ms, error, at });
+    const round = turn ?? investigation?.turn ?? 1;
+    batch.set(ref.collection('queries').doc(queryId), { turn: round, dataQuestion, purpose, sql, rowCount, truncated, ms, error, at });
   }
-  const snap = await ref.get();
-  if (snap.data()?.status === 'running') batch.update(ref, { heartbeatAt: at });
   await batch.commit();
-  return { cancel: snap.data()?.status === 'cancelled' };
+  return { cancel: !current };
 }
 
 const FINAL_STATUSES: InvestigationStatus[] = ['done', 'failed', 'rate_limited'];
 
 interface CompleteBody {
   id: string;
+  turn?: number;
   status: InvestigationStatus;
   sha?: string | null;
   error?: string | null;
@@ -365,14 +538,24 @@ async function complete(body: CompleteBody) {
   const ref = db.doc(`investigations/${body.id}`);
   await db.runTransaction(async (tx) => {
     // A case the agent cancelled stays cancelled, even if the Pi finishes it.
-    if ((await tx.get(ref)).data()?.status !== 'running') return;
+    const investigation = (await tx.get(ref)).data() as Investigation | undefined;
+    if (!isCurrentRound(investigation, body.turn)) return;
+    const turn = investigation?.turn ?? 1;
+    const earlier = await tx.get(ref.collection('proposals').where('status', 'in', REPLACEABLE));
+    const { proposal, problems } = body.report ? proposalFrom(body.report, turn) : { proposal: null, problems: [] };
+    const proposalId = proposal ? `t${turn}` : null;
+    if (proposal) {
+      // Only one can be in play: approving an old one after asking for a change would run the wrong thing.
+      earlier.docs.forEach((doc) => tx.update(doc.ref, { status: 'superseded', approval: null }));
+      tx.set(ref.collection('proposals').doc(proposalId!), proposal);
+    }
     tx.update(ref, {
       status: body.status,
       sha: body.sha ?? null,
       error: body.error ?? null,
       usedDatabase: body.usedDatabase === true,
       costUsd: body.costUsd ?? null,
-      report: body.report ?? null,
+      report: body.report ? reportWithProposal(body.report, proposalId, problems) : null,
       unreadableFiles: (body.unreadableFiles ?? []).slice(0, INVESTIGATION_MAX_FILES).map((name) => String(name).slice(0, 200)),
       finishedAt: FieldValue.serverTimestamp(),
     });
@@ -382,7 +565,7 @@ async function complete(body: CompleteBody) {
 
 export const investigationRunner = onRequest(
   // Sending a file to the Pi is what takes the time and the memory.
-  { region: 'us-central1', secrets: [runnerSecret], timeoutSeconds: 180, memory: '512MiB' },
+  { region: 'us-central1', secrets: [runnerSecret, configKek], timeoutSeconds: 180, memory: '512MiB' },
   async (req, res) => {
     const bearer = (req.headers.authorization ?? '').replace(/^Bearer /, '');
     if (req.method !== 'POST' || !secretMatches(bearer, runnerSecret.value())) {
@@ -428,7 +611,7 @@ export const investigationRunner = onRequest(
 // ---------------------------------------------------------------------------
 
 const gatewaySecret = defineSecret('GATEWAY_SHARED_SECRET');
-const configKek = defineSecret('CONFIG_KEK');
+const writerSecret = defineSecret('WRITER_SHARED_SECRET');
 const githubCodeToken = defineSecret('GITHUB_CODE_TOKEN');
 
 const DB_DOC = 'investigator/db';
@@ -461,14 +644,6 @@ export function dbSettingsProblem(input: DbSettingsInput, hasStoredPassword: boo
   if (typeof input.database !== 'string' || !/^\w{1,64}$/.test(input.database)) return 'La base no es válida.';
   if (SYSTEM_SCHEMAS.includes(input.database.toLowerCase())) return 'Esa es una base del sistema.';
   return null;
-}
-
-/** The token can outlive a demotion, and this guards production credentials. */
-async function requireActiveAdmin(auth: { uid: string; token: Record<string, unknown> } | undefined) {
-  if (auth?.token.kind !== 'agent') throw new HttpsError('permission-denied', 'Solo admins.');
-  const member = (await db.doc(`team/${auth.uid}`).get()).data() as { rol?: string; activo?: boolean; nombre?: string } | undefined;
-  if (member?.rol !== 'admin' || member.activo === false) throw new HttpsError('permission-denied', 'Solo admins.');
-  return member;
 }
 
 const pendingTest = () => ({ status: 'pending', requestedAt: FieldValue.serverTimestamp() });
@@ -589,7 +764,7 @@ function functionsBaseUrl(): string {
 export const installInvestigatorOnPi = onCall(
   {
     region: 'us-central1',
-    secrets: [configKek, runnerSecret, gatewaySecret, githubCodeToken],
+    secrets: [configKek, runnerSecret, gatewaySecret, writerSecret, githubCodeToken],
     timeoutSeconds: 1500,
   },
   async (req) => {
@@ -631,8 +806,10 @@ export const installInvestigatorOnPi = onCall(
       const settings = {
         RUNNER_FUNCTION_URL: `${baseUrl}/investigationRunner`,
         GATEWAY_FUNCTION_URL: `${baseUrl}/investigationGateway`,
+        WRITER_FUNCTION_URL: `${baseUrl}/investigationWriter`,
         RUNNER_SHARED_SECRET: runnerSecret.value(),
         GATEWAY_SHARED_SECRET: gatewaySecret.value(),
+        WRITER_SHARED_SECRET: writerSecret.value(),
         GITHUB_CODE_TOKEN: githubCodeToken.value(),
         CLAUDE_CODE_OAUTH_TOKEN: token,
         CLAUDE_TOKEN_ISSUED_AT: config.claudeTokenIssuedAt ?? new Date().toISOString().slice(0, 10),
@@ -666,7 +843,7 @@ export const installInvestigatorOnPi = onCall(
 );
 
 /** Behind the load balancer, the first forwarded address is the one that reached us. */
-const callerIp = (forwarded: string | string[] | undefined, fallback: string | undefined) =>
+export const callerIp = (forwarded: string | string[] | undefined, fallback: string | undefined) =>
   (Array.isArray(forwarded) ? forwarded[0] : forwarded)?.split(',')[0]?.trim() || fallback || null;
 
 /**

@@ -19,6 +19,7 @@ export { notifyAgentsOnMessage } from './pushAgentes.js';
 export { setSiteFcmCredentials } from './pushConfig.js';
 export {
   requestInvestigation,
+  requestFollowUp,
   cancelInvestigation,
   investigationRunner,
   setInvestigatorDb,
@@ -28,3 +29,13 @@ export {
   testInvestigatorDb,
   investigationGateway,
 } from './investigations.js';
+export { addInvestigationToBacklog, setInvestigatorBacklog, testInvestigatorBacklog } from './backlog.js';
+export {
+  confirmWriteStep,
+  createReverseProposal,
+  investigationWriter,
+  rehearseWriteProposal,
+  setInvestigatorWriter,
+  setWritesEnabled,
+  testInvestigatorWriter,
+} from './writes.js';

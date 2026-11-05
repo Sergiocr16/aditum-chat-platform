@@ -14,7 +14,7 @@ pnpm --filter @aditum-chat/functions seed       # node scripts/seed.mjs (emulato
 
 Functions run inside the emulator suite (see root `CLAUDE.md` for the start command/ports).
 Secrets in `functions/.secret.local` (gitignored): `ANTHROPIC_API_KEY`, `VOYAGE_API_KEY`,
-`GITHUB_CODE_TOKEN`, `RUNNER_SHARED_SECRET`, `GATEWAY_SHARED_SECRET`, `CONFIG_KEK`. Bot models are fixed in code (`bot.ts`). `pnpm --filter
+`GITHUB_CODE_TOKEN`, `RUNNER_SHARED_SECRET`, `GATEWAY_SHARED_SECRET`, `WRITER_SHARED_SECRET`, `CONFIG_KEK`. Bot models are fixed in code (`bot.ts`). `pnpm --filter
 @aditum-chat/functions test` runs the unit tests (vitest).
 
 ## Exports (`src/index.ts`)
@@ -27,6 +27,8 @@ Secrets in `functions/.secret.local` (gitignored): `ANTHROPIC_API_KEY`, `VOYAGE_
 | KB / RAG | `kbIngestPdf` (onObjectFinalized), `kbSyncHelpCenter` (scheduled), `kbSyncNow`, `kbReindexAll` — `kb.ts` |
 | Code index | `codeSync` (every 30 min), `codeSyncNow` (admin), `searchCode` — `code/codeIndex.ts` |
 | Investigations | `requestInvestigation`, `cancelInvestigation` (agents), `investigationRunner` (the Pi's outbound calls: claim, progress, complete, and `attachment`, which sends one of a running job's files by id; bearer `RUNNER_SHARED_SECRET`), `setInvestigatorDb`, `testInvestigatorDb` (admins), `setInvestigatorPi`, `testInvestigatorPi` (admins; log in to the Pi over SSH from here and pin its host key, `piCheck.ts`), `installInvestigatorOnPi` (admins; runs `services/investigator/deploy/install.sh` on the Pi, `piInstall.ts`), `investigationGateway` (gives the MySQL password to the Pi's gateway; bearer `GATEWAY_SHARED_SECRET`) — `investigations.ts` |
+| Follow-ups and backlog | `requestFollowUp` (agents; each round is a new run with the history) — `investigations.ts`. `addInvestigationToBacklog` (agents, one click), `setInvestigatorBacklog`, `testInvestigatorBacklog` (admins) — `backlog.ts` |
+| Production writes | `rehearseWriteProposal`, `confirmWriteStep`, `createReverseProposal`, `setInvestigatorWriter`, `testInvestigatorWriter`, `setWritesEnabled` (admins), `investigationWriter` (the writer's outbound calls: claim, committing, result; bearer `WRITER_SHARED_SECRET`; gives out the write password only with a job) — `writes.ts`. `stepProblem` is what guards an approval, `writer_jobs` and `investigator_secrets/writer` are denied to clients, `prod_write_audit` is admin read only |
 | Team / keys | `manageTeam`, `rotateSiteKey` (admin only) — `team.ts` |
 | SLA | `ticketSlaInit`, `firstResponseTracker`, `slaEngine` (runs every 1 min) — `sla.ts` |
 | Metrics | `metricsOnConversation`, `metricsOnResolve`, `metricsOnCsat` (also writes `csatRating` to the conversation), `metricsOnMessage` — `metrics.ts` |

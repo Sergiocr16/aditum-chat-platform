@@ -276,7 +276,14 @@ service cloud.firestore {
     // Estado del analizador: todos los agentes; la conexión a producción, solo admins.
     // `investigation_inputs` e `investigator_secrets` no tienen regla: negados a todo cliente.
     match /investigator/{doc} {
-      allow read: if isAgent() && (doc == 'runner' || isAdmin());
+      allow read: if isAgent() && (doc == 'runner' || doc == 'backlog' || isAdmin());
+      allow write: if false;
+    }
+
+    // Cada paso de cada escritura a producción. Solo functions escribe, y nada lo borra.
+    // `writer_jobs` no tiene regla: lo que el writer de la Pi va a correr queda negado a todo cliente.
+    match /prod_write_audit/{id} {
+      allow read: if isAdmin();
       allow write: if false;
     }
 

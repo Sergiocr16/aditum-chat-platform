@@ -5,10 +5,14 @@ import type {
   InvestigationSentMessages,
   Conversation,
   Investigation,
+  InvestigationBacklogDraft,
   InvestigationFile,
   InvestigationConclusion,
   InvestigationMessageRef,
+  InvestigationReport,
   InvestigationStatus,
+  InvestigationTurn,
+  InvestigatorBacklogConfig,
   Message,
 } from '@aditum-chat/shared';
 import {
@@ -18,22 +22,27 @@ import {
   investigationFileKind,
 } from '@aditum-chat/shared';
 import { useAuth } from '@/lib/auth';
-import { fmtFecha, fmtHora, useContactThread, useDoc, useGroupThread, useMessages, type Row, type ThreadRow } from '@/lib/data';
+import { fmtFecha, useContactThread, useDoc, useGroupThread, useMessages, type Row, type ThreadRow } from '@/lib/data';
 import {
+  addInvestigationToBacklog,
   cancelInvestigation,
   investigationFileUrl,
+  requestFollowUp,
   requestInvestigation,
   uploadInvestigationFile,
   useInvestigationList,
   useInvestigationPhase,
   useInvestigationQueries,
+  useInvestigationTurns,
   useRunnerOnline,
 } from '@/lib/data-investigations';
 import { useT } from '@/lib/i18n';
 import { ClaudeLogo, InvestigatorMascot } from './InvestigatorMascot';
+import { WriteProposals } from './WriteProposal';
 
 const MAX_MESSAGES = 100;
 const MIN_QUESTION_CHARS = 10;
+const MIN_FOLLOW_UP_CHARS = 3;
 export const TOKEN_WARNING_DAYS = 30;
 
 /** "Investigate this message": opens the form with only that message marked. */
@@ -168,6 +177,9 @@ export function InvestigationPanel({
   const questionRef = useRef<HTMLTextAreaElement>(null);
   // Investigations the client was already told about, so one click can't become two messages.
   const [notified, setNotified] = useState<ReadonlySet<string>>(() => new Set());
+  // Up here, so opening a report and coming back doesn't lose them.
+  const [listFilter, setListFilter] = useState<InvestigationFilter>('todas');
+  const [listSearch, setListSearch] = useState('');
 
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -199,6 +211,15 @@ export function InvestigationPanel({
 
   return (
     <div className="flex h-full min-h-0 max-w-3xl flex-col">
+      {pane !== null && (
+        <button
+          onClick={() => setPane(null)}
+          className="-ml-0.5 mb-2.5 flex flex-none items-center gap-1 self-start rounded text-[12.5px] font-semibold text-warm-gray hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-navy"
+        >
+          <span aria-hidden className="msr text-[17px]">arrow_back</span>
+          {t('inv.titulo')}
+        </button>
+      )}
       {!runner.online && (
         <p className="mb-2 flex-none rounded-lg bg-warn-bg px-3 py-1.5 text-[12px] text-warn-dark">{t('inv.desconectado')}</p>
       )}
@@ -211,6 +232,10 @@ export function InvestigationPanel({
       {pane === null && (
         <SavedList
           list={list}
+          filter={listFilter}
+          search={listSearch}
+          onFilter={setListFilter}
+          onSearch={setListSearch}
           onOpen={(id) => setPane({ id })}
           onNew={() => openForm()}
         />
@@ -262,7 +287,7 @@ export function InvestigationPanel({
   );
 }
 
-export function InvestigationStatusChip({ row }: { row: Row<Investigation> }) {
+function InvestigationStatusChip({ row }: { row: Row<Investigation> }) {
   const t = useT();
   const { status, report } = row.data;
   const concluded = status === 'done' && report;
@@ -276,15 +301,133 @@ export function InvestigationStatusChip({ row }: { row: Row<Investigation> }) {
   );
 }
 
-function SavedRow({ row, onOpen }: { row: Row<Investigation>; onOpen(): void }) {
+export type InvestigationFilter = 'todas' | 'enCurso' | 'confirmadas' | 'hipotesis' | 'sinDeterminar' | 'sinResultado';
+const INVESTIGATION_FILTERS: InvestigationFilter[] = ['todas', 'enCurso', 'confirmadas', 'hipotesis', 'sinDeterminar', 'sinResultado'];
+
+function matchesFilter({ status, report }: Investigation, filter: InvestigationFilter): boolean {
+  switch (filter) {
+    case 'todas':
+      return true;
+    case 'enCurso':
+      return status === 'queued' || status === 'running';
+    case 'confirmadas':
+      return status === 'done' && report?.conclusion === 'confirmed';
+    case 'hipotesis':
+      return status === 'done' && report?.conclusion === 'hypothesis';
+    case 'sinDeterminar':
+      return status === 'done' && report?.conclusion === 'undetermined';
+    case 'sinResultado':
+      return status === 'failed' || status === 'rate_limited' || status === 'cancelled';
+  }
+}
+
+export function matchesInvestigationFilters(investigation: Investigation, filter: InvestigationFilter, search: string): boolean {
+  const term = search.trim().toLowerCase();
+  return (
+    matchesFilter(investigation, filter) &&
+    (!term || [investigation.question, investigation.requestedBy.nombre, sourceLabel(investigation)].some((text) => text.toLowerCase().includes(term)))
+  );
+}
+
+/** The search and the outcome filters over a list of investigations. */
+export function InvestigationFilters({
+  search,
+  onSearch,
+  filter,
+  onFilter,
+}: {
+  search: string;
+  onSearch(search: string): void;
+  filter: InvestigationFilter;
+  onFilter(filter: InvestigationFilter): void;
+}) {
   const t = useT();
-  const { status, report, question, createdAt, requestedBy } = row.data;
+  return (
+    <>
+    <div className="relative mt-2.5">
+      <span className="msr pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[17px] text-warm-gray">search</span>
+      <input
+        type="search"
+        value={search}
+        onChange={(e) => onSearch(e.target.value)}
+        placeholder={t('inv.buscar')}
+        aria-label={t('inv.buscar')}
+        className="w-full rounded-lg border border-warm-border bg-cream-0 py-1.5 pl-8 pr-2.5 text-[12.5px] outline-none focus:border-ai"
+      />
+    </div>
+    <div className="mt-2.5 flex flex-wrap gap-1.5">
+      {INVESTIGATION_FILTERS.map((value) => (
+        <button
+          key={value}
+          onClick={() => onFilter(value)}
+          aria-pressed={filter === value}
+          className={`rounded-full border px-2.5 py-1 text-[11.5px] font-semibold focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-navy ${
+            filter === value ? 'border-navy bg-navy text-white' : 'border-warm-border text-ink-2 hover:border-navy'
+          }`}
+        >
+          {t(`inv.filtro.${value}`)}
+        </button>
+      ))}
+    </div>
+    </>
+  );
+}
+
+function Mark({ icon, label, title, style }: { icon: string; label: string; title: string; style: string }) {
+  return (
+    <span title={title} className={`inline-flex h-[22px] items-center gap-1 rounded-md px-1.5 text-[11.5px] font-semibold ${style}`}>
+      <span aria-hidden className="msr text-[14px]">{icon}</span>
+      {label}
+    </span>
+  );
+}
+
+/** What came out of an investigation besides its report. The full detail is inside it. */
+function InvestigationMarks({ data, className = '' }: { data: Investigation; className?: string }) {
+  const t = useT();
+  const item = data.backlogItem?.status === 'created' ? data.backlogItem : null;
+  const write = data.productionWrite;
+  if (!item && !write) return null;
+  const byLine = ({ by, at }: { by: { nombre: string }; at: unknown }) => t('inv.marca.por', { por: by.nombre, fecha: fmtFecha(at, true) });
+  return (
+    <span className={`flex flex-wrap items-center gap-1.5 ${className}`}>
+      {write && (
+        <Mark
+          icon={write.status === 'unknown' ? 'warning' : write.reversal ? 'undo' : 'database'}
+          label={t(write.status === 'unknown' ? 'inv.marca.revisar' : write.reversal ? 'inv.marca.revertido' : 'inv.marca.corregido')}
+          title={byLine(write)}
+          style={write.status === 'unknown' ? 'bg-warn-bg text-warn-dark' : write.reversal ? 'bg-cream-2 text-ink-2' : 'bg-ok-bg text-ok-dark'}
+        />
+      )}
+      {item && <Mark icon="bug_report" label={t('inv.marca.backlog')} title={byLine(item)} style="bg-cream-2 text-ink-2" />}
+    </span>
+  );
+}
+
+/** One investigation in a list, in the chat's panel and on the page alike. */
+export function InvestigationRow({
+  row,
+  chat,
+  selected = false,
+  onOpen,
+}: {
+  row: Row<Investigation>;
+  /** Who it was with, when the list mixes chats. */
+  chat?: string;
+  selected?: boolean;
+  onOpen(): void;
+}) {
+  const t = useT();
+  const { status, report, question, createdAt, requestedBy, turn } = row.data;
   const conclusion = status === 'done' ? report?.conclusion : undefined;
   const badge = status === 'running' ? null : OUTCOME_BADGE[conclusion ?? (status === 'done' ? 'undetermined' : status)];
   return (
     <button
       onClick={onOpen}
-      className="group flex w-full items-center gap-3 rounded-xl border border-cream-3 bg-white p-2.5 text-left shadow-card transition-colors duration-150 hover:border-warm-gray-4 hover:bg-cream-0 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-navy"
+      aria-current={selected}
+      className={`relative flex w-full gap-3 px-4 py-3.5 text-left transition-colors duration-150 after:absolute after:bottom-0 after:left-16 after:right-0 after:h-px after:bg-cream-3 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-navy ${
+        selected ? 'bg-info-bg' : 'hover:bg-cream-0'
+      }`}
     >
       {badge ? (
         <span aria-hidden className={`flex h-9 w-9 flex-none items-center justify-center rounded-[10px] ${badge.style}`}>
@@ -297,16 +440,17 @@ function SavedRow({ row, onOpen }: { row: Row<Investigation>; onOpen(): void }) 
       )}
       <span className="min-w-0 flex-1">
         <span className="line-clamp-2 text-[13.5px] font-semibold leading-snug text-ink">{question}</span>
-        <span className="mt-0.5 block truncate text-[12px] text-warm-gray">
-          <span className={`font-semibold ${conclusion ? CONCLUSION_TONE[conclusion] : STATUS_TONE[status]}`}>
+        {chat && <span className="mt-0.5 block truncate text-[12.5px] text-ink-2">{chat}</span>}
+        <span className="mt-1.5 flex items-baseline gap-2">
+          <span className={`flex-none text-[12px] font-semibold ${conclusion ? CONCLUSION_TONE[conclusion] : STATUS_TONE[status]}`}>
             {conclusion ? t(`inv.conclusion.${conclusion}`) : t(`inv.estado.${status}`)}
           </span>
-          {' · '}
-          {fmtHora(createdAt)} · {requestedBy.nombre}
+          <span className="min-w-0 truncate text-[11.5px] text-warm-gray">
+            {fmtFecha(createdAt, true)} · {requestedBy.nombre}
+            {(turn ?? 1) > 1 && <> · {t('inv.nPreguntas', { n: turn! })}</>}
+          </span>
         </span>
-      </span>
-      <span aria-hidden className="msr flex-none text-[18px] text-warm-gray-3 transition-colors duration-150 group-hover:text-ink">
-        chevron_right
+        <InvestigationMarks data={row.data} className="mt-2" />
       </span>
     </button>
   );
@@ -314,23 +458,23 @@ function SavedRow({ row, onOpen }: { row: Row<Investigation>; onOpen(): void }) 
 
 function SavedList({
   list,
+  filter,
+  search,
+  onFilter,
+  onSearch,
   onOpen,
   onNew,
 }: {
   list: ReturnType<typeof useInvestigationList>;
+  filter: InvestigationFilter;
+  search: string;
+  onFilter(filter: InvestigationFilter): void;
+  onSearch(search: string): void;
   onOpen(id: string): void;
   onNew(): void;
 }) {
   const t = useT();
-  const today = fmtFecha({ toDate: () => new Date() });
-  const days = useMemo(() => {
-    const byDay = new Map<string, Row<Investigation>[]>();
-    for (const row of list.rows) {
-      const day = fmtFecha(row.data.createdAt);
-      byDay.set(day, [...(byDay.get(day) ?? []), row]);
-    }
-    return [...byDay];
-  }, [list.rows]);
+  const rows = list.rows.filter(({ data }) => matchesInvestigationFilters(data, filter, search));
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex flex-none items-center justify-between gap-3 pb-3 pt-1">
@@ -347,38 +491,35 @@ function SavedList({
         </button>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      {list.rows.length > 0 && (
+        <div className="flex-none pb-3">
+          <InvestigationFilters search={search} onSearch={onSearch} filter={filter} onFilter={onFilter} />
+        </div>
+      )}
+
+      <div className="-mx-4 min-h-0 flex-1 overflow-y-auto border-t border-cream-3">
         {list.error ? (
-          <p className="py-4 text-[13px] text-warn-dark">{t('inv.errorLista')}</p>
+          <p className="p-4 text-[13px] text-warn-dark">{t('inv.errorLista')}</p>
         ) : list.loading ? null : list.rows.length === 0 ? (
-          <div className="py-6 text-[13px] text-warm-gray">
+          <div className="p-4 text-[13px] text-warm-gray">
             <p className="font-semibold text-ink-2">{t('inv.vacio')}</p>
             <p className="mt-1 leading-relaxed">{t('inv.vacioAyuda')}</p>
           </div>
+        ) : rows.length === 0 ? (
+          <p className="p-4 text-[12.5px] text-warm-gray">{t('inv.sinCoincidencias')}</p>
         ) : (
-          <div className="space-y-3 pb-2">
-            {days.map(([day, rows]) => (
-              <section key={day}>
-                {day && (
-                  <h3 className="mb-1.5 px-0.5 text-[11.5px] font-semibold uppercase tracking-[.06em] text-warm-gray">
-                    {day === today ? t('inv.hoy') : day}
-                  </h3>
-                )}
-                <ul className="space-y-1.5">
-                  {rows.map((row) => (
-                    <li key={row.id}>
-                      <SavedRow row={row} onOpen={() => onOpen(row.id)} />
-                    </li>
-                  ))}
-                </ul>
-              </section>
+          <ul>
+            {rows.map((row) => (
+              <li key={row.id}>
+                <InvestigationRow row={row} onOpen={() => onOpen(row.id)} />
+              </li>
             ))}
-          </div>
+          </ul>
         )}
         {list.hasMore && (
           <button
             onClick={list.loadMore}
-            className="my-2 w-full rounded-lg py-1.5 text-[13px] font-semibold text-navy hover:bg-cream-1"
+            className="w-full py-3 text-[12.5px] font-semibold text-navy hover:bg-cream-1"
           >
             {t('inv.cargarMas')}
           </button>
@@ -766,7 +907,7 @@ function Section({ title, warning, children }: { title: string; warning?: boolea
   return (
     <section>
       <h4 className={`text-[11.5px] font-semibold uppercase tracking-[0.06em] ${warning ? 'text-warn-dark' : 'text-warm-gray'}`}>{title}</h4>
-      <div className="mt-1.5 max-w-[70ch] text-[14px] leading-[1.55] text-ink">{children}</div>
+      <div className="mt-1.5 max-w-[70ch] break-words text-[14px] leading-[1.55] text-ink">{children}</div>
     </section>
   );
 }
@@ -793,7 +934,7 @@ function Collapsible({
         <span aria-hidden className="flex group-open:hidden"><span className="msr text-[16px]">add</span></span>
         <span aria-hidden className="hidden group-open:flex"><span className="msr text-[16px]">remove</span></span>
       </summary>
-      <div className="max-w-[70ch] pb-3.5 text-[14px] leading-[1.55] text-ink">{children}</div>
+      <div className="max-w-[70ch] break-words pb-3.5 text-[14px] leading-[1.55] text-ink">{children}</div>
     </details>
   );
 }
@@ -870,13 +1011,14 @@ function formatElapsed(ms: number): string {
 function Working({ row, actions }: { row: Row<Investigation>; actions?: InvestigationChatActions }) {
   const t = useT();
   const running = row.data.status === 'running';
-  const phase = useInvestigationPhase(running ? row.id : null);
+  const queuedAt = millis(row.data.queuedAt);
+  const phase = useInvestigationPhase(running ? row.id : null, queuedAt);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
   }, []);
-  const since = millis(row.data.startedAt) || millis(row.data.createdAt);
+  const since = millis(row.data.startedAt) || queuedAt || millis(row.data.createdAt);
   const title = running ? t(`inv.fase.${phase}`) : t('inv.enCola');
   const detail = running ? t(`inv.fase.${phase}Ayuda`) : t('inv.enColaAyuda');
   const currentStep = !running ? 0 : phase === 'starting' || phase === 'preparing' ? 1 : 2;
@@ -973,6 +1115,330 @@ export interface InvestigationChatActions {
   onRetry(): void;
 }
 
+function ReportWarnings({ report }: { report: InvestigationReport }) {
+  const t = useT();
+  if (!report.downgradedFrom && report.rejectedEvidence.length === 0) return null;
+  return (
+    <div className="space-y-1.5 text-[12.5px] text-warn-dark">
+      {report.downgradedFrom && <p>{t('inv.bajada')}</p>}
+      {report.rejectedEvidence.length > 0 && (
+        <div>
+          <p>{t('inv.rechazadas', { n: report.rejectedEvidence.length })}</p>
+          <ul className="mt-0.5 list-disc pl-4">
+            {report.rejectedEvidence.map((problem) => <li key={problem} className="break-words">{problem}</li>)}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** What the agent acts on: the reply, the recommendation, and what's left to find out. */
+function ReportAnswer({ report, onUseReply }: { report: InvestigationReport; onUseReply?(texto: string): void }) {
+  const t = useT();
+  return (
+    <div className="space-y-[18px]">
+      <ReportWarnings report={report} />
+      <div className="rounded-[10px] bg-cream-1 px-4 py-3.5">
+        <Section title={t('inv.respuesta')}>
+          {report.suggestedReply ? (
+            <>
+              <p className="whitespace-pre-wrap">{report.suggestedReply}</p>
+              {onUseReply && (
+                <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <button
+                    onClick={() => onUseReply(report.suggestedReply!)}
+                    className="h-[34px] rounded-lg bg-navy px-3.5 text-[13.5px] font-semibold text-white hover:bg-navy-light focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-navy"
+                  >
+                    {t('inv.usarRespuesta')}
+                  </button>
+                  <p className="text-[12px] text-warm-gray">{t('inv.respuestaAviso')}</p>
+                </div>
+              )}
+            </>
+          ) : (
+            <p className="text-[13.5px] leading-snug text-warm-gray">{t('inv.sinRespuesta')}</p>
+          )}
+        </Section>
+      </div>
+
+      <Section title={t('inv.recomendacion')}><p className="whitespace-pre-wrap">{report.recommendation}</p></Section>
+
+      {report.missing.length > 0 && (
+        <Section title={t('inv.falta')} warning>
+          <ul className="space-y-1.5">
+            {report.missing.map((item) => (
+              <li key={item} className="grid grid-cols-[14px_minmax(0,1fr)] gap-x-2">
+                <span aria-hidden className="text-warn-dark">–</span>
+                <span>{item}</span>
+              </li>
+            ))}
+          </ul>
+        </Section>
+      )}
+    </div>
+  );
+}
+
+/** Why it says what it says. */
+function ReportEvidence({ report }: { report: InvestigationReport }) {
+  const t = useT();
+  return (
+    <>
+      <Collapsible title={t('inv.resumen')} defaultOpen><p className="whitespace-pre-wrap">{report.summary}</p></Collapsible>
+      <Collapsible title={t('inv.causa')}><p className="whitespace-pre-wrap">{report.cause}</p></Collapsible>
+      {report.codeEvidence.length > 0 && (
+        <Collapsible title={t('inv.evidenciaCodigo')} count={report.codeEvidence.length}>
+          <ul className="space-y-2">
+            {report.codeEvidence.map((e) => (
+              <li key={`${e.path}:${e.startLine}:${e.quote}`}>
+                <div className="break-all font-mono text-[11px] text-warm-gray">
+                  {e.path}:{e.startLine}-{e.endLine}
+                </div>
+                <pre className="mt-0.5 overflow-x-auto rounded bg-cream-1 p-2 font-mono text-[11px]">{e.quote}</pre>
+              </li>
+            ))}
+          </ul>
+        </Collapsible>
+      )}
+      {report.dataEvidence.length > 0 && (
+        <Collapsible title={t('inv.evidenciaDatos')} count={report.dataEvidence.length}>
+          <ul className="space-y-1">
+            {report.dataEvidence.map((e) => (
+              <li key={e.queryId} className="font-mono text-[11px]">
+                <span className="text-warm-gray">{e.queryId}:</span> {e.values.join(', ')}
+              </li>
+            ))}
+          </ul>
+        </Collapsible>
+      )}
+    </>
+  );
+}
+
+function BacklogDefinition({ draft }: { draft: InvestigationBacklogDraft }) {
+  const t = useT();
+  const line = (title: string, value: string) =>
+    value && (
+      <div>
+        <dt className="text-[12px] font-semibold text-warm-gray">{title}</dt>
+        <dd className="mt-0.5 whitespace-pre-wrap break-words">{value}</dd>
+      </div>
+    );
+  const items = (title: string, values: string[], marker: string) =>
+    values.length > 0 && (
+      <div>
+        <dt className="text-[12px] font-semibold text-warm-gray">{title}</dt>
+        <dd className="mt-0.5">
+          <ul className="space-y-0.5">
+            {values.map((value, i) => (
+              <li key={i} className="grid grid-cols-[18px_minmax(0,1fr)] gap-x-1">
+                <span aria-hidden className="text-warm-gray">{marker === '#' ? `${i + 1}.` : marker}</span>
+                <span className="break-words">{value}</span>
+              </li>
+            ))}
+          </ul>
+        </dd>
+      </div>
+    );
+  return (
+    <details className="group mt-2.5">
+      <summary className="inline-flex cursor-pointer list-none items-center gap-1 text-[12.5px] font-semibold text-navy hover:underline focus-visible:outline-2 focus-visible:outline-ai [&::-webkit-details-marker]:hidden">
+        <span aria-hidden className="flex transition-transform duration-150 group-open:rotate-90"><span className="msr text-[16px]">chevron_right</span></span>
+        {t('inv.backlogDefinicion')}
+      </summary>
+      <dl className="mt-2 space-y-2.5 text-[13px] leading-snug text-ink">
+        {line(t('inv.backlogNombre'), draft.name)}
+        {line(t('inv.backlogDetalle'), [draft.priority, ...draft.modules, ...draft.roles].join(' · '))}
+        {line(t('inv.backlogQuePasa'), draft.problem)}
+        {line(t('inv.backlogEsperado'), draft.expected)}
+        {items(t('inv.backlogPasos'), draft.steps, '#')}
+        {line(t('inv.backlogPantalla'), [draft.screenName, draft.howToReach].filter(Boolean).join(': '))}
+        {items(t('inv.backlogCriterios'), draft.acceptance, '–')}
+        {line(t('inv.backlogNotas'), draft.notes)}
+      </dl>
+    </details>
+  );
+}
+
+/** A confirmed bug can go to the product backlog as it is: one click, without confirming the definition. */
+function BacklogOffer({ row }: { row: Row<Investigation> }) {
+  const t = useT();
+  const board = useDoc<InvestigatorBacklogConfig>('investigator/backlog');
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState<string | null>(null);
+  const item = row.data.backlogItem;
+  const draft = row.data.report?.backlogDraft;
+
+  if (item?.status === 'created' && item.url) {
+    return (
+      <p className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-[10px] bg-ok-bg px-3.5 py-2.5 text-[13.5px] font-semibold text-ok-dark">
+        <span aria-hidden className="msr text-[18px]">check_circle</span>
+        {t('inv.backlogListo')}
+        <a href={item.url} target="_blank" rel="noreferrer" className="font-semibold underline underline-offset-2">
+          {t('inv.backlogVer')}
+        </a>
+        <span className="font-normal text-ink-2">· {item.by.nombre}</span>
+      </p>
+    );
+  }
+  if (!draft) return null;
+
+  const creating = busy || item?.status === 'creating';
+  async function add(force: boolean) {
+    setBusy(true);
+    setFailed(null);
+    try {
+      await addInvestigationToBacklog(row.id, force);
+    } catch (e) {
+      const { code, message } = e as { code?: string; message?: string };
+      setFailed(code === 'functions/failed-precondition' || code === 'functions/unavailable' ? (message ?? t('inv.backlogError')) : t('inv.backlogError'));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const connected = board?.data.test.status === 'ok';
+  return (
+    <div className="rounded-[10px] border border-warm-border px-3.5 py-3">
+      {draft.duplicateOf ? (
+        <p className="text-[14px] leading-snug text-ink">
+          {t('inv.backlogDuplicado')}{' '}
+          <a href={draft.duplicateOf.url} target="_blank" rel="noreferrer" className="font-semibold text-navy underline underline-offset-2">
+            {draft.duplicateOf.title || t('inv.backlogVer')}
+          </a>
+        </p>
+      ) : (
+        <p className="text-[14px] font-semibold leading-snug text-ink">{t('inv.backlogPregunta')}</p>
+      )}
+      {connected ? (
+        <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+          <button
+            onClick={() => void add(!!draft.duplicateOf)}
+            disabled={creating}
+            className={`h-[34px] rounded-lg px-3.5 text-[13.5px] font-semibold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-navy disabled:opacity-50 ${
+              draft.duplicateOf ? 'border border-warm-border text-ink hover:bg-cream-1' : 'bg-navy text-white hover:bg-navy-light'
+            }`}
+          >
+            {creating ? t('inv.backlogAgregando') : t(draft.duplicateOf ? 'inv.backlogCrearIgual' : 'inv.backlogAgregar')}
+          </button>
+          {!draft.duplicateChecked && <p className="text-[12px] text-warm-gray">{t('inv.backlogSinRevisar')}</p>}
+        </div>
+      ) : (
+        <p className="mt-1.5 text-[12.5px] text-warm-gray">{t('inv.backlogSinConectar')}</p>
+      )}
+      {failed && <p className="mt-2 break-words text-[12.5px] text-warn-dark">{failed}</p>}
+      <BacklogDefinition draft={draft} />
+    </div>
+  );
+}
+
+/** The agent's words in the thread, set apart from Claude's answers. */
+function AskedBubble({ question, by, at }: { question: string; by: string; at?: unknown }) {
+  return (
+    <div className="ml-auto w-fit max-w-[90%] rounded-[10px] bg-claude-bg px-3 py-2">
+      <p className="whitespace-pre-wrap break-words text-[14px] leading-snug text-ink">{question}</p>
+      <p className="mt-1 text-[11.5px] text-warm-gray">
+        {by}
+        {!!at && <> · {fmtFecha(at, true)}</>}
+      </p>
+    </div>
+  );
+}
+
+function outcomeLabel(t: ReturnType<typeof useT>, turn: Pick<InvestigationTurn, 'status' | 'report'>) {
+  return turn.report ? t(`inv.conclusion.${turn.report.conclusion}`) : t(`inv.estado.${turn.status}`);
+}
+
+/** A round that's over. The last one starts open when nothing newer has an answer yet. */
+function PastTurn({ turn, defaultOpen }: { turn: InvestigationTurn; defaultOpen: boolean }) {
+  const t = useT();
+  const { report, status } = turn;
+  const tone = report ? CONCLUSION_TONE[report.conclusion] : STATUS_TONE[status];
+  return (
+    <details open={defaultOpen} className="group border-b border-cream-3">
+      <summary className="flex cursor-pointer list-none items-center gap-2 py-3 hover:text-ink focus-visible:outline-2 focus-visible:outline-ai [&::-webkit-details-marker]:hidden">
+        <span aria-hidden className="flex flex-none text-warm-gray transition-transform duration-150 group-open:rotate-90">
+          <span className="msr text-[17px]">chevron_right</span>
+        </span>
+        <span className="min-w-0 flex-1 truncate text-[13.5px] font-semibold text-ink">
+          {turn.n === 1 ? t('inv.primeraRespuesta') : turn.question}
+        </span>
+        <span className={`flex-none text-[12px] font-semibold ${tone}`}>{outcomeLabel(t, turn)}</span>
+      </summary>
+      <div className="space-y-3 pb-4">
+        {turn.n > 1 && <AskedBubble question={turn.question} by={turn.by.nombre} at={turn.askedAt} />}
+        {report ? (
+          <>
+            <ReportAnswer report={report} />
+            <div className="border-t border-cream-3"><ReportEvidence report={report} /></div>
+          </>
+        ) : (
+          <p className="text-[13.5px] text-warm-gray">{turn.error ?? t('inv.turnoSinRespuesta')}</p>
+        )}
+      </div>
+    </details>
+  );
+}
+
+/** Stays at the foot of the panel, so asking something else is always within reach. */
+function FollowUpComposer({ id }: { id: string }) {
+  const t = useT();
+  const [question, setQuestion] = useState('');
+  const [sending, setSending] = useState(false);
+  const [failed, setFailed] = useState<string | null>(null);
+  const typed = question.trim().length;
+
+  async function send() {
+    if (typed < MIN_FOLLOW_UP_CHARS || sending) return;
+    setSending(true);
+    setFailed(null);
+    try {
+      await requestFollowUp(id, question.trim());
+      setQuestion('');
+    } catch (e) {
+      const { code, message } = e as { code?: string; message?: string };
+      const explained = code === 'functions/failed-precondition' || code === 'functions/resource-exhausted' || code === 'functions/invalid-argument';
+      setFailed(explained && message ? message : t('inv.errorEnviar'));
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <div className="flex-none border-t border-cream-3 pt-2.5">
+      {failed && <p className="mb-1.5 text-[12.5px] text-warn-dark">{failed}</p>}
+      <div className="flex items-end gap-2 rounded-[10px] border-[1.5px] border-warm-border bg-white py-1.5 pl-3 pr-1.5 focus-within:border-ai-light focus-within:ring-[3px] focus-within:ring-ai-bg">
+        <textarea
+          value={question}
+          onChange={(e) => setQuestion(e.target.value)}
+          onKeyDown={(e) => {
+            // On touch, Enter stays a newline, as in the chat's composer.
+            if (e.key === 'Enter' && !e.shiftKey && !window.matchMedia('(hover: none)').matches) {
+              e.preventDefault();
+              void send();
+            }
+          }}
+          aria-label={t('inv.seguirPreguntando')}
+          placeholder={t('inv.seguirPreguntando')}
+          rows={1}
+          maxLength={1000}
+          className="max-h-32 min-h-[30px] min-w-0 flex-1 resize-none bg-transparent py-1 text-[14px] leading-snug text-ink outline-none [field-sizing:content] placeholder:text-warm-gray-2"
+        />
+        <button
+          onClick={() => void send()}
+          disabled={typed < MIN_FOLLOW_UP_CHARS || sending}
+          aria-label={t('inv.enviar')}
+          title={t('inv.enviar')}
+          className="flex h-[30px] w-[30px] flex-none items-center justify-center rounded-md bg-navy text-white hover:bg-navy-light focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-navy disabled:opacity-40"
+        >
+          <span aria-hidden className="msr text-[18px]">arrow_upward</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function InvestigationDetail({
   row,
   actions,
@@ -984,15 +1450,27 @@ export function InvestigationDetail({
   origin?: ReactNode;
 }) {
   const t = useT();
-  const { status, report, question, error, usedDatabase, messageCount, sha, requestedBy, createdAt, files, unreadableFiles } = row.data;
+  const { status, report, question, error, usedDatabase, messageCount, sha, requestedBy, createdAt, files, unreadableFiles, followUp, queuedAt } = row.data;
+  const turn = row.data.turn ?? 1;
   const queries = useInvestigationQueries(row.id);
+  const pastTurns = useInvestigationTurns(turn > 1 ? row.id : null);
   const unfinished = status === 'failed' || status === 'rate_limited' || status === 'cancelled';
+  const endRef = useRef<HTMLDivElement>(null);
+
+  // A new round goes at the bottom, past whatever the agent was reading.
+  const previousTurn = useRef(turn);
+  useEffect(() => {
+    if (previousTurn.current === turn) return;
+    previousTurn.current = turn;
+    endRef.current?.scrollIntoView({ block: 'end' });
+  }, [turn]);
 
   return (
-    <div className="@container min-h-0 flex-1 overflow-y-auto pr-1 pt-4">
-      <div className="flex min-h-full flex-col">
-        <header className="flex-none">
-          <div className="mb-2.5 flex flex-wrap items-center gap-x-2.5 gap-y-1">
+    <div className="@container flex min-h-0 flex-1 flex-col">
+      <div className="min-h-0 flex-1 overflow-y-auto pr-1 pt-4">
+        <div className="flex min-h-full flex-col">
+          <header className="flex-none">
+            <div className="mb-2.5 flex flex-wrap items-center gap-x-2.5 gap-y-1">
               {report ? (
                 <span className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12.5px] font-bold ${CONCLUSION_STYLE[report.conclusion]}`}>
                   <span aria-hidden className="h-[7px] w-[7px] rounded-full bg-current" />
@@ -1004,163 +1482,119 @@ export function InvestigationDetail({
               <span className="text-[12px] text-warm-gray">
                 {fmtFecha(createdAt, true)} · {requestedBy.nombre}
               </span>
+              <InvestigationMarks data={row.data} />
             </div>
-          <h3 className="max-w-[70ch] whitespace-pre-wrap text-[17px] font-semibold leading-[1.35] text-ink">{question}</h3>
-          {sourceLabel(row.data) && (
-            <p className="mt-1.5 flex items-center gap-1 text-[12.5px] text-ink-2">
-              <span aria-hidden className="msr text-[15px] text-warm-gray">person</span>
-              <span className="min-w-0 truncate">{sourceLabel(row.data)}</span>
-            </p>
+            <h3 className="max-w-[70ch] whitespace-pre-wrap text-[17px] font-semibold leading-[1.35] text-ink">{question}</h3>
+            {sourceLabel(row.data) && (
+              <p className="mt-1.5 flex items-center gap-1 text-[12.5px] text-ink-2">
+                <span aria-hidden className="msr text-[15px] text-warm-gray">person</span>
+                <span className="min-w-0 truncate">{sourceLabel(row.data)}</span>
+              </p>
+            )}
+            {origin}
+          </header>
+
+          {pastTurns.length > 0 && (
+            <div className="mt-4 border-t border-cream-3">
+              {pastTurns.map((past, i) => (
+                <PastTurn key={past.id} turn={past.data} defaultOpen={i === pastTurns.length - 1 && !report} />
+              ))}
+            </div>
           )}
-          {origin}
-        </header>
 
-        {isActive(status) && <Working row={row} actions={actions} />}
-
-        {unfinished && (
-          <div className="mt-4 rounded-[10px] bg-warn-bg p-3.5 text-[13.5px] leading-snug text-warn-dark">
-            <p className="font-semibold">
-              {status === 'rate_limited' ? t('inv.limite') : status === 'cancelled' ? t('inv.canceladaAyuda') : t('inv.falloAyuda')}
-            </p>
-            {status === 'failed' && error && <p className="mt-1 break-words">{error}</p>}
-            {actions && (
-              <button
-                onClick={actions.onRetry}
-                className="mt-2.5 h-[34px] rounded-lg bg-navy px-3.5 text-[13.5px] font-semibold text-white hover:bg-navy-light"
-              >
-                {t('inv.reintentar')}
-              </button>
-            )}
-          </div>
-        )}
-
-        {report && (
-          <div className="mt-4 space-y-[18px]">
-            {(report.downgradedFrom || report.rejectedEvidence.length > 0) && (
-              <div className="space-y-1.5 text-[12.5px] text-warn-dark">
-                {report.downgradedFrom && <p>{t('inv.bajada')}</p>}
-                {report.rejectedEvidence.length > 0 && (
-                  <div>
-                    <p>{t('inv.rechazadas', { n: report.rejectedEvidence.length })}</p>
-                    <ul className="mt-0.5 list-disc pl-4">
-                      {report.rejectedEvidence.map((problem) => <li key={problem} className="break-words">{problem}</li>)}
-                    </ul>
-                  </div>
-                )}
-              </div>
-            )}
-
-            <div className="rounded-[10px] bg-cream-1 px-4 py-3.5">
-              <Section title={t('inv.respuesta')}>
-                {report.suggestedReply ? (
-                  <>
-                    <p className="whitespace-pre-wrap">{report.suggestedReply}</p>
-                    {actions && (
-                      <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1">
-                        <button
-                          onClick={() => actions.onUseReply(report.suggestedReply!)}
-                          className="h-[34px] rounded-lg bg-navy px-3.5 text-[13.5px] font-semibold text-white hover:bg-navy-light focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-navy"
-                        >
-                          {t('inv.usarRespuesta')}
-                        </button>
-                        <p className="text-[12px] text-warm-gray">{t('inv.respuestaAviso')}</p>
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  <p className="text-[13.5px] leading-snug text-warm-gray">{t('inv.sinRespuesta')}</p>
-                )}
-              </Section>
+          {followUp && (
+            <div className="mt-4">
+              <AskedBubble question={followUp.question} by={followUp.by.nombre} at={queuedAt} />
             </div>
+          )}
 
-            <Section title={t('inv.recomendacion')}><p className="whitespace-pre-wrap">{report.recommendation}</p></Section>
+          {isActive(status) && <Working row={row} actions={actions} />}
 
-            {report.missing.length > 0 && (
-              <Section title={t('inv.falta')} warning>
-                <ul className="space-y-1.5">
-                  {report.missing.map((item) => (
-                    <li key={item} className="grid grid-cols-[14px_minmax(0,1fr)] gap-x-2">
-                      <span aria-hidden className="text-warn-dark">–</span>
-                      <span>{item}</span>
-                    </li>
-                  ))}
-                </ul>
-              </Section>
-            )}
-          </div>
-        )}
+          {unfinished && (
+            <div className="mt-4 rounded-[10px] bg-warn-bg p-3.5 text-[13.5px] leading-snug text-warn-dark">
+              <p className="font-semibold">
+                {status === 'rate_limited'
+                  ? t('inv.limite')
+                  : status === 'cancelled'
+                    ? t('inv.canceladaAyuda')
+                    : turn > 1
+                      ? t('inv.falloSeguimiento')
+                      : t('inv.falloAyuda')}
+              </p>
+              {status === 'failed' && error && <p className="mt-1 break-words">{error}</p>}
+              {/* From the second round on, the composer below is how to try again. */}
+              {actions && turn === 1 && (
+                <button
+                  onClick={actions.onRetry}
+                  className="mt-2.5 h-[34px] rounded-lg bg-navy px-3.5 text-[13.5px] font-semibold text-white hover:bg-navy-light"
+                >
+                  {t('inv.reintentar')}
+                </button>
+              )}
+            </div>
+          )}
 
-        {(unreadableFiles?.length ?? 0) > 0 && (
-          <p className="mt-3 text-[12.5px] text-warn-dark">{t('inv.archivosNoLeidos', { names: unreadableFiles!.join(', ') })}</p>
-        )}
+          {report && (
+            <div className="mt-4">
+              <ReportAnswer report={report} onUseReply={actions?.onUseReply} />
+            </div>
+          )}
 
-        {!isActive(status) && (
-          <div className="mt-[18px] border-t border-cream-3">
-            {report && (
-              <>
-                <Collapsible title={t('inv.resumen')} defaultOpen><p className="whitespace-pre-wrap">{report.summary}</p></Collapsible>
-                <Collapsible title={t('inv.causa')}><p className="whitespace-pre-wrap">{report.cause}</p></Collapsible>
-                {report.codeEvidence.length > 0 && (
-                  <Collapsible title={t('inv.evidenciaCodigo')} count={report.codeEvidence.length}>
-                    <ul className="space-y-2">
-                      {report.codeEvidence.map((e) => (
-                        <li key={`${e.path}:${e.startLine}:${e.quote}`}>
-                          <div className="break-all font-mono text-[11px] text-warm-gray">
-                            {e.path}:{e.startLine}-{e.endLine}
-                          </div>
-                          <pre className="mt-0.5 overflow-x-auto rounded bg-cream-1 p-2 font-mono text-[11px]">{e.quote}</pre>
-                        </li>
-                      ))}
-                    </ul>
-                  </Collapsible>
-                )}
-                {report.dataEvidence.length > 0 && (
-                  <Collapsible title={t('inv.evidenciaDatos')} count={report.dataEvidence.length}>
-                    <ul className="space-y-1">
-                      {report.dataEvidence.map((e) => (
-                        <li key={e.queryId} className="font-mono text-[11px]">
-                          <span className="text-warm-gray">{e.queryId}:</span> {e.values.join(', ')}
-                        </li>
-                      ))}
-                    </ul>
-                  </Collapsible>
-                )}
-              </>
-            )}
+          {(report?.backlogDraft || row.data.backlogItem) && (
+            <div className="mt-4">
+              <BacklogOffer row={row} />
+            </div>
+          )}
 
-            <SentMessages id={row.id} count={messageCount} />
+          <WriteProposals id={row.id} report={report} canFollowUp={!isActive(status)} />
 
-            {(files?.length ?? 0) > 0 && (
-              <Collapsible title={t('inv.archivos')} count={files!.length}>
-                <ul className="space-y-1">
-                  {files!.map((file) => <FileRow key={file.id} file={file} />)}
-                </ul>
-              </Collapsible>
-            )}
+          {(unreadableFiles?.length ?? 0) > 0 && (
+            <p className="mt-3 text-[12.5px] text-warn-dark">{t('inv.archivosNoLeidos', { names: unreadableFiles!.join(', ') })}</p>
+          )}
 
-            {queries.length > 0 && (
-              <Collapsible title={t('inv.consultas')} count={queries.length}>
-                <ul className="space-y-2">
-                  {queries.map((q) => (
-                    <li key={q.id}>
-                      <div className="text-[12.5px]">{q.data.purpose}</div>
-                      <pre className="mt-0.5 overflow-x-auto rounded bg-cream-1 p-2 font-mono text-[11px]">{q.data.sql}</pre>
-                      <div className="mt-0.5 text-[11px] text-warm-gray">
-                        {q.data.error ?? t(q.data.truncated ? 'inv.filasMas' : 'inv.filas', { n: q.data.rowCount })} · {q.data.ms} ms
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              </Collapsible>
-            )}
+          {!isActive(status) && (
+            <div className="mt-[18px] border-t border-cream-3">
+              {report && <ReportEvidence report={report} />}
 
-            <p className="py-3 text-[12px] text-warm-gray">
-              {status === 'done' && !usedDatabase && queries.length === 0 && <>{t('inv.sinBase')} </>}
-              {t(messageCount === 1 ? 'inv.baseUno' : 'inv.base', { n: messageCount, sha: sha ? sha.slice(0, 8) : '-' })}
-            </p>
-          </div>
-        )}
+              <SentMessages id={row.id} count={messageCount} />
+
+              {(files?.length ?? 0) > 0 && (
+                <Collapsible title={t('inv.archivos')} count={files!.length}>
+                  <ul className="space-y-1">
+                    {files!.map((file) => <FileRow key={file.id} file={file} />)}
+                  </ul>
+                </Collapsible>
+              )}
+
+              {queries.length > 0 && (
+                <Collapsible title={t('inv.consultas')} count={queries.length}>
+                  <ul className="space-y-2">
+                    {queries.map((q) => (
+                      <li key={q.id}>
+                        <div className="text-[12.5px]">
+                          {turn > 1 && <span className="font-semibold text-warm-gray">{t('inv.preguntaNumero', { n: q.data.turn ?? 1 })} · </span>}
+                          {q.data.purpose}
+                        </div>
+                        <pre className="mt-0.5 overflow-x-auto rounded bg-cream-1 p-2 font-mono text-[11px]">{q.data.sql}</pre>
+                        <div className="mt-0.5 text-[11px] text-warm-gray">
+                          {q.data.error ?? t(q.data.truncated ? 'inv.filasMas' : 'inv.filas', { n: q.data.rowCount })} · {q.data.ms} ms
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </Collapsible>
+              )}
+
+              <p className="py-3 text-[12px] text-warm-gray">
+                {status === 'done' && !usedDatabase && queries.length === 0 && <>{t('inv.sinBase')} </>}
+                {t(messageCount === 1 ? 'inv.baseUno' : 'inv.base', { n: messageCount, sha: sha ? sha.slice(0, 8) : '-' })}
+              </p>
+            </div>
+          )}
+          <div ref={endRef} />
+        </div>
       </div>
+      {!isActive(status) && (report || turn > 1) && <FollowUpComposer id={row.id} />}
     </div>
   );
 }

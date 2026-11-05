@@ -1,5 +1,20 @@
 import { describe, expect, it } from 'vitest';
-import { contentHash, dbSettingsProblem, filesProblem, investigationSource, isOwnChatAttachment, validateUploads, secretMatches, threadKeyOf, validateRequest } from './investigations.js';
+import {
+  archivedTurn,
+  boundedHistory,
+  contentHash,
+  dbSettingsProblem,
+  filesProblem,
+  followUpProblem,
+  investigationSource,
+  isCurrentRound,
+  isOwnChatAttachment,
+  validateUploads,
+  secretMatches,
+  threadKeyOf,
+  validateRequest,
+  type JobTurn,
+} from './investigations.js';
 
 const ref = { conversationId: 'c', messageId: 'm' };
 
@@ -16,6 +31,62 @@ describe('validateRequest', () => {
     expect(validateRequest('¿Por qué le aparece mora?', [])).toMatch(/al menos/);
     expect(validateRequest('¿Por qué le aparece mora?', Array(101).fill(ref))).toMatch(/hasta/);
     expect(validateRequest('¿Por qué le aparece mora?', [{ conversationId: 'c' }])).toMatch(/no es válida/);
+  });
+});
+
+describe('follow-ups', () => {
+  const investigation = {
+    question: 'original',
+    requestedBy: { uid: 'a', nombre: 'Ana' },
+    status: 'done',
+    createdAt: 'created',
+  } as never;
+
+  it('accepts a short question, since it builds on the conversation', () => {
+    expect(followUpProblem('¿y?')).toBeNull();
+    expect(followUpProblem('  a ')).toMatch(/entre/);
+    expect(followUpProblem('x'.repeat(1001))).toMatch(/entre/);
+    expect(followUpProblem(5)).toMatch(/pregunta/);
+  });
+
+  it('archives the first round with the original question', () => {
+    expect(archivedTurn(investigation)).toMatchObject({ n: 1, question: 'original', by: { nombre: 'Ana' }, askedAt: 'created', report: null });
+  });
+
+  it('archives a later round with its own question and who asked it', () => {
+    const later = { ...(investigation as object), turn: 3, followUp: { question: 'otra', by: { uid: 'b', nombre: 'Beto' } }, queuedAt: 'queued' } as never;
+    expect(archivedTurn(later)).toMatchObject({ n: 3, question: 'otra', by: { nombre: 'Beto' }, askedAt: 'queued' });
+  });
+
+  it('never leaves undefined behind, which Firestore rejects', () => {
+    expect(Object.values(archivedTurn(investigation))).not.toContain(undefined);
+  });
+
+  it('tells the Pi to stop once the round is over or another one started', () => {
+    expect(isCurrentRound({ status: 'running', turn: 2 }, 2)).toBe(true);
+    expect(isCurrentRound({ status: 'running' }, 1)).toBe(true);
+    expect(isCurrentRound({ status: 'cancelled', turn: 2 }, 2)).toBe(false);
+    expect(isCurrentRound({ status: 'queued', turn: 3 }, 2)).toBe(false);
+    expect(isCurrentRound({ status: 'running', turn: 3 }, 2)).toBe(false);
+    expect(isCurrentRound(undefined, 1)).toBe(false);
+  });
+
+  it('accepts a Pi that does not report rounds yet', () => {
+    expect(isCurrentRound({ status: 'running', turn: 2 }, undefined)).toBe(true);
+  });
+
+  const turn = (n: number, summary = 'x'): JobTurn => ({ n, question: 'q', status: 'done', conclusion: 'confirmed', summary, cause: '', recommendation: '', missing: [], queries: [], backlogDraft: null, proposal: null });
+
+  it('keeps the latest rounds when the history is too long, in order', () => {
+    const { history, omittedTurns } = boundedHistory([turn(1, 'a'.repeat(300)), turn(2, 'b'.repeat(300)), turn(3)], 750);
+    expect(history.map((t) => t.n)).toEqual([2, 3]);
+    expect(omittedTurns).toBe(1);
+  });
+
+  it('does not skip a round to fit an older one', () => {
+    const { history, omittedTurns } = boundedHistory([turn(1), turn(2, 'b'.repeat(2000)), turn(3)], 600);
+    expect(history.map((t) => t.n)).toEqual([3]);
+    expect(omittedTurns).toBe(2);
   });
 });
 

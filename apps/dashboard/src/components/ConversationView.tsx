@@ -1090,19 +1090,19 @@ export const ConversationView = forwardRef<
             }
           >
             {!investigarAlLado && <div className="flex-none bg-navy-deep h-[env(safe-area-inset-top)] md:hidden" />}
-            <div className="flex flex-none items-center justify-between gap-2 border-b border-warm-border px-4 py-2.5">
-              <h2 className="flex items-center gap-1.5 text-[14px] font-semibold text-ink">
-                <span aria-hidden className="msr text-[17px] text-claude-dark">troubleshoot</span>
-                {t('inv.tab')}
-              </h2>
+            <div className="flex flex-none items-center gap-2 border-b border-warm-border px-3 py-2.5">
               <button
                 onClick={() => setInvestigarVisible(false)}
                 aria-label={t('inv.cerrarPanel')}
                 title={t('inv.cerrarPanel')}
-                className="flex rounded p-1 text-warm-gray hover:bg-cream-1 hover:text-ink focus-visible:outline-2 focus-visible:outline-ai"
+                className="flex flex-none rounded p-1 text-warm-gray hover:bg-cream-1 hover:text-ink focus-visible:outline-2 focus-visible:outline-ai"
               >
                 <span aria-hidden className="msr text-[20px]">keyboard_double_arrow_right</span>
               </button>
+              <h2 className="flex min-w-0 items-center gap-1.5 text-[14px] font-semibold text-ink">
+                <span aria-hidden className="msr flex-none text-[17px] text-claude-dark">troubleshoot</span>
+                <span className="truncate">{t(paneInvestigar === null ? 'inv.tituloChat' : 'inv.tab')}</span>
+              </h2>
             </div>
             <div className="min-h-0 flex-1 px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3">
               <InvestigationPanel

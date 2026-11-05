@@ -1,4 +1,4 @@
-import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
+import { execFile, execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { chmodSync, chownSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -14,6 +14,11 @@ const POLL_MS = 10_000;
 const HEARTBEAT_MS = 60_000;
 const FLUSH_MS = 3_000;
 const JOB_TIMEOUT_MS = 20 * 60_000;
+/** After asking Claude to stop, how long until it's forced, and until the runner moves on regardless. */
+const KILL_GRACE_MS = 10_000;
+const ABANDON_AFTER_MS = 30_000;
+const COMPLETE_ATTEMPTS = 5;
+const COMPLETE_RETRY_MS = 5_000;
 const TOKEN_LIFETIME_DAYS = 365;
 const MAX_TURNS = '60';
 
@@ -102,6 +107,30 @@ export function claudeCommand(bin: string, args: string[], uid?: number, gid?: n
   ];
 }
 
+/**
+ * Claude runs as another user, and this process has no CAP_KILL, so signalling it directly fails
+ * with EPERM and it keeps running. Sent as Claude's user, and to its whole group (`spawn` makes it
+ * a group leader), so what it started goes too.
+ */
+export function signalCommand(signal: 'TERM' | 'KILL', pid: number, uid?: number, gid?: number): [string, string[]] {
+  return claudeCommand('kill', [`-${signal}`, '--', `-${pid}`], uid, gid);
+}
+
+function stopClaude(config: Config, child: ChildProcess | null) {
+  const pid = child?.pid;
+  if (!child || !pid) return;
+  const running = () => child.exitCode === null && child.signalCode === null;
+  const send = (signal: 'TERM' | 'KILL') => {
+    if (!running()) return;
+    const [command, args] = signalCommand(signal, pid, config.claudeUid, config.claudeGid);
+    execFile(command, args, { env: { PATH: process.env.PATH }, timeout: 5_000 }, (error) => {
+      if (error && running()) console.error(`no se pudo detener a Claude (${signal})`, error.message);
+    });
+  };
+  send('TERM');
+  setTimeout(() => send('KILL'), KILL_GRACE_MS).unref();
+}
+
 async function callFunction<T>(config: Config, action: string, body: object = {}): Promise<T> {
   const response = await fetch(config.functionUrl, {
     method: 'POST',
@@ -171,31 +200,61 @@ interface JobOutcome {
   unreadableFiles: string[];
 }
 
+/** A lost result would leave the case running until it's given up on, with the work already done. */
+async function reportOutcome(config: Config, job: InvestigationJob, outcome: JobOutcome) {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      await callFunction(config, 'complete', { id: job.id, turn: job.turn ?? 1, ...outcome });
+      return;
+    } catch (e) {
+      if (attempt === COMPLETE_ATTEMPTS) throw e;
+      console.error('complete', (e as Error).message);
+      await new Promise((resolve) => setTimeout(resolve, COMPLETE_RETRY_MS));
+    }
+  }
+}
+
+/** Each round is its own job for the gateway, so its query ids (`{id}-t2-1`) don't repeat earlier ones. */
+export function gatewayJobId(job: Pick<InvestigationJob, 'id' | 'turn'>): string {
+  return (job.turn ?? 1) > 1 ? `${job.id}-t${job.turn}` : job.id;
+}
+
 async function runJob(config: Config, job: InvestigationJob): Promise<JobOutcome | null> {
   const outcome: JobOutcome = { status: 'failed', sha: null, error: null, usedDatabase: false, costUsd: null, report: null, unreadableFiles: [] };
   const pendingEvents: ProgressEvent[] = [];
   let sentQueries = 0;
   let cancelled = false;
   let child: ChildProcess | null = null;
+  let abandon: (() => void) | null = null;
+  let lastBeat = Date.now();
   const jobConfigDir = join(config.configDir, job.id);
+  const gatewayJob = gatewayJobId(job);
+  const stop = () => {
+    stopClaude(config, child);
+    setTimeout(() => abandon?.(), ABANDON_AFTER_MS).unref();
+  };
 
   const flush = async (checkoutDir: string | null) => {
     const events = pendingEvents.splice(0);
     let queries: LoggedQuery[] = [];
     if (checkoutDir) {
-      const log = await callGateway<{ queries: LoggedQuery[] }>(config, 'GET', `/jobs/${job.id}`);
+      const log = await callGateway<{ queries: LoggedQuery[] }>(config, 'GET', `/jobs/${gatewayJob}`);
       queries = log.queries.slice(sentQueries);
       sentQueries = log.queries.length;
     }
+    const heartbeat = Date.now() - lastBeat >= HEARTBEAT_MS;
+    if (heartbeat) lastBeat = Date.now();
     const { cancel } = await callFunction<{ cancel: boolean }>(config, 'progress', {
       id: job.id,
+      turn: job.turn ?? 1,
+      heartbeat,
       events,
       // Rows stay here. Firestore only learns what was asked and how much came back.
       queries: queries.map(({ rows, ...query }) => ({ ...query, rowCount: rows.length })),
     });
-    if (cancel) {
+    if (cancel && !cancelled) {
       cancelled = true;
-      child?.kill('SIGTERM');
+      stop();
     }
   };
 
@@ -206,7 +265,7 @@ async function runJob(config: Config, job: InvestigationJob): Promise<JobOutcome
     await flush(null);
     const checkout = await checkoutProduction(config.checkout);
     outcome.sha = checkout.sha;
-    const { token } = await callGateway<{ token: string }>(config, 'POST', '/jobs', { id: job.id, checkoutDir: checkout.dir });
+    const { token } = await callGateway<{ token: string }>(config, 'POST', '/jobs', { id: gatewayJob, checkoutDir: checkout.dir });
     checkoutDir = checkout.dir;
 
     // Claude runs as another user, so it reaches these files through its group and nothing else does.
@@ -246,6 +305,7 @@ async function runJob(config: Config, job: InvestigationJob): Promise<JobOutcome
       cwd: checkout.dir,
       env: claudeEnv(),
       stdio: ['pipe', 'pipe', 'pipe'],
+      detached: true,
     });
     child.stdin!.end(buildPrompt(job, files));
 
@@ -263,18 +323,24 @@ async function runJob(config: Config, job: InvestigationJob): Promise<JobOutcome
 
     const dir = checkout.dir;
     timer = setInterval(() => flush(dir).catch((e) => console.error('progress', e.message)), FLUSH_MS);
-    const timeout = setTimeout(() => child?.kill('SIGTERM'), JOB_TIMEOUT_MS);
+    const timeout = setTimeout(stop, JOB_TIMEOUT_MS);
+    // One process that won't die can't be allowed to hold up every investigation after it.
     const exitCode = await new Promise<number | null>((resolve, reject) => {
       child!.on('error', reject);
       child!.on('close', resolve);
+      abandon = () => {
+        console.error(`Claude no se detuvo en ${job.id}: se sigue con la cola`);
+        resolve(null);
+      };
     });
+    abandon = null;
     clearTimeout(timeout);
     clearInterval(timer);
     timer = null;
 
     if (cancelled) return null;
     await flush(dir);
-    const log = await callGateway<{ queries: LoggedQuery[] }>(config, 'GET', `/jobs/${job.id}`);
+    const log = await callGateway<{ queries: LoggedQuery[] }>(config, 'GET', `/jobs/${gatewayJob}`);
     outcome.usedDatabase = log.queries.length > 0;
     const final = result as ClaudeResult | null;
     outcome.costUsd = final?.total_cost_usd ?? null;
@@ -283,11 +349,14 @@ async function runJob(config: Config, job: InvestigationJob): Promise<JobOutcome
       outcome.status = 'rate_limited';
       outcome.error = 'Se alcanzó el límite de uso de la suscripción.';
     } else if (final?.structured_output && !final.is_error) {
-      outcome.report = verifyReport(final.structured_output as RawReport, dir, log.queries);
+      outcome.report = verifyReport(final.structured_output as RawReport, dir, log.queries, job.backlogRows);
       outcome.status = 'done';
     } else {
       const reason = stderr.trim().split('\n').at(-1)?.slice(0, 200);
-      outcome.error = `El análisis terminó sin reporte (código ${exitCode}, ${final?.subtype ?? 'sin resultado'})${reason ? `: ${reason}` : ''}.`;
+      outcome.error =
+        final?.subtype === 'error_max_structured_output_retries'
+          ? 'Claude no logró armar el reporte con el formato pedido. Podés intentarlo de nuevo.'
+          : `El análisis terminó sin reporte (código ${exitCode}, ${final?.subtype ?? 'sin resultado'})${reason ? `: ${reason}` : ''}.`;
       console.error(outcome.error, stderr);
     }
   } catch (e) {
@@ -295,9 +364,9 @@ async function runJob(config: Config, job: InvestigationJob): Promise<JobOutcome
     console.error('job failed', e);
   } finally {
     if (timer) clearInterval(timer);
-    child?.kill('SIGTERM');
+    stopClaude(config, child);
     rmSync(jobConfigDir, { recursive: true, force: true });
-    if (checkoutDir) await callGateway(config, 'DELETE', `/jobs/${job.id}`).catch(() => {});
+    if (checkoutDir) await callGateway(config, 'DELETE', `/jobs/${gatewayJob}`).catch(() => {});
   }
   return outcome;
 }
@@ -327,7 +396,7 @@ async function main() {
       if (job) {
         console.log(`investigación ${job.id}`);
         const outcome = await runJob(config, job);
-        if (outcome) await callFunction(config, 'complete', { id: job.id, ...outcome });
+        if (outcome) await reportOutcome(config, job, outcome);
         continue;
       }
     } catch (e) {

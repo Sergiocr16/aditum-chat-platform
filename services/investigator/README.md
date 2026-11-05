@@ -1,13 +1,19 @@
 # Investigator
 
 Runs on the Raspberry Pi. An agent asks a question from the console, and this answers it from the
-production code and, only if needed, from production data. It analyzes; it writes nothing.
+production code and, only if needed, from production data. Claude only reads. When bad data is the
+cause it can propose a change, and only a separate writer applies it, after an admin rehearses and
+approves it. Writes start off.
 
 ```
 Console → requestInvestigation → investigations/{id} (Firestore)
                                        ↑ outbound HTTPS, no open ports
 Pi: runner ──── claude -p (Read, Grep, Glob + MCP) ── checkout of one commit
                     └── mysql-gateway (own OS user) ── read-only user on the production database
+
+Console → rehearse, 3 confirmations → writer_jobs (Firestore)
+                                       ↑ outbound HTTPS, no open ports, its own secret
+Pi: writer (own OS user) ── write user with per-table GRANTs, password only for the length of a job
 ```
 
 ## Safeguards, and what enforces each one
@@ -15,7 +21,16 @@ Pi: runner ──── claude -p (Read, Grep, Glob + MCP) ── checkout of on
 | Rule | Enforced by |
 |---|---|
 | Code first, database only if needed | The gateway refuses every database tool until `request_db_access` gets code evidence it has checked |
-| No writes | MySQL: the user only has `SELECT` on the production database |
+| Claude can't write | MySQL: its user only has `SELECT`. It has no tool to reach the writer, and its proposal is data that a person reviews |
+| A proposal can't be broad | Operations are structured, one row each by its full primary key, checked against the catalog. There's no SQL text, no condition and no delete |
+| Only approved work gets the write password | It isn't on the Pi: `investigationWriter` hands it over with a job an admin asked for |
+| A writer can only touch what its GRANTs say | The writer refuses a user with anything but `SELECT`, `INSERT` or `UPDATE` per table, and rereads the grants on every job |
+| A rehearsal leaves nothing | Runs in a transaction that rolls back, only on InnoDB tables |
+| An approval covers exactly what was reviewed | Three ordered steps in `stepProblem`, same admin, 10 minutes, a hash of operations and rehearsal, typed phrase and a fresh login |
+| The password only reaches the real server | A verified certificate and host name, always. Changing the host, user or certificate needs the password typed again |
+| It applies what was rehearsed or nothing | Each row must still be as it was and end up as it did, or it rolls back. Unclaimed jobs expire in 2 minutes |
+| Dying mid-write can't repeat it | `recover` reads the rows when the writer comes back, and an unclear result goes to a person. It never retries |
+| Everything is on record | `prod_write_audit`: admins read, only functions writes, nothing deletes |
 | Personal data is not masked | A decision: Claude reads real data. The prompt asks it to read and cite only what it needs, but nothing enforces that. Cited values reach Firestore, where agents can read them |
 | Claude can't reach credentials | Separate OS users; the password reaches only the gateway, with its own secret |
 | A broader user can't be pasted in | The gateway checks `SHOW GRANTS` and won't use anything beyond `SELECT` on that database |
@@ -38,6 +53,7 @@ The other agent on this Pi is unaffected: settings are passed per run instead of
 pnpm --filter @aditum-chat/investigator test
 pnpm --filter @aditum-chat/investigator gateway   # needs the variables in deploy/gateway.env.example
 pnpm --filter @aditum-chat/investigator runner    # needs the variables in deploy/runner.env.example
+pnpm --filter @aditum-chat/investigator writer    # needs WRITER_FUNCTION_URL and WRITER_SHARED_SECRET
 ```
 
 Against the emulators, `RUNNER_FUNCTION_URL` is
@@ -49,7 +65,7 @@ must match `functions/.secret.local`.
 1. **Read-only user.** Run `deploy/create-ro-user.sql` by hand. Use `REQUIRE SSL` and restrict `__HOST__` to
    the Pi's address.
 
-2. **Firebase:** set the `RUNNER_SHARED_SECRET` and `GATEWAY_SHARED_SECRET` secrets and deploy the
+2. **Firebase:** set the `RUNNER_SHARED_SECRET`, `GATEWAY_SHARED_SECRET` and `WRITER_SHARED_SECRET` secrets and deploy the
    functions and indexes.
 
 3. **Install, from the console.** Under Configuración → Analizador an admin saves the Pi's public IP, SSH
@@ -57,7 +73,7 @@ must match `functions/.secret.local`.
    presses **Instalar en la Pi**. The user needs `sudo`. A Cloud Function logs in and runs
    `deploy/install.sh` from a checkout of `main` (`INVESTIGATOR_GIT_REF` overrides it). The script is safe
    to run again, and pressing the button later updates the Pi. It creates its own users, directories
-   under `/opt` and `/var/lib`, `/etc/aditum-investigator/*.env` (mode 600) and the two services, with
+   under `/opt` and `/var/lib`, `/etc/aditum-investigator/*.env` (mode 600) and the three services, with
    its own Node and Claude Code. Nothing else on the machine changes.
 
    Against the emulators, set `INVESTIGATOR_GIT_REF` and `INVESTIGATOR_PUBLIC_FUNCTIONS_URL` (a functions URL
@@ -73,6 +89,13 @@ must match `functions/.secret.local`.
    `investigator_secrets/pi`. Cloud Functions has no fixed outbound IP, so the router can't limit the SSH
    port to it. Once installed, the services only make outbound calls: you can remove the connection and
    close the port until the next update.
+
+6. **Writes (optional, off by default).** Run `deploy/create-write-user.sql` by hand, listing only the
+   tables it may touch. Under Configuración → Analizador → Escrituras an admin saves that connection with
+   the server's CA certificate (on RDS, the region's bundle) and turns on the switch once its check
+   passes. Without a certificate it refuses to connect, and it checks the host name too, so use the
+   name on the certificate and not an IP. Before granting a table, find out what cache the app
+   keeps for it: a direct write skips `@CacheEvict` and the app's own audit.
 
 Rows returned by queries stay on the Pi for 30 days, in `GATEWAY_LOG_DIR`. Firestore only gets the SQL,
 row counts and the values cited as evidence.

@@ -1,10 +1,16 @@
 import { readFileSync, realpathSync } from 'node:fs';
 import { isAbsolute, join, relative } from 'node:path';
 import type {
+  InvestigationBacklogDraft,
+  InvestigationBacklogRow,
+  InvestigationClassification,
   InvestigationCodeEvidence,
   InvestigationConclusion,
   InvestigationDataEvidence,
   InvestigationReport,
+  WriteOperation,
+  WriteProposalDraft,
+  WriteRiskLevel,
 } from '@aditum-chat/shared';
 
 /**
@@ -73,8 +79,55 @@ export function dataEvidenceProblem(evidence: InvestigationDataEvidence, queries
   return missing === undefined ? null : `${evidence.queryId} no devolvió "${missing}"`;
 }
 
+/** The backlog's options, from the `aditum-backlog-definer` skill. Functions checks them against the real board. */
+const BACKLOG_PRIORITIES = ['Urgente', 'Alta', 'Media', 'Baja'] as const;
+const BACKLOG_MODULES = [
+  'Contabilidad',
+  'General',
+  'Residentes',
+  'Visitantes',
+  'App residentes',
+  'Cobros',
+  'Seguridad',
+  'Áreas comunes',
+  'Ingreso por QR',
+  'app diosaditum',
+  'app administración',
+  'Asambleas',
+] as const;
+const BACKLOG_ROLES = ['Administrador', 'Residente', 'Aditum', 'Oficiales de seguridad', 'Contador'] as const;
+
+export interface RawBacklogItem {
+  name: string;
+  description: string;
+  priority: InvestigationBacklogDraft['priority'];
+  modules: string[];
+  roles: string[];
+  problem: string;
+  expected: string;
+  steps: string[];
+  screen_name: string;
+  how_to_reach: string;
+  acceptance: string[];
+  notes: string;
+  duplicate_of: string | null;
+}
+
+export interface RawWriteProposal {
+  reason: string;
+  operations: WriteOperation[];
+  consequence: string;
+  consequence_evidence: { path: string; start_line: number; end_line: number; quote: string }[];
+  risk_level: WriteRiskLevel;
+  risk: string;
+  cache: string;
+}
+
 /** The model's output, as `--json-schema` asks for it. */
 export interface RawReport {
+  classification: InvestigationClassification;
+  write_proposal?: RawWriteProposal | null;
+  backlog_item: RawBacklogItem | null;
   conclusion: InvestigationConclusion;
   summary: string;
   cause: string;
@@ -85,29 +138,97 @@ export interface RawReport {
   data_evidence: { query_id: string; values: string[] }[];
 }
 
+const CODE_CITATION = {
+  type: 'object',
+  properties: {
+    path: { type: 'string' },
+    start_line: { type: 'integer' },
+    end_line: { type: 'integer' },
+    quote: { type: 'string' },
+  },
+  required: ['path', 'start_line', 'end_line', 'quote'],
+  additionalProperties: false,
+} as const;
+
+// anyOf and not a list of types: the CLI validates in strict mode, and only fails once this part is filled in.
+const COLUMNS = {
+  type: 'object',
+  additionalProperties: { anyOf: [{ type: 'string' }, { type: 'number' }, { type: 'boolean' }, { type: 'null' }] },
+} as const;
+
 export const REPORT_SCHEMA = {
   type: 'object',
   properties: {
+    write_proposal: {
+      anyOf: [
+        { type: 'null' },
+        {
+          type: 'object',
+          properties: {
+            reason: { type: 'string' },
+            operations: {
+              type: 'array',
+              items: {
+                anyOf: [
+                  {
+                    type: 'object',
+                    properties: { op: { type: 'string', enum: ['update'] }, table: { type: 'string' }, key: COLUMNS, set: COLUMNS },
+                    required: ['op', 'table', 'key', 'set'],
+                    additionalProperties: false,
+                  },
+                  {
+                    type: 'object',
+                    properties: { op: { type: 'string', enum: ['insert'] }, table: { type: 'string' }, values: COLUMNS },
+                    required: ['op', 'table', 'values'],
+                    additionalProperties: false,
+                  },
+                ],
+              },
+            },
+            consequence: { type: 'string' },
+            consequence_evidence: { type: 'array', items: CODE_CITATION },
+            risk_level: { type: 'string', enum: ['low', 'medium', 'high', 'undetermined'] },
+            risk: { type: 'string' },
+            cache: { type: 'string' },
+          },
+          required: ['reason', 'operations', 'consequence', 'consequence_evidence', 'risk_level', 'risk', 'cache'],
+          additionalProperties: false,
+        },
+      ],
+    },
+    classification: { type: 'string', enum: ['bug', 'data_error', 'missing_feature', 'expected_behavior', 'question', 'unknown'] },
+    backlog_item: {
+      anyOf: [
+        { type: 'null' },
+        {
+          type: 'object',
+          properties: {
+            name: { type: 'string' },
+            description: { type: 'string' },
+            priority: { type: 'string', enum: BACKLOG_PRIORITIES },
+            modules: { type: 'array', items: { type: 'string', enum: BACKLOG_MODULES } },
+            roles: { type: 'array', items: { type: 'string', enum: BACKLOG_ROLES } },
+            problem: { type: 'string' },
+            expected: { type: 'string' },
+            steps: { type: 'array', items: { type: 'string' } },
+            screen_name: { type: 'string' },
+            how_to_reach: { type: 'string' },
+            acceptance: { type: 'array', items: { type: 'string' } },
+            notes: { type: 'string' },
+            duplicate_of: { type: ['string', 'null'] },
+          },
+          required: ['name', 'description', 'priority', 'modules', 'roles', 'problem', 'expected', 'steps', 'screen_name', 'how_to_reach', 'acceptance', 'notes', 'duplicate_of'],
+          additionalProperties: false,
+        },
+      ],
+    },
     conclusion: { type: 'string', enum: ['confirmed', 'hypothesis', 'undetermined'] },
     summary: { type: 'string' },
     cause: { type: 'string' },
     recommendation: { type: 'string' },
     suggested_reply: { type: 'string' },
     missing: { type: 'array', items: { type: 'string' } },
-    code_evidence: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          path: { type: 'string' },
-          start_line: { type: 'integer' },
-          end_line: { type: 'integer' },
-          quote: { type: 'string' },
-        },
-        required: ['path', 'start_line', 'end_line', 'quote'],
-        additionalProperties: false,
-      },
-    },
+    code_evidence: { type: 'array', items: CODE_CITATION },
     data_evidence: {
       type: 'array',
       items: {
@@ -118,15 +239,52 @@ export const REPORT_SCHEMA = {
       },
     },
   },
-  required: ['conclusion', 'summary', 'cause', 'recommendation', 'suggested_reply', 'missing', 'code_evidence', 'data_evidence'],
+  required: ['classification', 'backlog_item', 'write_proposal', 'conclusion', 'summary', 'cause', 'recommendation', 'suggested_reply', 'missing', 'code_evidence', 'data_evidence'],
   additionalProperties: false,
 } as const;
+
+const cleanList = (items: string[]) => items.map((item) => item.trim()).filter(Boolean);
+
+/**
+ * Only a confirmed bug goes to the backlog, whatever the model filled in. A duplicate has to be a
+ * row it was really shown: `rows` is null when the board couldn't be read.
+ */
+export function backlogDraftFrom(
+  raw: RawReport,
+  conclusion: InvestigationConclusion,
+  rows: InvestigationBacklogRow[] | null | undefined,
+): InvestigationBacklogDraft | null {
+  const item = raw.backlog_item;
+  if (!item || conclusion !== 'confirmed' || raw.classification !== 'bug') return null;
+  const duplicate = rows?.find((row) => row.id === item.duplicate_of);
+  return {
+    name: item.name.trim(),
+    description: item.description.trim(),
+    priority: item.priority,
+    modules: cleanList(item.modules),
+    roles: cleanList(item.roles),
+    problem: item.problem.trim(),
+    expected: item.expected.trim(),
+    steps: cleanList(item.steps),
+    screenName: item.screen_name.trim(),
+    howToReach: item.how_to_reach.trim(),
+    acceptance: cleanList(item.acceptance),
+    notes: item.notes.trim(),
+    duplicateOf: duplicate ? { id: duplicate.id, title: duplicate.title, url: duplicate.url } : null,
+    duplicateChecked: Array.isArray(rows),
+  };
+}
 
 /**
  * Keeps only evidence that checks out. One invented item is enough to lose
  * `confirmed`: it means the rest of the reasoning can't be taken on trust either.
  */
-export function verifyReport(raw: RawReport, checkoutDir: string, queries: LoggedQuery[]): InvestigationReport {
+export function verifyReport(
+  raw: RawReport,
+  checkoutDir: string,
+  queries: LoggedQuery[],
+  backlogRows?: InvestigationBacklogRow[] | null,
+): InvestigationReport {
   const code: InvestigationCodeEvidence[] = raw.code_evidence.map((e) => ({
     path: e.path,
     startLine: e.start_line,
@@ -134,10 +292,19 @@ export function verifyReport(raw: RawReport, checkoutDir: string, queries: Logge
     quote: e.quote,
   }));
   const data: InvestigationDataEvidence[] = raw.data_evidence.map((e) => ({ queryId: e.query_id, values: e.values }));
+  const proposal = raw.write_proposal ?? null;
+  const consequenceEvidence: InvestigationCodeEvidence[] = (proposal?.consequence_evidence ?? []).map((e) => ({
+    path: e.path,
+    startLine: e.start_line,
+    endLine: e.end_line,
+    quote: e.quote,
+  }));
   const validCode = code.filter((e) => codeEvidenceProblem(e, checkoutDir) === null);
   const validData = data.filter((e) => dataEvidenceProblem(e, queries) === null);
   const rejected = [
     ...code.map((e) => codeEvidenceProblem(e, checkoutDir)),
+    // Claiming who reads the data with an invented citation is as bad as inventing the cause.
+    ...consequenceEvidence.map((e) => codeEvidenceProblem(e, checkoutDir)),
     ...data.map((e) => dataEvidenceProblem(e, queries)),
   ].filter((problem): problem is string => problem !== null);
   const hasEvidence = validCode.length + validData.length > 0;
@@ -157,5 +324,16 @@ export function verifyReport(raw: RawReport, checkoutDir: string, queries: Logge
     codeEvidence: validCode,
     dataEvidence: validData,
     rejectedEvidence: rejected,
+    classification: raw.classification,
+    backlogDraft: backlogDraftFrom(raw, conclusion, backlogRows),
+    writeProposal: proposal && {
+      reason: proposal.reason.trim(),
+      operations: proposal.operations,
+      consequence: proposal.consequence.trim(),
+      consequenceEvidence,
+      riskLevel: proposal.risk_level,
+      risk: proposal.risk.trim(),
+      cache: proposal.cache.trim(),
+    } satisfies WriteProposalDraft,
   };
 }

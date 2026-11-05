@@ -44,6 +44,7 @@ echo "::step users"
 id -u investigator-claude >/dev/null 2>&1 || useradd --system --create-home --home-dir "$CLAUDE_HOME" investigator-claude
 id -u investigator >/dev/null 2>&1 || useradd --system investigator
 id -u mysql-gateway >/dev/null 2>&1 || useradd --system mysql-gateway
+id -u aditum-writer >/dev/null 2>&1 || useradd --system aditum-writer
 id -u investigator-build >/dev/null 2>&1 || useradd --system --home-dir "$BUILD_HOME" investigator-build
 # The runner hands each job's settings to Claude through this group.
 usermod -aG investigator-claude investigator
@@ -107,6 +108,7 @@ echo "::step config"
 ADMIN_TOKEN=$(existing "$CONFIG/gateway.env" GATEWAY_ADMIN_TOKEN)
 [ -n "$ADMIN_TOKEN" ] || ADMIN_TOKEN=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
 RO_DB_CA_FILE_VALUE=$(existing "$CONFIG/gateway.env" RO_DB_CA_FILE)
+WRITE_DB_CA_FILE_VALUE=$(existing "$CONFIG/writer.env" WRITE_DB_CA_FILE)
 (
   umask 077
   cat >"$CONFIG/runner.env.new" <<RUNNER
@@ -131,21 +133,29 @@ GATEWAY_FUNCTION_URL=$(setting GATEWAY_FUNCTION_URL)
 GATEWAY_SHARED_SECRET=$(setting GATEWAY_SHARED_SECRET)
 RO_DB_CA_FILE=$RO_DB_CA_FILE_VALUE
 GATEWAY
+  cat >"$CONFIG/writer.env.new" <<WRITER
+WRITER_FUNCTION_URL=$(setting WRITER_FUNCTION_URL)
+WRITER_SHARED_SECRET=$(setting WRITER_SHARED_SECRET)
+WRITE_DB_CA_FILE=${WRITE_DB_CA_FILE_VALUE:-$RO_DB_CA_FILE_VALUE}
+WRITER
   mv -f "$CONFIG/runner.env.new" "$CONFIG/runner.env"
   mv -f "$CONFIG/gateway.env.new" "$CONFIG/gateway.env"
+  mv -f "$CONFIG/writer.env.new" "$CONFIG/writer.env"
 )
 
 echo "::step services"
 install -m 644 "$SRC/services/investigator/deploy/aditum-mysql-gateway.service" "$UNITS/aditum-mysql-gateway.service"
 install -m 644 "$SRC/services/investigator/deploy/aditum-investigator.service" "$UNITS/aditum-investigator.service"
+install -m 644 "$SRC/services/investigator/deploy/aditum-writer.service" "$UNITS/aditum-writer.service"
 systemctl daemon-reload
-systemctl enable --quiet aditum-mysql-gateway aditum-investigator
-systemctl restart aditum-mysql-gateway aditum-investigator
+systemctl enable --quiet aditum-mysql-gateway aditum-investigator aditum-writer
+# A write cut short by this is resolved when the writer comes back: it reads the rows and never retries.
+systemctl restart aditum-mysql-gateway aditum-investigator aditum-writer
 
 echo "::step verify"
 [ "$(readlink "$APP/current")" = "$RELEASE" ] || { echo "La versión activa no es la que se acaba de instalar."; exit 1; }
 sleep 15
-for service in aditum-mysql-gateway aditum-investigator; do
+for service in aditum-mysql-gateway aditum-investigator aditum-writer; do
   if ! systemctl is-active --quiet "$service"; then
     echo "$service no arrancó:"
     journalctl -u "$service" -n 15 --no-pager -o cat || true
