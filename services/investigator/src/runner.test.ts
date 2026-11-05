@@ -48,7 +48,7 @@ describe('claudeCommand', () => {
   it('drops to the other user with no capabilities', () => {
     const [command, args] = claudeCommand('claude', ['-p'], 1001, 1002);
     expect(command).toBe('setpriv');
-    expect(args).toEqual(expect.arrayContaining(['--reuid=1001', '--regid=1002', '--clear-groups', '--ambient-caps=-all', '--bounding-set=-all']));
+    expect(args).toEqual(expect.arrayContaining(['--reuid=1001', '--regid=1002', '--clear-groups', '--inh-caps=-all', '--ambient-caps=-all', '--no-new-privs']));
     expect(args.slice(-2)).toEqual(['claude', '-p']);
   });
 });

@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { chmodSync, chownSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -88,13 +88,14 @@ export function claudeArgs(model: string, mcpConfigFile: string, settingsFile: s
 
 /**
  * `setpriv` rather than spawn's `uid` option: changing between non-root users keeps ambient
- * capabilities, and Claude has no reason to inherit the runner's.
+ * capabilities, and Claude has no reason to inherit the runner's. `--no-new-privs` keeps it from
+ * regaining any through a setuid binary, and unlike dropping the bounding set needs no capability.
  */
 export function claudeCommand(bin: string, args: string[], uid?: number, gid?: number): [string, string[]] {
   if (uid === undefined || gid === undefined) return [bin, args];
   return [
     'setpriv',
-    [`--reuid=${uid}`, `--regid=${gid}`, '--clear-groups', '--inh-caps=-all', '--ambient-caps=-all', '--bounding-set=-all', '--', bin, ...args],
+    [`--reuid=${uid}`, `--regid=${gid}`, '--clear-groups', '--inh-caps=-all', '--ambient-caps=-all', '--no-new-privs', '--', bin, ...args],
   ];
 }
 
@@ -231,7 +232,8 @@ async function runJob(config: Config, job: InvestigationJob): Promise<JobOutcome
       outcome.report = verifyReport(final.structured_output as RawReport, dir, log.queries);
       outcome.status = 'done';
     } else {
-      outcome.error = `El análisis terminó sin reporte (código ${exitCode}, ${final?.subtype ?? 'sin resultado'}).`;
+      const reason = stderr.trim().split('\n').at(-1)?.slice(0, 200);
+      outcome.error = `El análisis terminó sin reporte (código ${exitCode}, ${final?.subtype ?? 'sin resultado'})${reason ? `: ${reason}` : ''}.`;
       console.error(outcome.error, stderr);
     }
   } catch (e) {
@@ -246,10 +248,17 @@ async function runJob(config: Config, job: InvestigationJob): Promise<JobOutcome
   return outcome;
 }
 
+/** Fails at startup, as the same user and with the same limits as a real job, so an install can't look fine and fail later. */
+function checkClaudeRuns(config: Config) {
+  const [command, args] = claudeCommand(config.claudeBin, ['--version'], config.claudeUid, config.claudeGid);
+  execFileSync(command, args, { env: claudeEnv(), timeout: 30_000, stdio: ['ignore', 'ignore', 'inherit'] });
+}
+
 async function main() {
   const config = loadConfig();
   const days = tokenDaysLeft(config);
   if (days !== null && days < 30) console.warn(`El token de Claude Code vence en ${days} días.`);
+  checkClaudeRuns(config);
   console.log(`runner listo, modelo ${config.model}`);
 
   let lastHeartbeat = 0;

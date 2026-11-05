@@ -143,7 +143,7 @@ systemctl enable --quiet aditum-mysql-gateway aditum-investigator
 systemctl restart aditum-mysql-gateway aditum-investigator
 
 echo "::step verify"
-sleep 8
+sleep 15
 for service in aditum-mysql-gateway aditum-investigator; do
   if ! systemctl is-active --quiet "$service"; then
     echo "$service no arrancó:"
