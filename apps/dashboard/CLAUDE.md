@@ -15,7 +15,7 @@ src/components/     Shell, ConversationView, VisorAdjuntos (fullscreen image/PDF
                     CategoriasConfig, …), bot/*.
 src/lib/            firebase.ts (SDK + emulator wiring), auth.tsx, i18n.ts, sound.ts,
                     messaging.ts (FCM Web Push), and data hooks: data.ts, data-tickets.ts,
-                    data-bot.ts, data-contactos.ts, data-tags.ts.
+                    data-bot.ts, data-contactos.ts, data-tags.ts, data-investigations.ts.
 ```
 
 ## Conventions
@@ -58,6 +58,11 @@ src/lib/            firebase.ts (SDK + emulator wiring), auth.tsx, i18n.ts, soun
   assignee, priority, visibility) and applies them only on **Save** behind a confirm modal, logging
   each as a `historial` event; internal notes are editable (`updateTicketNote`). The context panels
   (`ContextPanel` / `GroupContextPanel`) use `PanelLista` + `ConvHistorialRow` + `TicketCard`.
+
+- **Investigations** (`InvestigationPanel`, mounted by `ConversationView`) are a third composer tab that
+  takes about 70% of the column. Master-detail through container queries (`@2xl`): the saved list and
+  the form or report side by side when wide, one at a time when not. The steps an investigation takes
+  are never listed: only a phase and a robot (`InvestigatorRobot`, keyframes in `globals.css`).
 
 ## Notes
 

@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { collection, limit as fsLimit, onSnapshot, orderBy, query, type QueryConstraint, where } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import type {
+  Conversation,
   Investigation,
   InvestigationEvent,
   InvestigationMessageRef,
@@ -34,17 +35,81 @@ function useRows<T>(path: string | null, constraints: QueryConstraint[]): Row<T>
   return rows;
 }
 
-export function useThreadInvestigations(threadKey: string | null): Row<Investigation>[] {
-  const constraints = useMemo<QueryConstraint[]>(
-    () => (threadKey ? [where('threadKey', '==', threadKey), orderBy('createdAt', 'desc'), fsLimit(20)] : []),
-    [threadKey],
-  );
-  return useRows<Investigation>(threadKey ? 'investigations' : null, constraints);
+/** `contact:{id}` or `group:{id}`: what ties a chat's investigations together across its segments. */
+export function threadKeyOf(conv: Conversation): string | null {
+  if (conv.tipo === 'grupo') return conv.groupId ? `group:${conv.groupId}` : null;
+  return conv.contactId ? `contact:${conv.contactId}` : null;
 }
 
-export function useInvestigationEvents(id: string | null): Row<InvestigationEvent>[] {
-  const constraints = useMemo<QueryConstraint[]>(() => [orderBy('at', 'asc'), fsLimit(200)], []);
-  return useRows<InvestigationEvent>(id ? `investigations/${id}/events` : null, constraints);
+const INVESTIGATIONS_PAGE = 25;
+
+export interface InvestigationList {
+  rows: Row<Investigation>[];
+  loading: boolean;
+  error: boolean;
+  hasMore: boolean;
+  loadMore(): void;
+}
+
+/** Every saved investigation, newest first: of one chat, or of all of them when `threadKey` is null. */
+export function useInvestigationList(threadKey: string | null): InvestigationList {
+  const [max, setMax] = useState(INVESTIGATIONS_PAGE);
+  const [state, setState] = useState<{ key: string; rows: Row<Investigation>[]; error: boolean } | null>(null);
+  const listKey = threadKey ?? '*';
+
+  useEffect(() => {
+    setMax(INVESTIGATIONS_PAGE);
+  }, [listKey]);
+
+  useEffect(() => {
+    const constraints: QueryConstraint[] = [
+      ...(threadKey ? [where('threadKey', '==', threadKey)] : []),
+      orderBy('createdAt', 'desc'),
+      fsLimit(max),
+    ];
+    return onSnapshot(
+      query(collection(db, 'investigations'), ...constraints),
+      (snap) => setState({ key: listKey, rows: snap.docs.map((d) => ({ id: d.id, data: d.data() as Investigation })), error: false }),
+      () => setState({ key: listKey, rows: [], error: true }),
+    );
+  }, [threadKey, listKey, max]);
+
+  const current = state?.key === listKey ? state : null;
+  return {
+    rows: current?.rows ?? [],
+    loading: current === null,
+    error: current?.error ?? false,
+    hasMore: (current?.rows.length ?? 0) >= max,
+    loadMore: () => setMax((n) => n + INVESTIGATIONS_PAGE),
+  };
+}
+
+/** How many investigations of this chat are queued or running. */
+export function useActiveInvestigations(threadKey: string | null): number {
+  const constraints = useMemo<QueryConstraint[]>(
+    () => (threadKey ? [where('threadKey', '==', threadKey), where('status', 'in', ['queued', 'running'])] : []),
+    [threadKey],
+  );
+  return useRows<Investigation>(threadKey ? 'investigations' : null, constraints).length;
+}
+
+/** What a running investigation is broadly doing, for the agent. The individual steps aren't shown. */
+export type InvestigationPhase = 'starting' | 'preparing' | 'code' | 'database';
+
+const PHASE_OF: Record<InvestigationEvent['kind'], InvestigationPhase> = {
+  status: 'preparing',
+  code: 'code',
+  database: 'database',
+};
+
+/** A progress flush shares one timestamp, and the database wins inside it: it's the rarer, more telling step. */
+export function useInvestigationPhase(id: string | null): InvestigationPhase {
+  const constraints = useMemo<QueryConstraint[]>(() => [orderBy('at', 'desc'), fsLimit(10)], []);
+  const events = useRows<InvestigationEvent>(id ? `investigations/${id}/events` : null, constraints);
+  if (events.length === 0) return 'starting';
+  const latestAt = (events[0].data.at as { toMillis?: () => number } | null)?.toMillis?.();
+  const latest = events.filter((e) => (e.data.at as { toMillis?: () => number } | null)?.toMillis?.() === latestAt);
+  return latest.some((e) => e.data.kind === 'database') ? 'database' : PHASE_OF[latest[0].data.kind];
 }
 
 export function useInvestigationQueries(id: string | null): Row<InvestigationQueryRecord>[] {

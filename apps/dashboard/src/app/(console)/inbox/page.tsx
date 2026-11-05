@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { Conversation, InvestigationMessageRef } from '@aditum-chat/shared';
+import type { Conversation } from '@aditum-chat/shared';
 import { categoryLabel, conversationStatusLabels } from '@aditum-chat/shared';
 import { useAuth } from '@/lib/auth';
 import { useT } from '@/lib/i18n';
@@ -18,7 +18,6 @@ import {
 } from '@/lib/data';
 import { ConversationView, type ConversationViewHandle } from '@/components/ConversationView';
 import { ContextPanel } from '@/components/ContextPanel';
-import { InvestigationPanel } from '@/components/InvestigationPanel';
 import { GroupContextPanel } from '@/components/GroupContextPanel';
 import { ResizeHandle, useColumnWidth, useMediaQuery } from '@/components/ResizeHandle';
 
@@ -136,10 +135,6 @@ export default function InboxPage() {
   // Para que el panel de contexto pueda subir el hilo a una conversación anterior.
   const convViewRef = useRef<ConversationViewHandle>(null);
 
-  // Panel de investigaciones; se cierra al cambiar de chat, porque es de ese chat.
-  const [investigando, setInvestigando] = useState<{ seed?: InvestigationMessageRef } | null>(null);
-  useEffect(() => setInvestigando(null), [sel?.id]);
-
   // Deep link a un segmento concreto (ej. "Ver conversación" desde un ticket):
   // una vez montada la vista de esa conversación, sube el hilo hasta ella.
   useEffect(() => {
@@ -234,7 +229,6 @@ export default function InboxPage() {
             onOpenContext={mostrarCtx ? () => setCtxAbierto(true) : undefined}
             ctxColapsado={ctxColapsado}
             onToggleCtx={mostrarCtx ? toggleCtxColapsado : undefined}
-            onInvestigate={(seed) => setInvestigando({ seed })}
           />
         ) : (
           <InboxVacio filas={filas} t={t} />
@@ -256,19 +250,6 @@ export default function InboxPage() {
           className="fixed inset-0 z-30 bg-black/40 lg:hidden"
           onClick={() => setCtxAbierto(false)}
           aria-hidden
-        />
-      )}
-
-      {sel && investigando && (
-        <InvestigationPanel
-          key={`${sel.id}_${investigando.seed?.messageId ?? ''}`}
-          conv={sel}
-          seed={investigando.seed}
-          onClose={() => setInvestigando(null)}
-          onUseReply={(texto) => {
-            convViewRef.current?.usarComoBorrador(texto);
-            setInvestigando(null);
-          }}
         />
       )}
 

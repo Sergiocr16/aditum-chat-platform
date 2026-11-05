@@ -141,11 +141,14 @@ Functions need their prod secrets already set (`ANTHROPIC_API_KEY`, `CONFIG_KEK`
   `adjuntos/{convId}/`. `widgetSession` stamps the owning `siteId` on `clients`/`groups` and rejects
   a host asserting another site's `clientId`/`groupId`. Agents are global Aditum staff by design —
   the per-agent `sitios` field only routes push, not data access.
-- **`aiAssist`** (console "sugerir respuesta" + AI ticket draft) is scoped to the **current
-  conversation only** (that doc's messages, never the contact's stitched history), grounds reply
-  suggestions on the bot KB via RAG, and returns a structured title+description for AI tickets. The
-  console surfaces it in an **editable review modal** — never auto-inserted.
+- **`aiAssist`** (console AI ticket draft) is scoped to the **current conversation only** (that doc's
+  messages, never the contact's stitched history) and returns a structured title+description, shown
+  in an **editable review modal**, never auto-inserted. Its `sugerir_respuesta` mode has no console
+  caller anymore: suggested replies now come from investigations.
 - **This repo is public.** Don't commit anything that describes production's internals.
 - **Investigations** (`services/investigator`, `functions/investigations.ts`, `InvestigationPanel`) are
   separate from the bot: the bot never touches production data, and an investigation only reads
   production with a read-only user, after showing code evidence. See `services/investigator/README.md`.
+  In the console they live in the "Investigar" composer tab (next to Responder / Nota interna): every
+  investigation stays in its list, and while one runs the agent sees only a rough phase taken from its
+  latest progress event (`useInvestigationPhase`), with a robot whose look follows the phase.

@@ -9,10 +9,8 @@ import {
   useRef,
   useState,
 } from 'react';
-import { httpsCallable } from 'firebase/functions';
 import type { Attachment, Conversation, Idioma, InvestigationMessageRef, Message } from '@aditum-chat/shared';
 import { categoryLabel, EMOJI_CATEGORIES, formatTicketNumber } from '@aditum-chat/shared';
-import { fns } from '@/lib/firebase';
 import { useAuth } from '@/lib/auth';
 import { useT } from '@/lib/i18n';
 import {
@@ -33,7 +31,9 @@ import {
   type Row,
   type ThreadRow,
 } from '@/lib/data';
+import { threadKeyOf, useActiveInvestigations } from '@/lib/data-investigations';
 import { ConvertTicketModal } from './ConvertTicketModal';
+import { InvestigationPanel, type InvestigationSeed } from './InvestigationPanel';
 import { useMediaQuery } from './ResizeHandle';
 import { ResolveModal } from './ResolveModal';
 import { TicketDetailModal } from './TicketDetailModal';
@@ -43,8 +43,6 @@ export interface ConversationViewHandle {
   scrollToConversation(convId: string): void;
   /** Refresca el bloque de una conversación (mensaje nuevo, p. ej. ticket) y salta a ella. */
   refrescarYVer(convId: string): Promise<void>;
-  /** Pone un texto en el editor para que el agente lo revise; nunca lo envía. */
-  usarComoBorrador(texto: string): void;
 }
 
 const EMOJIS = ['👍', '❤️', '😂', '😮', '🙏'];
@@ -69,11 +67,9 @@ export const ConversationView = forwardRef<
     ctxColapsado?: boolean;
     /** Toggle del panel de contexto (escritorio); si no viene, no hay panel. */
     onToggleCtx?: () => void;
-    /** Abre el panel de investigaciones; con `seed`, solo con ese mensaje marcado. */
-    onInvestigate?: (seed?: InvestigationMessageRef) => void;
   }
 >(function ConversationView(
-  { conv, onBack, onOpenConversation, onOpenContext, ctxColapsado, onToggleCtx, onInvestigate },
+  { conv, onBack, onOpenConversation, onOpenContext, ctxColapsado, onToggleCtx },
   ref,
 ) {
   const { agent } = useAuth();
@@ -140,16 +136,30 @@ export const ConversationView = forwardRef<
     if (i >= 0) setVisorIdx(i);
   };
 
-  const [tab, setTab] = useState<'responder' | 'nota'>('responder');
+  const [tab, setTab] = useState<'responder' | 'nota' | 'investigar'>('responder');
   const [draft, setDraft] = useState('');
   const [showConvert, setShowConvert] = useState(false);
   const [showAsignar, setShowAsignar] = useState(false);
   const [showResolve, setShowResolve] = useState(false);
   const [verTicketId, setVerTicketId] = useState<string | null>(null);
-  const [sugiriendo, setSugiriendo] = useState(false);
-  // Suggestion review modal: null = closed, '' with error flag = failed.
-  const [sugerencia, setSugerencia] = useState<string | null>(null);
-  const [sugerenciaError, setSugerenciaError] = useState(false);
+  // Mounted on first use and then only hidden, so a half-written question survives switching tabs.
+  const [investigacionAbierta, setInvestigacionAbierta] = useState(false);
+  const [investigacionSeed, setInvestigacionSeed] = useState<InvestigationSeed | null>(null);
+  const threadKey = threadKeyOf(conv.data);
+  const investigacionesActivas = useActiveInvestigations(threadKey);
+  // An investigation that finished while the agent was on another tab leaves a mark until opened.
+  const [resultadoNuevo, setResultadoNuevo] = useState(false);
+  const activasAntes = useRef(0);
+  useEffect(() => {
+    if (activasAntes.current > 0 && investigacionesActivas === 0 && tab !== 'investigar') setResultadoNuevo(true);
+    activasAntes.current = investigacionesActivas;
+  }, [investigacionesActivas, tab]);
+  function abrirInvestigaciones(seed?: InvestigationMessageRef) {
+    if (seed) setInvestigacionSeed({ ref: seed, nonce: Date.now() });
+    setInvestigacionAbierta(true);
+    setResultadoNuevo(false);
+    setTab('investigar');
+  }
   const [subiendo, setSubiendo] = useState(false);
   const [enElFondo, setEnElFondo] = useState(true);
   const [replyTo, setReplyTo] = useState<{
@@ -311,11 +321,6 @@ export const ConversationView = forwardRef<
           await new Promise((r) => setTimeout(r, 80)); // dejar commitear el DOM
           await irA(convId);
         },
-        usarComoBorrador(texto: string) {
-          setDraft(texto);
-          setTab('responder');
-          requestAnimationFrame(() => inputRef.current?.focus());
-        },
       };
     },
     [loadOlder, refrescarConversacion],
@@ -337,34 +342,6 @@ export const ConversationView = forwardRef<
       await loadOlder();
       await new Promise((r) => setTimeout(r, 60));
     }
-  }
-
-  // IA: genera una sugerencia (conversación actual + base de conocimiento) y la
-  // muestra en un modal de revisión — nunca se inserta sin confirmar.
-  async function sugerirRespuesta() {
-    setSugiriendo(true);
-    setSugerenciaError(false);
-    if (sugerencia === null) setSugerencia('');
-    try {
-      const call = httpsCallable(fns, 'aiAssist');
-      const { data } = (await call({ conversationId: activa.id, modo: 'sugerir_respuesta' })) as {
-        data: { texto: string };
-      };
-      setSugerencia(data.texto ?? '');
-    } catch {
-      setSugerencia('');
-      setSugerenciaError(true);
-    } finally {
-      setSugiriendo(false);
-    }
-  }
-
-  function usarSugerencia() {
-    if (!sugerencia?.trim()) return;
-    setDraft(sugerencia);
-    setTab('responder');
-    setSugerencia(null);
-    requestAnimationFrame(() => inputRef.current?.focus());
   }
 
   /** Conversación destino para escribir: activa si sigue abierta, o una nueva. */
@@ -643,16 +620,6 @@ export const ConversationView = forwardRef<
             </div>
           )}
         </div>
-        {onInvestigate && (
-          <button
-            onClick={() => onInvestigate()}
-            title={t('inv.abrir')}
-            aria-label={t('inv.abrir')}
-            className="h-8 w-8 rounded-lg flex items-center justify-center border border-warm-border text-ai hover:border-ai flex-none"
-          >
-            <span className="msr text-[18px]">troubleshoot</span>
-          </button>
-        )}
         {convEspera && (
           <button
             onClick={() => setWaitingOnCustomer(convEspera.id, !esperando)}
@@ -769,11 +736,7 @@ export const ConversationView = forwardRef<
                   onVerTicket={setVerTicketId}
                   onIrMensaje={irAMensaje}
                   onResponder={responderA}
-                  onInvestigar={
-                    onInvestigate
-                      ? () => onInvestigate({ conversationId: f.convId, messageId: f.msg.id })
-                      : undefined
-                  }
+                  onInvestigar={() => abrirInvestigaciones({ conversationId: f.convId, messageId: f.msg.id })}
                   onEditar={() => editarMensaje(f.convId, f.msg.id, md.texto)}
                   onAbrirAdjunto={abrirVisor}
                   onVerConvBot={
@@ -825,7 +788,11 @@ export const ConversationView = forwardRef<
         )}
       </div>
 
-      <footer className="bg-white border-t border-warm-border px-4 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+      <footer
+        className={`bg-white border-t border-warm-border px-4 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] ${
+          tab === 'investigar' ? 'flex flex-col flex-none h-[78%] sm:h-[70%]' : ''
+        }`}
+      >
         <div className="flex gap-4 mb-2">
           <button
             onClick={() => setTab('responder')}
@@ -845,17 +812,56 @@ export const ConversationView = forwardRef<
             {t('inbox.notaInterna')}
           </button>
           <button
-            onClick={sugerirRespuesta}
-            disabled={sugiriendo}
-            title={t('inbox.iaSugerir')}
-            className="ml-auto flex items-center gap-1 text-[12px] font-semibold text-ai disabled:opacity-50 hover:underline"
+            onClick={() => abrirInvestigaciones()}
+            className={`flex items-center gap-1 text-[12px] font-semibold pb-1 border-b-2 ${
+              tab === 'investigar' ? 'border-ai text-ai' : 'border-transparent text-warm-gray'
+            }`}
           >
-            <span className={`msr text-[14px] ${sugiriendo ? 'animate-spin' : ''}`}>
-              {sugiriendo ? 'progress_activity' : 'auto_awesome'}
-            </span>
-            IA
+            <span className="msr text-[14px]">troubleshoot</span>
+            {t('inv.tab')}
+            {investigacionesActivas > 0 ? (
+              <span
+                className="w-1.5 h-1.5 rounded-full bg-ai motion-safe:animate-pulse"
+                role="status"
+                aria-label={t('inv.tabTrabajando')}
+                title={t('inv.tabTrabajando')}
+              />
+            ) : (
+              resultadoNuevo && (
+                <span
+                  className="w-1.5 h-1.5 rounded-full bg-gold"
+                  role="status"
+                  aria-label={t('inv.tabResultado')}
+                  title={t('inv.tabResultado')}
+                />
+              )
+            )}
           </button>
         </div>
+        {investigacionAbierta && (
+          <div className={tab === 'investigar' ? 'min-h-0 flex-1' : 'hidden'}>
+            <InvestigationPanel
+              conv={conv}
+              threadKey={threadKey}
+              seed={investigacionSeed}
+              onOpenConversation={onOpenConversation}
+              onUseReply={(texto) => {
+                setDraft(texto);
+                setTab('responder');
+                requestAnimationFrame(() => inputRef.current?.focus());
+              }}
+              onNotifyClient={async (texto) => {
+                const target = await convDestino();
+                if (!target || !agent) throw new Error('No conversation to write to');
+                const nombreChat = agent.perfil?.nombreChat ?? agent.perfil?.nombre ?? 'Soporte';
+                await agentSendMessage(target, agent.uid, nombreChat, texto, false);
+                anclarAlFondo();
+              }}
+            />
+          </div>
+        )}
+        {tab !== 'investigar' && (
+          <>
         {replyTo && tab === 'responder' && !editando && (
           <div className="flex items-start gap-2 mb-2 rounded-lg bg-cream-1 border-l-2 border-navy px-2.5 py-1.5">
             <div className="flex-1 min-w-0">
@@ -1031,6 +1037,8 @@ export const ConversationView = forwardRef<
           </button>
         </div>
         <div className="text-[10.5px] text-warm-gray-2 mt-1.5">{t('inbox.hintEnter')}</div>
+          </>
+        )}
       </footer>
 
       {showConvert && <ConvertTicketModal conv={activa} onClose={() => setShowConvert(false)} />}
@@ -1047,62 +1055,6 @@ export const ConversationView = forwardRef<
       )}
       {verTicketId && (
         <TicketDetailModal ticketId={verTicketId} onClose={() => setVerTicketId(null)} />
-      )}
-
-      {/* Revisión de la sugerencia de IA: editable, se inserta solo al confirmar */}
-      {sugerencia !== null && (
-        <div
-          className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
-          onClick={() => setSugerencia(null)}
-        >
-          <div
-            className="bg-white rounded-panel shadow-raised w-full max-w-lg p-5"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center gap-2 text-[14px] font-bold text-ink">
-              <span className="msr text-[19px] text-ai">auto_awesome</span>
-              {t('inbox.iaTitulo')}
-            </div>
-            <p className="text-[12px] text-warm-gray mt-1.5 leading-relaxed">{t('inbox.iaSub')}</p>
-            {sugerenciaError ? (
-              <div className="text-danger text-[12.5px] mt-4">{t('inbox.iaError')}</div>
-            ) : (
-              <textarea
-                value={sugerencia}
-                onChange={(e) => setSugerencia(e.target.value)}
-                rows={6}
-                disabled={sugiriendo}
-                placeholder={sugiriendo ? '…' : undefined}
-                className="w-full mt-3 rounded-lg border border-warm-border bg-cream-0 text-[13px] text-ink px-3 py-2.5 outline-none resize-none focus:border-navy leading-relaxed disabled:opacity-60"
-              />
-            )}
-            <div className="flex items-center justify-end gap-1.5 mt-4">
-              <button
-                onClick={() => setSugerencia(null)}
-                className="text-[12.5px] font-semibold text-warm-gray px-3 py-2 rounded-lg hover:bg-cream-1"
-              >
-                {t('inbox.iaCancelar')}
-              </button>
-              <button
-                onClick={sugerirRespuesta}
-                disabled={sugiriendo}
-                className="flex items-center gap-1 text-[12.5px] font-semibold text-navy px-3 py-2 rounded-lg hover:bg-cream-1 disabled:opacity-50"
-              >
-                <span className={`msr text-[15px] ${sugiriendo ? 'animate-spin' : ''}`}>
-                  {sugiriendo ? 'progress_activity' : 'refresh'}
-                </span>
-                {t('inbox.iaRegenerar')}
-              </button>
-              <button
-                onClick={usarSugerencia}
-                disabled={sugiriendo || sugerenciaError || !sugerencia.trim()}
-                className="bg-navy text-white text-[12.5px] font-semibold px-4 py-2 rounded-lg hover:bg-navy-light disabled:opacity-40"
-              >
-                {t('inbox.iaUsar')}
-              </button>
-            </div>
-          </div>
-        </div>
       )}
     </div>
   );
