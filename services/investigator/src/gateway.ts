@@ -15,7 +15,7 @@ import { codeEvidenceProblem, type LoggedQuery } from './evidence.js';
  * to read the code first and show which data it needs and why.
  *
  * The rules here are about that order. What Claude can see and write is enforced by
- * MySQL: the user behind this server only has SELECT on the masked views.
+ * MySQL: the user behind this server only has SELECT on one database.
  */
 
 export const MAX_ROWS = 200;
@@ -165,7 +165,7 @@ export class Gateway {
         }
         const question = { id: `q${job.questions.length + 1}`, question: data_question };
         job.questions.push(question);
-        return text({ question_id: question.id, note: 'Base de datos desbloqueada para esta pregunta. Los datos personales vienen enmascarados.' });
+        return text({ question_id: question.id, note: 'Base de datos desbloqueada para esta pregunta. Los datos son reales: consultá solo las columnas que necesités.' });
       },
     );
 

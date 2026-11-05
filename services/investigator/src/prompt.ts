@@ -23,8 +23,9 @@ ORDEN DE TRABAJO
 3. Si el código alcanza, terminá sin consultar la base. Eso es un buen resultado.
 
 LA BASE DE DATOS
-- Es de solo lectura y solo tiene vistas. Algunas tablas o columnas no están disponibles a propósito.
-- Los datos personales vienen enmascarados (por ejemplo a***@dominio.com), así que no sirven para buscar a alguien por nombre o correo. Ubicá los registros por condominio, filial o ids.
+- Es de solo lectura, con los datos reales de producción, incluidos los personales.
+- Consultá solo las filas y columnas que necesités para responder. Nunca consultes ni cites contraseñas, hashes, tokens, llaves ni códigos de acceso.
+- En el reporte, citá datos personales solo si hacen falta para explicar el caso. La respuesta sugerida va a un cliente: no incluyas datos de otras personas.
 - Pedí solo las columnas y filas que necesitás, con LIMIT.
 
 NADA INVENTADO

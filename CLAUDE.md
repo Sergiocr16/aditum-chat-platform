@@ -17,7 +17,7 @@ by Firebase custom claims + Firestore rules. See `README.md` for the full pictur
 apps/widget      Embeddable widget (Preact + Vite → IIFE widget.js, Shadow DOM)
 apps/dashboard   Agent console (Next.js 15 App Router + Tailwind 4, static export)
 functions        Cloud Functions v2 (bot, tickets, SLA, KB/RAG, push, team, widgetSession, investigations)
-services/investigator  Runs on the Raspberry Pi: investigations over production code and masked data
+services/investigator  Runs on the Raspberry Pi: investigations over production code and read-only data
 packages/shared  Types (source of truth), design tokens, i18n (es/en) — consumed as raw TS
 ```
 
@@ -145,8 +145,7 @@ Functions need their prod secrets already set (`ANTHROPIC_API_KEY`, `CONFIG_KEK`
   conversation only** (that doc's messages, never the contact's stitched history), grounds reply
   suggestions on the bot KB via RAG, and returns a structured title+description for AI tickets. The
   console surfaces it in an **editable review modal** — never auto-inserted.
-- **This repo is public.** Don't commit anything that describes production's internals:
-  `services/investigator/deploy/pii-map.yml` and the generated SQL are gitignored for that reason.
+- **This repo is public.** Don't commit anything that describes production's internals.
 - **Investigations** (`services/investigator`, `functions/investigations.ts`, `InvestigationPanel`) are
   separate from the bot: the bot never touches production data, and an investigation only reads
-  masked views, after showing code evidence. See `services/investigator/README.md`.
+  production with a read-only user, after showing code evidence. See `services/investigator/README.md`.

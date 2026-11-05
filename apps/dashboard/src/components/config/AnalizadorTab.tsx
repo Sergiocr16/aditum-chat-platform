@@ -37,7 +37,7 @@ const M = {
     contrasena: 'Contraseña',
     contrasenaGuardada: 'Guardada. Dejala vacía para no cambiarla.',
     base: 'Base',
-    aviso: 'Usá el usuario de solo lectura de las vistas enmascaradas. Si el usuario tiene más permisos, la conexión se rechaza.',
+    aviso: 'Usá un usuario de solo lectura sobre esta base. Si tiene más permisos, la conexión se rechaza.',
     guardar: 'Guardar y probar',
     guardando: 'Guardando…',
     probar: 'Probar de nuevo',
@@ -99,7 +99,7 @@ const M = {
       connect: 'Conexión',
       tls: 'Cifrado',
       grants: 'Permisos',
-      views: 'Vistas',
+      tables: 'Tablas',
       read: 'Lectura',
     },
   },
@@ -112,7 +112,7 @@ const M = {
     contrasena: 'Password',
     contrasenaGuardada: 'Saved. Leave it empty to keep it.',
     base: 'Database',
-    aviso: 'Use the read-only user of the masked views. A user with broader permissions is rejected.',
+    aviso: 'Use a read-only user on this database. A user with broader permissions is rejected.',
     guardar: 'Save and test',
     guardando: 'Saving…',
     probar: 'Test again',
@@ -174,7 +174,7 @@ const M = {
       connect: 'Connection',
       tls: 'Encryption',
       grants: 'Permissions',
-      views: 'Views',
+      tables: 'Tables',
       read: 'Read',
     },
   },
@@ -468,7 +468,7 @@ export function AnalizadorTab() {
   const [port, setPort] = useState('3306');
   const [user, setUser] = useState('');
   const [password, setPassword] = useState('');
-  const [database, setDatabase] = useState('aditum_ro');
+  const [database, setDatabase] = useState('aditum');
   const [loadedVersion, setLoadedVersion] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);

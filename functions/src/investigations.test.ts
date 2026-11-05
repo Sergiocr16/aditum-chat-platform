@@ -45,7 +45,7 @@ describe('secretMatches', () => {
 });
 
 describe('dbSettingsProblem', () => {
-  const ok = { host: '203.0.113.10', port: 3306, user: 'aditum_investigator_ro', database: 'aditum_ro', password: 'x' };
+  const ok = { host: '203.0.113.10', port: 3306, user: 'aditum_investigator_ro', database: 'aditum', password: 'x' };
   it('accepts a complete connection', () => {
     expect(dbSettingsProblem(ok, false)).toBeNull();
   });

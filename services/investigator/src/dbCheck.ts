@@ -3,7 +3,7 @@ import mysql from 'mysql2/promise';
 
 /**
  * The connection is typed into the console, so someone could paste an admin user there.
- * Masking only holds if this user can see nothing but the views, so anything broader
+ * This user must only be able to read the one database, so anything broader
  * is refused rather than used carefully.
  */
 
@@ -18,13 +18,13 @@ export interface DbConnection {
 /** With a CA file the server is verified. Without one the link is still encrypted, and the check says so. */
 export const sslOptions = (ca: string | null) => (ca ? { ca, rejectUnauthorized: true } : { rejectUnauthorized: false });
 
-/** Null when the grants are exactly what a read-only user on the views should have. */
+/** Null when the grants are exactly what a read-only user on that database should have. */
 export function grantsProblem(grants: string[], database: string): string | null {
-  const selectOnViews = new RegExp(`^GRANT SELECT ON \`${database.replace(/[^\w$]/g, '')}\`\\.\\* TO `, 'i');
+  const selectOnDatabase = new RegExp(`^GRANT SELECT ON \`${database.replace(/[^\w$]/g, '')}\`\\.\\* TO `, 'i');
   const usage = /^GRANT USAGE ON \*\.\* TO /i;
-  const extra = grants.filter((grant) => !usage.test(grant) && !selectOnViews.test(grant));
+  const extra = grants.filter((grant) => !usage.test(grant) && !selectOnDatabase.test(grant));
   if (extra.length > 0) return `El usuario tiene más permisos de los permitidos: ${extra[0].replace(/ TO .*/i, '')}`;
-  return grants.some((grant) => selectOnViews.test(grant)) ? null : `El usuario no tiene SELECT sobre ${database}`;
+  return grants.some((grant) => selectOnDatabase.test(grant)) ? null : `El usuario no tiene SELECT sobre ${database}`;
 }
 
 function connectionProblem(e: NodeJS.ErrnoException, db: DbConnection): string {
@@ -65,21 +65,21 @@ export async function checkConnection(db: DbConnection, ca: string | null): Prom
     const [grantRows] = await conn.query<mysql.RowDataPacket[]>('SHOW GRANTS FOR CURRENT_USER()');
     const grants = grantRows.map((row) => String(Object.values(row)[0]));
     const problem = grantsProblem(grants, db.database);
-    checks.push({ id: 'grants', ok: problem === null, detail: problem ?? 'Solo puede leer las vistas enmascaradas.' });
+    checks.push({ id: 'grants', ok: problem === null, detail: problem ?? `Solo puede leer la base ${db.database}.` });
     if (problem) return done();
 
-    const [views] = await conn.query<mysql.RowDataPacket[]>(
+    const [tables] = await conn.query<mysql.RowDataPacket[]>(
       'SELECT table_name AS name FROM information_schema.tables WHERE table_schema = ? ORDER BY table_name',
       [db.database],
     );
     checks.push({
-      id: 'views',
-      ok: views.length > 0,
-      detail: views.length > 0 ? `${views.length} tablas disponibles.` : `La base ${db.database} no tiene vistas. Falta cargar el SQL generado.`,
+      id: 'tables',
+      ok: tables.length > 0,
+      detail: tables.length > 0 ? `${tables.length} tablas disponibles.` : `La base ${db.database} no tiene tablas que este usuario pueda ver.`,
     });
-    if (views.length === 0) return done();
+    if (tables.length === 0) return done();
 
-    await conn.query(`SELECT 1 FROM \`${String(views[0].name).replace(/`/g, '')}\` LIMIT 1`);
+    await conn.query(`SELECT 1 FROM \`${String(tables[0].name).replace(/`/g, '')}\` LIMIT 1`);
     checks.push({ id: 'read', ok: true, detail: 'La lectura de prueba funcionó.' });
   } catch (e) {
     checks.push({ id: 'read', ok: false, detail: `La lectura de prueba falló: ${(e as Error).message.slice(0, 200)}` });

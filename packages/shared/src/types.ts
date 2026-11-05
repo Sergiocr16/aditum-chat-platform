@@ -817,7 +817,7 @@ export interface InvestigatorRunnerState {
 }
 
 export interface InvestigatorDbCheck {
-  id: 'connect' | 'tls' | 'grants' | 'views' | 'read';
+  id: 'connect' | 'tls' | 'grants' | 'tables' | 'read';
   ok: boolean;
   detail: string;
 }

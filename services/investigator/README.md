@@ -1,13 +1,13 @@
 # Investigator
 
 Runs on the Raspberry Pi. An agent asks a question from the console, and this answers it from the
-production code and, only if needed, from masked production data. It analyzes; it writes nothing.
+production code and, only if needed, from production data. It analyzes; it writes nothing.
 
 ```
 Console → requestInvestigation → investigations/{id} (Firestore)
                                        ↑ outbound HTTPS, no open ports
 Pi: runner ──── claude -p (Read, Grep, Glob + MCP) ── checkout of one commit
-                    └── mysql-gateway (own OS user) ── masked views only
+                    └── mysql-gateway (own OS user) ── read-only user on `aditum`
 ```
 
 ## Safeguards, and what enforces each one
@@ -15,10 +15,10 @@ Pi: runner ──── claude -p (Read, Grep, Glob + MCP) ── checkout of on
 | Rule | Enforced by |
 |---|---|
 | Code first, database only if needed | The gateway refuses every database tool until `request_db_access` gets code evidence it has checked |
-| No writes, no real tables | MySQL: the user only has `SELECT` on the `aditum_ro` views |
-| Personal data masked | MySQL views generated from `pii-map.yml`; a column nobody classified doesn't exist in them |
+| No writes | MySQL: the user only has `SELECT` on `aditum` |
+| Personal data is not masked | A decision: Claude reads real data. The prompt asks it to read and cite only what it needs, but nothing enforces that. Cited values reach Firestore, where agents can read them |
 | Claude can't reach credentials | Separate OS users; the password reaches only the gateway, with its own secret |
-| A broader user can't be pasted in | The gateway checks `SHOW GRANTS` and won't use anything beyond `SELECT` on the views |
+| A broader user can't be pasted in | The gateway checks `SHOW GRANTS` and won't use anything beyond `SELECT` on that database |
 | Claude can't send data out | It has no Bash, write or web tools (`--tools`), so its only output is the report |
 | Nothing invented | `verifyReport` checks every citation in code. One bad citation loses `confirmed` and the suggested reply |
 | The chat can't steer it | Messages go in as marked untrusted data, and the limits above don't depend on the model obeying |
@@ -43,16 +43,8 @@ must match `functions/.secret.local`.
 
 ## Setting up the Pi
 
-1. **Masked views, on a machine that reaches MySQL.** Nothing here writes to the database by itself:
-
-   ```sh
-   ADMIN_DB_HOST=… ADMIN_DB_USER=… ADMIN_DB_PASSWORD=… pnpm --filter @aditum-chat/investigator classify deploy/pii-map.yml
-   # A person reviews deploy/pii-map.yml.
-   ADMIN_DB_HOST=… ADMIN_DB_USER=… ADMIN_DB_PASSWORD=… pnpm --filter @aditum-chat/investigator generate-views deploy/pii-map.yml deploy/views.generated.sql
-   ```
-
-   Run `views.generated.sql` and `deploy/create-ro-user.sql` by hand. Use `REQUIRE SSL` and restrict
-   `__HOST__` to the Pi's address. Rerun both steps after schema changes: new columns stay hidden until then.
+1. **Read-only user.** Run `deploy/create-ro-user.sql` by hand. Use `REQUIRE SSL` and restrict `__HOST__` to
+   the Pi's address.
 
 2. **Firebase:** set the `RUNNER_SHARED_SECRET` and `GATEWAY_SHARED_SECRET` secrets and deploy the
    functions and indexes.
@@ -70,7 +62,7 @@ must match `functions/.secret.local`.
 
 4. **Connection:** an admin enters the host, user and password under Configuración → Analizador, which
    shows the Pi's public IP for production's firewall. The gateway fetches them and tests them from
-   the Pi. It refuses a user with more than `SELECT` on the views, and rechecks every hour.
+   the Pi. It refuses a user with more than `SELECT` on that database, and rechecks every hour.
    For MySQL's certificate to be verified, point `RO_DB_CA_FILE` at its CA (on RDS, the region's bundle).
 
 5. **Reaching the Pi:** the Cloud Function pins the Pi's host key on the first successful login, so a
@@ -81,3 +73,8 @@ must match `functions/.secret.local`.
 
 Rows returned by queries stay on the Pi for 30 days, in `GATEWAY_LOG_DIR`. Firestore only gets the SQL,
 row counts and the values cited as evidence.
+
+## Masked views (not in use)
+
+`classify`, `generate-views` and `piiMap.ts` generate a schema of masked views from a reviewed `pii-map.yml`.
+Production doesn't use them today: the analyzer reads `aditum` directly. They stay here in case that changes.
