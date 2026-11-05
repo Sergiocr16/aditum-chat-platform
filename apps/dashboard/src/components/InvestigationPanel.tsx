@@ -143,14 +143,6 @@ const isSystem = (m: Message) => m.sender.tipo === 'sistema' || m.tipoContenido 
 
 const isActive = (status: InvestigationStatus) => status === 'queued' || status === 'running';
 
-/** The current conversation is what usually gets analyzed, so it starts marked. */
-function defaultSelection(rows: ThreadRow[], conversationId: string): Set<string> {
-  const keys = rows
-    .filter((r) => r.convId === conversationId && !isSystem(r.msg.data) && !r.msg.data.interno && !r.msg.data.bienvenida)
-    .map((r) => keyOf({ conversationId: r.convId, messageId: r.msg.id }));
-  return new Set(keys.slice(-MAX_MESSAGES));
-}
-
 export function InvestigationPanel({
   conv,
   threadKey,
@@ -726,7 +718,8 @@ function NewInvestigation({
   }, [thread.filas, current, conv.id]);
 
   const [question, setQuestion] = useState(start.question ?? '');
-  const [selected, setSelected] = useState<Set<string> | null>(start.refs ? new Set(start.refs.map(keyOf)) : null);
+  // Nothing starts marked: the agent picks what the case is about. Opening from a message brings that one.
+  const [selected, setSelected] = useState(() => new Set((start.refs ?? []).map(keyOf)));
   // Null until the agent touches it: the chat's own condominium, which arrives with the chat.
   const [pickedCondominiums, setPickedCondominiums] = useState<InvestigationCondominium[] | null>(start.condominiums ?? null);
   const contact = useContact(conv.data.contactId ?? null);
@@ -746,19 +739,12 @@ function NewInvestigation({
   const [dragging, setDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Waits for the conversation's messages, so it doesn't mark an empty list.
   useEffect(() => {
-    if (current.length > 0 && selected === null) setSelected(defaultSelection(rows, conv.id));
-  }, [current.length, rows, selected, conv.id]);
-
-  // Untouched, it isn't saved: coming back later should mark the messages written since.
-  useEffect(() => {
-    const started = question.trim() !== '' || uploads.length > 0 || start.refs !== undefined;
     onDraft({
       nonce: start.nonce,
       question,
       refs:
-        started && selected
+        selected.size > 0
           ? [...selected].map((key) => {
               const [conversationId, messageId] = key.split('/');
               return { conversationId, messageId };
@@ -771,9 +757,9 @@ function NewInvestigation({
       retryOf: start.retryOf,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- onDraft is rebuilt on every render of the panel.
-  }, [question, selected, uploads, pickedCondominiums, start.nonce, start.refs, start.retryOf]);
+  }, [question, selected, uploads, pickedCondominiums, start.nonce, start.retryOf]);
 
-  const marked = selected ?? new Set<string>();
+  const marked = selected;
   const full = marked.size >= MAX_MESSAGES;
   const typed = question.trim().length;
   const chatFiles = rows
@@ -1032,7 +1018,7 @@ function NewInvestigation({
 
       <div className="flex flex-none items-center justify-between gap-3 border-t border-cream-3 pt-2.5">
         <p className={`min-w-0 text-[13px] ${problem ? 'text-warn-dark' : 'text-warm-gray'}`}>
-          {problem ?? t(marked.size === 1 ? 'inv.unMensaje' : 'inv.variosMensajes', { n: marked.size })}
+          {problem ?? t(marked.size === 0 ? 'inv.sinMensajes' : marked.size === 1 ? 'inv.unMensaje' : 'inv.variosMensajes', { n: marked.size })}
         </p>
         <button
           onClick={() => void send()}
