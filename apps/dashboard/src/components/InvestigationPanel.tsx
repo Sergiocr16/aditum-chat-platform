@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import type {
+  Group,
+  InvestigationCondominium,
   InvestigationSentMessages,
   Conversation,
   Investigation,
@@ -22,7 +24,7 @@ import {
   investigationFileKind,
 } from '@aditum-chat/shared';
 import { useAuth } from '@/lib/auth';
-import { fmtFecha, useContactThread, useDoc, useGroupThread, useMessages, type Row, type ThreadRow } from '@/lib/data';
+import { fmtFecha, useContact, useContactThread, useDoc, useGroupThread, useMessages, type Row, type ThreadRow } from '@/lib/data';
 import {
   addInvestigationToBacklog,
   cancelInvestigation,
@@ -63,6 +65,7 @@ interface FormStart {
   question?: string;
   refs?: InvestigationMessageRef[];
   uploads?: { storagePath: string; name: string; size: number }[];
+  condominiums?: InvestigationCondominium[];
 }
 
 /** A file the agent added. `problem` is an i18n key: the file stays listed so they see why it won't go. */
@@ -274,6 +277,7 @@ export function InvestigationPanel({
                       nonce: Date.now(),
                       question: selected.data.question,
                       refs: selected.data.messageRefs,
+                      condominiums: selected.data.condominiums,
                       uploads: (selected.data.files ?? [])
                         .filter((file) => file.source === 'agent')
                         .map(({ storagePath, name, size }) => ({ storagePath, name, size })),
@@ -570,6 +574,124 @@ function UploadChip({ upload, onRemove }: { upload: Upload; onRemove(): void }) 
   );
 }
 
+/** The chat's condominium and its group's, once each and in the order of a list to search. */
+export function chatCondominiums(
+  clientId: string | null | undefined,
+  clientNombre: string | null | undefined,
+  groupClients: { id: string; name: string }[] | undefined,
+): InvestigationCondominium[] {
+  const byId = new Map<string, InvestigationCondominium>();
+  for (const { id, name } of groupClients ?? []) byId.set(id, { id, name });
+  if (clientId && !byId.has(clientId)) byId.set(clientId, { id: clientId, name: clientNombre || clientId });
+  return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name, 'es'));
+}
+
+/** Where the chat is, or the only one there is. With several and no chat of its own, the agent has to say. */
+export function defaultCondominiums(clientId: string | null | undefined, options: InvestigationCondominium[]): InvestigationCondominium[] {
+  const own = options.filter((option) => option.id === clientId);
+  if (own.length > 0) return own;
+  return options.length === 1 ? options : [];
+}
+
+const searchable = (text: string) => text.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
+const sameCondominium = (a: InvestigationCondominium, b: InvestigationCondominium) =>
+  a.id !== null || b.id !== null ? a.id === b.id : a.name === b.name;
+/** With more than this the list scrolls, so what's chosen also shows above it. */
+const CONDOMINIUMS_WITHOUT_SCROLL = 5;
+
+/** One or several, from the chat's list. A name that isn't there can be typed, since the list is only what the host sent. */
+function CondominiumPicker({
+  options,
+  selected,
+  onChange,
+}: {
+  options: InvestigationCondominium[];
+  selected: InvestigationCondominium[];
+  onChange(next: InvestigationCondominium[]): void;
+}) {
+  const t = useT();
+  const [search, setSearch] = useState('');
+  const term = searchable(search.trim());
+  const isSelected = (item: InvestigationCondominium) => selected.some((other) => sameCondominium(item, other));
+  const all = [...options, ...selected.filter((item) => !options.some((option) => sameCondominium(item, option)))];
+  const shown = all.filter((item) => !term || searchable(item.name).includes(term));
+  const canType = search.trim().length >= 2 && !all.some((item) => searchable(item.name) === term);
+  const scrolls = all.length > CONDOMINIUMS_WITHOUT_SCROLL;
+
+  const toggle = (item: InvestigationCondominium) =>
+    onChange(isSelected(item) ? selected.filter((other) => !sameCondominium(item, other)) : [...selected, item]);
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-baseline gap-2">
+        <span className="text-[15px] font-semibold text-ink">{t('inv.condominios')}</span>
+        {selected.length > 0 && <span className="text-[12.5px] text-warm-gray">{t('inv.condominiosElegidos', { n: selected.length })}</span>}
+      </div>
+
+      {scrolls && selected.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {selected.map((item) => (
+            <button
+              key={item.id ?? item.name}
+              type="button"
+              onClick={() => toggle(item)}
+              aria-label={t('inv.condominioQuitar', { nombre: item.name })}
+              className="inline-flex max-w-full items-center gap-1 rounded-full bg-info-bg px-2.5 py-1 text-[12.5px] font-medium text-ink hover:bg-cream-2 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ai"
+            >
+              <span className="min-w-0 truncate">{item.name}</span>
+              <span aria-hidden className="msr flex-none text-[14px] text-warm-gray">close</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="overflow-hidden rounded-[10px] border border-cream-3">
+        <label className="flex items-center gap-2 border-b border-cream-3 px-3 py-2">
+          <span aria-hidden className="msr flex-none text-[17px] text-warm-gray">search</span>
+          <input
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder={t('inv.condominiosBuscar')}
+            aria-label={t('inv.condominiosBuscar')}
+            maxLength={150}
+            className="min-w-0 flex-1 bg-transparent text-[14px] text-ink outline-none placeholder:text-warm-gray"
+          />
+        </label>
+        <ul className="max-h-[190px] overflow-y-auto">
+          {shown.map((item) => (
+            <li key={item.id ?? item.name} className="border-b border-cream-2 last:border-b-0">
+              <label className="flex cursor-pointer items-center gap-2.5 px-3 py-2 hover:bg-cream-1">
+                <input type="checkbox" checked={isSelected(item)} onChange={() => toggle(item)} className="h-4 w-4 flex-none accent-[var(--color-ai)]" />
+                <span className="min-w-0 truncate text-[13.5px] text-ink">{item.name}</span>
+                {item.id === null && <span className="flex-none text-[12px] text-warm-gray">{t('inv.condominioEscrito')}</span>}
+              </label>
+            </li>
+          ))}
+          {canType && (
+            <li>
+              <button
+                type="button"
+                onClick={() => {
+                  onChange([...selected, { id: null, name: search.trim().replace(/\s+/g, ' ') }]);
+                  setSearch('');
+                }}
+                className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-[13.5px] font-medium text-navy hover:bg-cream-1 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ai"
+              >
+                <span aria-hidden className="msr flex-none text-[16px]">add</span>
+                <span className="min-w-0 truncate">{t('inv.condominioUsar', { nombre: search.trim() })}</span>
+              </button>
+            </li>
+          )}
+          {shown.length === 0 && !canType && <li className="px-3 py-2 text-[13px] text-warm-gray">{t('inv.condominiosVacio')}</li>}
+        </ul>
+      </div>
+
+      {selected.length === 0 && options.length > 0 && <p className="text-[12.5px] text-warn-dark">{t('inv.condominioFalta')}</p>}
+    </div>
+  );
+}
+
 function NewInvestigation({
   conv,
   start,
@@ -602,6 +724,16 @@ function NewInvestigation({
 
   const [question, setQuestion] = useState(start.question ?? '');
   const [selected, setSelected] = useState<Set<string> | null>(start.refs ? new Set(start.refs.map(keyOf)) : null);
+  // Null until the agent touches it: the chat's own condominium, which arrives with the chat.
+  const [pickedCondominiums, setPickedCondominiums] = useState<InvestigationCondominium[] | null>(start.condominiums ?? null);
+  const contact = useContact(conv.data.contactId ?? null);
+  const groupId = conv.data.groupId ?? contact?.data.groupId ?? null;
+  const group = useDoc<Group>(groupId ? `groups/${groupId}` : null);
+  const condominiumOptions = useMemo(
+    () => chatCondominiums(conv.data.clientId, conv.data.clientNombre, group?.data.clients),
+    [conv.data.clientId, conv.data.clientNombre, group?.data.clients],
+  );
+  const condominiums = pickedCondominiums ?? defaultCondominiums(conv.data.clientId, condominiumOptions);
   const [sending, setSending] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
   const { agent } = useAuth();
@@ -632,9 +764,10 @@ function NewInvestigation({
       uploads: uploads.flatMap(({ storagePath, name, size, problem }) =>
         storagePath && !problem ? [{ storagePath, name, size }] : [],
       ),
+      condominiums: pickedCondominiums ?? undefined,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- onDraft is rebuilt on every render of the panel.
-  }, [question, selected, uploads, start.nonce, start.refs]);
+  }, [question, selected, uploads, pickedCondominiums, start.nonce, start.refs]);
 
   const marked = selected ?? new Set<string>();
   const full = marked.size >= MAX_MESSAGES;
@@ -648,7 +781,9 @@ function NewInvestigation({
   const tooManyFiles = fileCount > INVESTIGATION_MAX_FILES;
   const uploading = uploads.some((u) => !u.storagePath && !u.problem);
   const problem = failed ?? (typed > 0 && typed < MIN_QUESTION_CHARS ? t('inv.preguntaCorta') : null);
-  const canSend = typed >= MIN_QUESTION_CHARS && marked.size > 0 && !sending && !uploading && !tooManyFiles;
+  // A chat with no known condominium can still ask something general.
+  const missingCondominium = condominiums.length === 0 && condominiumOptions.length > 0;
+  const canSend = typed >= MIN_QUESTION_CHARS && marked.size > 0 && !sending && !uploading && !tooManyFiles && !missingCondominium;
 
   function addFiles(list: FileList | File[]) {
     for (const file of Array.from(list)) {
@@ -708,6 +843,7 @@ function NewInvestigation({
           messages,
           question: question.trim(),
           uploads: readyUploads.map((u) => ({ storagePath: u.storagePath!, name: u.name })),
+          condominiums,
         }),
       );
     } catch (e) {
@@ -828,6 +964,8 @@ function NewInvestigation({
           </div>
         </div>
 
+        <CondominiumPicker options={condominiumOptions} selected={condominiums} onChange={setPickedCondominiums} />
+
         <div className="space-y-2">
           <div className="flex items-baseline gap-2">
             <span className="text-[15px] font-semibold text-ink">{t('inv.mensajes')}</span>
@@ -940,18 +1078,20 @@ function Collapsible({
 }
 
 /** Who it's about, in the investigation's own words: it doesn't change if the chat does. */
-export function sourceLabel({ source }: Investigation): string {
-  return [source?.contactNombre, source?.clientNombre].filter(Boolean).join(' · ');
+export function sourceLabel({ source, condominiums }: Investigation): string {
+  const where = condominiums?.length ? condominiums.map((item) => item.name).join(', ') : source?.clientNombre;
+  return [source?.contactNombre, where].filter(Boolean).join(' · ');
 }
 
-function SentMessages({ id, count }: { id: string; count: number }) {
+function SentMessages({ id, count, running = false, defaultOpen = false }: { id: string; count: number; running?: boolean; defaultOpen?: boolean }) {
   const t = useT();
   const sent = useDoc<InvestigationSentMessages>(`investigations/${id}/sent/messages`);
   // Investigations from before these were saved only have the count, at the end of the report.
   if (!sent) return null;
   return (
-    <Collapsible title={t('inv.mensajesEnviados')} count={count}>
-      <ol className="space-y-3">
+    <Collapsible title={t('inv.mensajesEnviados')} count={count} defaultOpen={defaultOpen}>
+      {/* Capped while it runs, so a long chat doesn't push the progress out of view. */}
+      <ol className={`space-y-3 ${running ? 'max-h-52 overflow-y-auto pr-2' : ''}`}>
         {sent.data.messages.map((message, i) => (
           <li key={i} className="text-[13px] leading-snug">
             <p className="flex flex-wrap items-baseline gap-x-2 text-[12px]">
@@ -1383,7 +1523,7 @@ function PastTurn({ turn, defaultOpen }: { turn: InvestigationTurn; defaultOpen:
   );
 }
 
-/** Stays at the foot of the panel, so asking something else is always within reach. */
+/** Under the answer it continues, or under the error when a round failed. */
 function FollowUpComposer({ id }: { id: string }) {
   const t = useT();
   const [question, setQuestion] = useState('');
@@ -1496,10 +1636,18 @@ export function InvestigationDetail({
             {origin}
           </header>
 
-          {pastTurns.length > 0 && (
+          {/* While it runs they're what there is to read. Then they go with the rest of the details, under the answer. */}
+          {isActive(status) && (
             <div className="mt-4 border-t border-cream-3">
+              <SentMessages id={row.id} count={messageCount} running defaultOpen={turn === 1} />
+            </div>
+          )}
+
+          {pastTurns.length > 0 && (
+            <div className={isActive(status) ? '' : 'mt-4 border-t border-cream-3'}>
+              {/* Folded while a new round runs. Only a round that failed leaves the last answer as the one to read. */}
               {pastTurns.map((past, i) => (
-                <PastTurn key={past.id} turn={past.data} defaultOpen={i === pastTurns.length - 1 && !report} />
+                <PastTurn key={past.id} turn={past.data} defaultOpen={i === pastTurns.length - 1 && unfinished} />
               ))}
             </div>
           )}

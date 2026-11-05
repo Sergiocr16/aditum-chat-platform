@@ -41,6 +41,8 @@ export interface ClaudeResult {
   result?: string;
   api_error_status?: number | null;
   total_cost_usd?: number;
+  num_turns?: number;
+  session_id?: string;
 }
 
 export function resultFrom(line: string): ClaudeResult | null {

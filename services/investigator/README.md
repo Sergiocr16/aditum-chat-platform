@@ -37,6 +37,7 @@ Pi: writer (own OS user) ── write user with per-table GRANTs, password only 
 | Files only from their own chat | `requestInvestigation` takes attachments under that conversation's `adjuntos/{convId}/`, and uploads under the agent's own `investigaciones/{uid}/`; the Pi can only fetch a running job's files, by id |
 | A hostile file can't reach the runner's secrets | Excel and Word are converted in a separate process as Claude's user, with only `PATH` in its environment and capped memory and time. Files are deleted after the job |
 | Claude reads only what its OS user can | `--allowedTools Read` isn't confined to the checkout or the files folder: a probe read a file outside both. What holds is that `investigator-claude` can't read the secrets |
+| A case's transcript stays with that case | A later round resumes Claude's session only on the same commit. Each job has its own `CLAUDE_CONFIG_DIR`, emptied when it ends. Between rounds the transcript and rows sit in `sessions/`, where `investigator-claude` can't enter, for 7 days. Without one, the round starts from the history Firestore sends |
 | Claude can't send data out | It has no Bash, write or web tools (`--tools`), so its only output is the report |
 | Nothing invented | `verifyReport` checks every citation in code. One bad citation loses `confirmed` and the suggested reply |
 | The chat can't steer it | Messages go in as marked untrusted data, and the limits above don't depend on the model obeying |
@@ -55,6 +56,9 @@ pnpm --filter @aditum-chat/investigator gateway   # needs the variables in deplo
 pnpm --filter @aditum-chat/investigator runner    # needs the variables in deploy/runner.env.example
 pnpm --filter @aditum-chat/investigator writer    # needs WRITER_FUNCTION_URL and WRITER_SHARED_SECRET
 ```
+
+The runner points `CLAUDE_CONFIG_DIR` at each job's own folder, so it needs `CLAUDE_CODE_OAUTH_TOKEN`:
+a login kept in the macOS keychain belongs to the default folder and won't be found.
 
 Against the emulators, `RUNNER_FUNCTION_URL` is
 `http://127.0.0.1:5201/demo-aditum-chat/us-central1/investigationRunner`, and `RUNNER_SHARED_SECRET`

@@ -821,6 +821,15 @@ export interface InvestigationFile {
 }
 
 /** Who the chat was with when the investigation was requested. A group chat has no single contact. */
+/** A condominium the agent said the case is about. No `id` means they typed a name that isn't on the chat's list. */
+export interface InvestigationCondominium {
+  id: string | null;
+  name: string;
+}
+
+/** The same cap the host has on its list of a group's condominiums. */
+export const INVESTIGATION_MAX_CONDOMINIUMS = GROUP_CLIENTS_MAX;
+
 export interface InvestigationSource {
   contactId: string | null;
   contactNombre: string | null;
@@ -854,6 +863,8 @@ export interface Investigation {
   siteId: string;
   /** Missing on investigations from before it was saved. */
   source?: InvestigationSource;
+  /** Which condominiums it's about, chosen by the agent. Missing on older investigations. */
+  condominiums?: InvestigationCondominium[];
   question: string;
   messageCount: number;
   messageRefs: InvestigationMessageRef[];

@@ -67,7 +67,7 @@ src/lib/            firebase.ts (SDK + emulator wiring), auth.tsx, i18n.ts, soun
   the page reloads. Each investigation keeps who the chat was with (`source`) and the messages sent to the analyzer
   (`investigations/{id}/sent/messages`), frozen at request time. The context panels have a button that opens the chat's list (`InvestigationsButton`). Below 1280px there's no room, so it covers the chat until closed. A single column, one view at a time: the saved list (the same `InvestigationRow` as the `/investigaciones` page, its search and filters, and marks for a backlog ticket and a production write, from `backlogItem` and `productionWrite` on the investigation), the form, or one
   investigation, which opens with its verdict and suggested reply. The steps an investigation takes
-  are never listed: only a phase and Claude's mascot acting it out (`InvestigatorMascot`, keyframes in `globals.css`). Files:
+  are never listed: only a phase and Claude's mascot acting it out (`InvestigatorMascot`, keyframes in `globals.css`). The form asks which condominiums the case is about (`CondominiumPicker`): the chat's own and its group's, searchable, several allowed, and a name can be typed if it isn't on the list. Files:
   attachments on marked messages go along by themselves, and the agent can add more, uploaded to
   `investigaciones/{uid}/`, which the client can't read. `investigationFileKind` (shared) decides what
   can be analyzed, for the console and the server alike. The

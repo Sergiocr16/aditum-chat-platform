@@ -24,6 +24,7 @@ import type {
   InvestigationTurn,
   InvestigatorGatewayState,
   InvestigatorRunnerState,
+  InvestigationCondominium,
 } from '@aditum-chat/shared';
 import { db, fns, storage } from './firebase';
 import { randomFileToken, useDoc, type Row } from './data';
@@ -194,6 +195,7 @@ export async function requestInvestigation(input: {
   messages: InvestigationMessageRef[];
   question: string;
   uploads: { storagePath: string; name: string }[];
+  condominiums: InvestigationCondominium[];
 }): Promise<string> {
   const { data } = (await httpsCallable(fns, 'requestInvestigation')(input)) as { data: { id: string } };
   return data.id;

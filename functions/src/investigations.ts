@@ -4,6 +4,7 @@ import { logger } from 'firebase-functions/v2';
 import { HttpsError, onCall, onRequest } from 'firebase-functions/v2/https';
 import {
   INVESTIGATION_MAX_FILE_BYTES,
+  INVESTIGATION_MAX_CONDOMINIUMS,
   INVESTIGATION_MAX_FILES,
   INVESTIGATION_MAX_TOTAL_BYTES,
   investigationFileKind,
@@ -18,6 +19,7 @@ import type {
   Contact,
   Conversation,
   Investigation,
+  InvestigationCondominium,
   InvestigationEvent,
   InvestigationFile,
   InvestigationMessageRef,
@@ -57,6 +59,7 @@ const MAX_PER_AGENT_PER_DAY = 30;
 const MIN_FOLLOW_UP_CHARS = 3;
 const MAX_TURNS_PER_INVESTIGATION = 20;
 /** Old rounds go back to Claude as context. This keeps a long conversation from filling the prompt. */
+const MAX_CONDOMINIUM_CHARS = 150;
 const MAX_HISTORY_CHARS = 40_000;
 const MAX_HISTORY_QUERIES = 200;
 /** A running job reports every few seconds. This long without news means the Pi lost it. */
@@ -99,9 +102,34 @@ export function validateRequest(question: unknown, messages: unknown): string | 
   return valid ? null : 'La selección de mensajes no es válida.';
 }
 
-export function contentHash(question: string, transcript: TranscriptMessage[], files: { id: string; md5: string | null }[] = []): string {
-  const content = files.length ? { question, transcript, files: files.map(({ id, md5 }) => ({ id, md5 })) } : { question, transcript };
+export function contentHash(
+  question: string,
+  transcript: TranscriptMessage[],
+  files: { id: string; md5: string | null }[] = [],
+  condominiums: InvestigationCondominium[] = [],
+): string {
+  const content = {
+    question,
+    transcript,
+    ...(files.length && { files: files.map(({ id, md5 }) => ({ id, md5 })) }),
+    ...(condominiums.length && { condominiums }),
+  };
   return createHash('sha256').update(JSON.stringify(content)).digest('hex');
+}
+
+/** What reaches the prompt: a name typed in the console stays one short line. Null when the shape is wrong. */
+export function cleanCondominiums(value: unknown): InvestigationCondominium[] | null {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > INVESTIGATION_MAX_CONDOMINIUMS) return null;
+  const clean: InvestigationCondominium[] = [];
+  for (const item of value) {
+    const name = typeof item?.name === 'string' ? item.name.replace(/\s+/g, ' ').trim() : '';
+    const id = item?.id ?? null;
+    if (!name || name.length > MAX_CONDOMINIUM_CHARS) return null;
+    if (id !== null && (typeof id !== 'string' || !id || id.length > MAX_CONDOMINIUM_CHARS)) return null;
+    clean.push({ id, name });
+  }
+  return clean;
 }
 
 /**
@@ -176,6 +204,8 @@ export const requestInvestigation = onCall({ region: 'us-central1' }, async (req
   if (invalid || typeof conversationId !== 'string' || !conversationId) {
     throw new HttpsError('invalid-argument', invalid ?? 'Falta la conversación.');
   }
+  const condominiums = cleanCondominiums(req.data.condominiums);
+  if (!condominiums) throw new HttpsError('invalid-argument', 'La lista de condominios no es válida.');
 
   const anchor = (await db.doc(`conversations/${conversationId}`).get()).data() as Conversation | undefined;
   const threadKey = anchor ? threadKeyOf(anchor) : null;
@@ -242,11 +272,12 @@ export const requestInvestigation = onCall({ region: 'us-central1' }, async (req
     conversationId,
     siteId: anchor.siteId,
     source,
+    condominiums,
     question: trimmed,
     messageCount: transcript.length,
     messageRefs: uniqueRefs.map(({ conversationId: c, messageId }) => ({ conversationId: c, messageId })),
     files: files.map(({ id, source, storagePath, name, mimeType, size }) => ({ id, source, storagePath, name, mimeType, size })),
-    contentHash: contentHash(trimmed, transcript, files),
+    contentHash: contentHash(trimmed, transcript, files, condominiums),
     requestedBy: { uid: req.auth.uid, nombre: agent?.nombre ?? req.auth.token.email ?? 'Agente' },
     status: 'queued',
     turn: 1,
@@ -273,6 +304,7 @@ export const requestInvestigation = onCall({ region: 'us-central1' }, async (req
         clientNombre: source.clientNombre,
         contactNombre: source.contactNombre,
         contactRol: contact?.rol ?? null,
+        condominiums,
       },
     });
   });

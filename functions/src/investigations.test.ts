@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   archivedTurn,
   boundedHistory,
+  cleanCondominiums,
   contentHash,
   dbSettingsProblem,
   filesProblem,
@@ -100,7 +101,35 @@ describe('threadKeyOf', () => {
   });
 });
 
+describe('cleanCondominiums', () => {
+  it('accepts one or several, with or without an id', () => {
+    const list = [{ id: '160', name: 'San Ignacio' }, { id: null, name: 'Mar Arena' }];
+    expect(cleanCondominiums(list)).toEqual(list);
+  });
+
+  it('treats a console that sends none as none', () => {
+    expect(cleanCondominiums(undefined)).toEqual([]);
+    expect(cleanCondominiums([])).toEqual([]);
+  });
+
+  it('keeps a typed name on one line, and drops anything else sent along', () => {
+    expect(cleanCondominiums([{ name: '  San\n\nIgnacio ', extra: 'x' }])).toEqual([{ id: null, name: 'San Ignacio' }]);
+  });
+
+  it('refuses a wrong shape', () => {
+    for (const bad of ['San Ignacio', [{}], [{ id: '1' }], [{ id: 5, name: 'a' }], [{ id: '', name: 'a' }], [{ name: 'x'.repeat(151) }], [null]]) {
+      expect(cleanCondominiums(bad)).toBeNull();
+    }
+    expect(cleanCondominiums(Array.from({ length: 301 }, () => ({ name: 'a' })))).toBeNull();
+  });
+});
+
 describe('contentHash', () => {
+  it('counts the condominiums as part of what was asked', () => {
+    expect(contentHash('q', [], [], [{ id: '1', name: 'a' }])).not.toBe(contentHash('q', []));
+    expect(contentHash('q', [], [], [])).toBe(contentHash('q', []));
+  });
+
   it('changes with the content', () => {
     const message = { at: null, senderType: 'user', senderName: 'A', internalNote: false, text: 'hola', attachments: [] };
     expect(contentHash('q', [message])).not.toBe(contentHash('q', [{ ...message, text: 'chao' }]));

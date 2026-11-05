@@ -152,7 +152,7 @@ Functions need their prod secrets already set (`ANTHROPIC_API_KEY`, `CONFIG_KEK`
   `packages/shared/src/writeProposal.ts`): structured operations, one row each by primary key. Only
   the writer on the Pi applies it, after an admin rehearses it and confirms 3 steps (`functions/writes.ts`,
   `WriteProposal.tsx`); writes start off, and nothing retries by itself. A confirmed bug can go to the Notion backlog with one click
-  (`functions/backlog.ts`), and an agent can keep asking (`requestFollowUp`), each round a new `claude -p` with the history in its prompt. See `services/investigator/README.md`.
+  (`functions/backlog.ts`), and an agent can keep asking (`requestFollowUp`), each round resuming Claude's session on the same commit, or starting from the history otherwise. See `services/investigator/README.md`.
   In the console they open from the "Investigar" button next to "Enviar", as a resizable side panel next to the chat, which each chat remembers: every
   investigation stays in its list, and while one runs the agent sees only a rough phase taken from its
   latest progress event (`useInvestigationPhase`), with Claude's mascot acting out the phase.
