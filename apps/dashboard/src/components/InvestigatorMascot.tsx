@@ -2,7 +2,7 @@
 
 import type { InvestigationPhase } from '@/lib/data-investigations';
 
-export type MascotPose = 'queued' | InvestigationPhase;
+export type MascotPose = 'queued' | 'resuming' | InvestigationPhase;
 
 const CLAUDE = 'var(--color-claude)';
 // Each prop takes the color of the thing it is: wood and sand, paper, a dark editor, a steel server.
@@ -14,12 +14,13 @@ const WOOD = 'var(--color-warn-dark)';
 const GOLD = 'var(--color-gold)';
 const GREEN = 'var(--color-ok)';
 
-const HOLDS_PROP: Partial<Record<MascotPose, boolean>> = { preparing: true, files: true, code: true };
+const HOLDS_PROP: Partial<Record<MascotPose, boolean>> = { preparing: true, files: true, code: true, resuming: true };
 
 /** Paces while it thinks, hops when a piece of code lands or the answer arrives, leans in to read code. */
 const WHOLE_MOTION: Partial<Record<MascotPose, string>> = {
   starting: 'mascot-pace',
   preparing: 'mascot-hop',
+  resuming: 'mascot-nod',
   code: 'mascot-lean',
   database: 'mascot-answer',
 };
@@ -50,6 +51,7 @@ export function ClaudeLogo({ className }: { className?: string }) {
  * - queued: waits with half-closed eyes, tapping a foot, next to an hourglass.
  * - starting: paces looking up, thinking about the question, in a bubble.
  * - preparing: holds a folder that fills up, following the code that comes down from the cloud.
+ * - resuming: goes over its own notebook, ticking and nodding at what it already knows, up to where it left off.
  * - files: reads a document and lifts its arm to turn each page.
  * - code: leans in with a magnifier over code that scrolls past, and what's under it lights up.
  * - database: pushes a query to a database, whose rows light up, and hops when the answer arrives.
@@ -63,6 +65,7 @@ export function InvestigatorMascot({ pose, label, className }: { pose: MascotPos
       {pose === 'files' && <FilesProp />}
       {pose === 'code' && <CodeProp />}
       {pose === 'preparing' && <PreparingProp />}
+      {pose === 'resuming' && <NotebookProp />}
       {pose === 'database' && <DatabaseProp />}
       {pose === 'queued' && <Hourglass />}
       {pose === 'starting' && <ThoughtBubble />}
@@ -162,6 +165,36 @@ function PreparingProp() {
       <rect x="37" y="28" width="11" height="3" fill={INK} />
       <rect className="mascot-fill" x="37" y="28" width="11" height="3" fill={GREEN} />
       <rect x="37" y="25" width="5" height="1" fill={WOOD} />
+    </g>
+  );
+}
+
+function NotebookProp() {
+  const tick = (y: number, order: number) => (
+    <g className={`mascot-tick mascot-tick-${order}`} fill={GREEN}>
+      <rect x="37" y={y + 1} width="1" height="1" />
+      <rect x="38" y={y + 2} width="1" height="1" />
+      <rect x="39" y={y + 1} width="1" height="1" />
+      <rect x="40" y={y} width="1" height="1" />
+    </g>
+  );
+  return (
+    <g>
+      <rect x="35" y="5" width="15" height="28" fill={EDGE} />
+      <rect x="36" y="6" width="13" height="26" fill={PAPER} />
+      {/* The binding along the top. */}
+      <g fill={INK}>
+        {[38, 42, 46].map((x) => <rect key={x} x={x} y="3" width="1" height="4" />)}
+      </g>
+      {tick(10, 1)}
+      <rect x="42" y="11" width="6" height="1" fill={STEEL} />
+      {tick(15, 2)}
+      <rect x="42" y="16" width="5" height="1" fill={STEEL} />
+      {tick(20, 3)}
+      <rect x="42" y="21" width="6" height="1" fill={STEEL} />
+      {/* Where it left off: what comes next is still unwritten. */}
+      <rect x="37" y="25" width="11" height="4" fill="var(--color-gold-bg)" />
+      <rect className="mascot-cursor" x="38" y="26" width="1" height="2" fill={WOOD} />
     </g>
   );
 }

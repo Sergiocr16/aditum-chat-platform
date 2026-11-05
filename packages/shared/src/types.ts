@@ -892,6 +892,10 @@ export interface Investigation {
   error?: string | null;
   usedDatabase?: boolean;
   costUsd?: number | null;
+  /** The current round: from when the agent asked until it finished. */
+  durationMs?: number | null;
+  /** How much of that it waited for the Pi to take it. */
+  queueMs?: number | null;
   createdAt: unknown;
   startedAt?: unknown;
   finishedAt?: unknown;
@@ -909,6 +913,9 @@ export interface InvestigationTurn {
   sha: string | null;
   usedDatabase: boolean;
   costUsd: number | null;
+  /** Missing on rounds from before it was saved. */
+  durationMs?: number | null;
+  queueMs?: number | null;
   unreadableFiles: string[];
   askedAt: unknown;
   finishedAt: unknown;

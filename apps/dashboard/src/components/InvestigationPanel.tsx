@@ -1159,15 +1159,18 @@ function Working({ row, actions }: { row: Row<Investigation>; actions?: Investig
     return () => clearInterval(id);
   }, []);
   const since = millis(row.data.startedAt) || queuedAt || millis(row.data.createdAt);
-  const title = running ? t(`inv.fase.${phase}`) : t('inv.enCola');
-  const detail = running ? t(`inv.fase.${phase}Ayuda`) : t('inv.enColaAyuda');
+  // A later round doesn't start over: before Claude's first step it's only checking whether the code changed.
+  const resuming = (row.data.turn ?? 1) > 1 && (phase === 'starting' || phase === 'preparing');
+  const stage = resuming ? ('resuming' as const) : phase;
+  const title = running ? t(`inv.fase.${stage}`) : t('inv.enCola');
+  const detail = running ? t(`inv.fase.${stage}Ayuda`) : t('inv.enColaAyuda');
   const currentStep = !running ? 0 : phase === 'starting' || phase === 'preparing' ? 1 : 2;
 
   return (
     <div className="mt-5 flex flex-1 flex-col gap-5">
       <div className="rounded-xl bg-cream-1 p-4">
         <div className="flex items-center gap-3.5">
-          <InvestigatorMascot pose={running ? phase : 'queued'} label={title} className="h-[88px] @lg:h-28" />
+          <InvestigatorMascot pose={running ? stage : 'queued'} label={title} className="h-[88px] @lg:h-28" />
           <div className="min-w-0 flex-1">
             <div className="flex items-baseline justify-between gap-2">
               <h3 role="status" className="text-[16px] font-bold leading-snug text-ink">{title}</h3>
@@ -1488,6 +1491,14 @@ function AskedBubble({ question, by, at }: { question: string; by: string; at?: 
   );
 }
 
+/** Rounds from before the time was saved still have when they were asked and when they ended. */
+function answerTime(durationMs: number | null | undefined, askedAt: unknown, finishedAt: unknown): string | null {
+  const ms = durationMs ?? (millis(askedAt) && millis(finishedAt) ? millis(finishedAt) - millis(askedAt) : null);
+  if (ms === null || ms < 0) return null;
+  const seconds = Math.round(ms / 1000);
+  return seconds < 60 ? `${seconds} s` : `${Math.floor(seconds / 60)} min ${seconds % 60} s`;
+}
+
 function outcomeLabel(t: ReturnType<typeof useT>, turn: Pick<InvestigationTurn, 'status' | 'report'>) {
   return turn.report ? t(`inv.conclusion.${turn.report.conclusion}`) : t(`inv.estado.${turn.status}`);
 }
@@ -1497,6 +1508,7 @@ function PastTurn({ turn, defaultOpen }: { turn: InvestigationTurn; defaultOpen:
   const t = useT();
   const { report, status } = turn;
   const tone = report ? CONCLUSION_TONE[report.conclusion] : STATUS_TONE[status];
+  const took = answerTime(turn.durationMs, turn.askedAt, turn.finishedAt);
   return (
     <details open={defaultOpen} className="group border-b border-cream-3">
       <summary className="flex cursor-pointer list-none items-center gap-2 py-3 hover:text-ink focus-visible:outline-2 focus-visible:outline-ai [&::-webkit-details-marker]:hidden">
@@ -1506,6 +1518,7 @@ function PastTurn({ turn, defaultOpen }: { turn: InvestigationTurn; defaultOpen:
         <span className="min-w-0 flex-1 truncate text-[13.5px] font-semibold text-ink">
           {turn.n === 1 ? t('inv.primeraRespuesta') : turn.question}
         </span>
+        {took && <span className="flex-none text-[12px] text-warm-gray">{took}</span>}
         <span className={`flex-none text-[12px] font-semibold ${tone}`}>{outcomeLabel(t, turn)}</span>
       </summary>
       <div className="space-y-3 pb-4">
@@ -1597,6 +1610,7 @@ export function InvestigationDetail({
   const queries = useInvestigationQueries(row.id);
   const pastTurns = useInvestigationTurns(turn > 1 ? row.id : null);
   const unfinished = status === 'failed' || status === 'rate_limited' || status === 'cancelled';
+  const tookNow = answerTime(row.data.durationMs, queuedAt ?? createdAt, row.data.finishedAt);
   const endRef = useRef<HTMLDivElement>(null);
 
   // A new round goes at the bottom, past whatever the agent was reading.
@@ -1693,6 +1707,7 @@ export function InvestigationDetail({
 
           {report && (
             <div className="mt-4">
+              {tookNow && <p className="mb-2 text-[12px] text-warm-gray">{t('inv.duro', { tiempo: tookNow })}</p>}
               <ReportAnswer report={report} onUseReply={actions?.onUseReply} followUp={!isActive(status) && <FollowUpComposer id={row.id} />} />
             </div>
           )}

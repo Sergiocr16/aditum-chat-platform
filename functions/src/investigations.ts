@@ -321,6 +321,12 @@ export function followUpProblem(question: unknown): string | null {
 }
 
 /** The round as it ended, without the fields that only make sense while one is under way. */
+/** How long the agent waited for this answer, and how much of that was in line. Null when a time is missing. */
+export function roundTimes(askedAt: Date | null, startedAt: Date | null, finishedAt: Date) {
+  const since = (from: Date | null, to: Date) => (from ? Math.max(0, to.getTime() - from.getTime()) : null);
+  return { durationMs: since(askedAt, finishedAt), queueMs: askedAt && startedAt ? since(askedAt, startedAt) : null };
+}
+
 export function archivedTurn(investigation: Investigation): InvestigationTurn {
   return {
     n: investigation.turn ?? 1,
@@ -332,6 +338,8 @@ export function archivedTurn(investigation: Investigation): InvestigationTurn {
     sha: investigation.sha ?? null,
     usedDatabase: investigation.usedDatabase === true,
     costUsd: investigation.costUsd ?? null,
+    durationMs: investigation.durationMs ?? null,
+    queueMs: investigation.queueMs ?? null,
     unreadableFiles: investigation.unreadableFiles ?? [],
     askedAt: investigation.queuedAt ?? investigation.createdAt,
     finishedAt: investigation.finishedAt ?? null,
@@ -378,6 +386,8 @@ export const requestFollowUp = onCall({ region: 'us-central1' }, async (req) => 
       startedAt: FieldValue.delete(),
       heartbeatAt: FieldValue.delete(),
       finishedAt: FieldValue.delete(),
+      durationMs: FieldValue.delete(),
+      queueMs: FieldValue.delete(),
     });
   });
   return { ok: true };
@@ -587,6 +597,7 @@ async function complete(body: CompleteBody) {
       error: body.error ?? null,
       usedDatabase: body.usedDatabase === true,
       costUsd: body.costUsd ?? null,
+      ...roundTimes(toDate(investigation?.queuedAt ?? investigation?.createdAt), toDate(investigation?.startedAt), new Date()),
       report: body.report ? reportWithProposal(body.report, proposalId, problems) : null,
       unreadableFiles: (body.unreadableFiles ?? []).slice(0, INVESTIGATION_MAX_FILES).map((name) => String(name).slice(0, 200)),
       finishedAt: FieldValue.serverTimestamp(),

@@ -10,6 +10,7 @@ import {
   investigationSource,
   isCurrentRound,
   isOwnChatAttachment,
+  roundTimes,
   validateUploads,
   secretMatches,
   threadKeyOf,
@@ -59,6 +60,11 @@ describe('follow-ups', () => {
     expect(archivedTurn(later)).toMatchObject({ n: 3, question: 'otra', by: { nombre: 'Beto' }, askedAt: 'queued' });
   });
 
+  it('keeps how long the round took', () => {
+    expect(archivedTurn({ ...(investigation as object), durationMs: 92_000, queueMs: 5_000 } as never)).toMatchObject({ durationMs: 92_000, queueMs: 5_000 });
+    expect(archivedTurn(investigation)).toMatchObject({ durationMs: null, queueMs: null });
+  });
+
   it('never leaves undefined behind, which Firestore rejects', () => {
     expect(Object.values(archivedTurn(investigation))).not.toContain(undefined);
   });
@@ -98,6 +104,23 @@ describe('threadKeyOf', () => {
   });
   it('gives no key when the owner is missing', () => {
     expect(threadKeyOf({ tipo: 'directa' } as never)).toBeNull();
+  });
+});
+
+describe('roundTimes', () => {
+  const at = (seconds: number) => new Date(1_000_000 + seconds * 1000);
+
+  it('counts from when the agent asked, and says how much was in line', () => {
+    expect(roundTimes(at(0), at(5), at(92))).toEqual({ durationMs: 92_000, queueMs: 5_000 });
+  });
+
+  it('leaves out what it does not know', () => {
+    expect(roundTimes(null, at(5), at(92))).toEqual({ durationMs: null, queueMs: null });
+    expect(roundTimes(at(0), null, at(92))).toEqual({ durationMs: 92_000, queueMs: null });
+  });
+
+  it('never goes negative when clocks disagree', () => {
+    expect(roundTimes(at(10), at(5), at(5))).toEqual({ durationMs: 0, queueMs: 0 });
   });
 });
 
