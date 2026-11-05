@@ -3,11 +3,11 @@
 // Writes to production: every step goes through functions, which decide. Nothing here is a permission.
 
 import { useEffect, useMemo, useState } from 'react';
-import { EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 import { collection, limit as fsLimit, onSnapshot, orderBy, query } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import type { WriteAuditEntry, WriteProposal } from '@aditum-chat/shared';
-import { auth, db, fns } from './firebase';
+import { confirmPassword } from './auth';
+import { db, fns } from './firebase';
 import type { Row } from './data';
 
 function useList<T>(path: string | null, field: string, direction: 'asc' | 'desc', max: number): Row<T>[] {
@@ -47,12 +47,8 @@ export async function cancelWriteApproval(ids: ProposalIds): Promise<void> {
   await httpsCallable(fns, 'confirmWriteStep')({ ...ids, cancel: true });
 }
 
-/** The password is checked by Firebase and never sent to functions, which only see that the login is recent. */
 export async function runApprovedWrite(ids: ProposalIds, hash: string, typed: string, password: string): Promise<void> {
-  const user = auth.currentUser;
-  if (!user?.email) throw new Error('No hay sesión.');
-  await reauthenticateWithCredential(user, EmailAuthProvider.credential(user.email, password));
-  await user.getIdToken(true);
+  await confirmPassword(password);
   await httpsCallable(fns, 'confirmWriteStep')({ ...ids, step: 3, hash, typed });
 }
 

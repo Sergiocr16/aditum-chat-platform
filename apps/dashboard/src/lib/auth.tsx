@@ -1,7 +1,14 @@
 'use client';
 
 import { createContext, useContext, useEffect, useState } from 'react';
-import { onAuthStateChanged, signInWithEmailAndPassword, signOut, type User } from 'firebase/auth';
+import {
+  EmailAuthProvider,
+  onAuthStateChanged,
+  reauthenticateWithCredential,
+  signInWithEmailAndPassword,
+  signOut,
+  type User,
+} from 'firebase/auth';
 import { doc, onSnapshot } from 'firebase/firestore';
 import type { Idioma, TeamMember } from '@aditum-chat/shared';
 import { auth, db } from './firebase';
@@ -74,3 +81,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 }
 
 export const useAuth = () => useContext(Ctx);
+
+/** Firebase checks the password and it never reaches functions, which only see that the login is recent. */
+export async function confirmPassword(password: string): Promise<void> {
+  const user = auth.currentUser;
+  if (!user?.email) throw new Error('No hay sesión.');
+  await reauthenticateWithCredential(user, EmailAuthProvider.credential(user.email, password));
+  await user.getIdToken(true);
+}
+
+export const isWrongPassword = (error: unknown) => {
+  const code = (error as { code?: string } | null)?.code;
+  return code === 'auth/wrong-password' || code === 'auth/invalid-credential';
+};

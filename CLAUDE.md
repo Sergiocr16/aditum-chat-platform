@@ -77,6 +77,8 @@ automatic; confirm the prod target with the maintainer first. Verified procedure
 trailing "cleaning up build images" warning is harmless (minor GCR cost, self-corrects next deploy).
 Functions need their prod secrets already set (`ANTHROPIC_API_KEY`, `CONFIG_KEK`, `VOYAGE_API_KEY`,
 `GITHUB_CODE_TOKEN`, `RUNNER_SHARED_SECRET`, `GATEWAY_SHARED_SECRET`, `WRITER_SHARED_SECRET`); a deploy fails if a declared secret doesn't exist.
+They also need `functions/.env` (gitignored, copy `functions/.env.example`) with `CODE_REPO` and `CODE_JAVA_PACKAGE`:
+which repository is production's. Without it the code index stops syncing and the Pi can't be installed.
 
 ## Hard rules
 
@@ -145,7 +147,9 @@ Functions need their prod secrets already set (`ANTHROPIC_API_KEY`, `CONFIG_KEK`
   messages, never the contact's stitched history) and returns a structured title+description, shown
   in an **editable review modal**, never auto-inserted. Its `sugerir_respuesta` mode has no console
   caller anymore: suggested replies now come from investigations.
-- **This repo is public.** Don't commit anything that describes production's internals.
+- **This repo is public.** Don't commit anything that describes production's internals. The production
+  repository's name and Java package are settings (`functions/.env`; on the Pi, `REPO_URL`/`REPO_BRANCH`,
+  which the install fills in).
 - **Investigations** (`services/investigator`, `functions/investigations.ts`, `InvestigationPanel`) are
   separate from the bot: the bot never touches production data, and Claude only reads production with
   a read-only user, after showing code evidence. It can also propose a change (`write_proposal`,

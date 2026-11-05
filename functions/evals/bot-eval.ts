@@ -12,11 +12,10 @@
  */
 import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { initializeApp } from 'firebase-admin/app';
 import { FieldValue, getFirestore } from 'firebase-admin/firestore';
-import { CODE_REPO, isIndexablePath, MAX_FILE_BYTES } from '../src/code/allowlist';
+import { codeRepo, isIndexablePath, MAX_FILE_BYTES } from '../src/code/allowlist';
 import { audienceForContactRole, audiencesOf, buildAudienceMap, isStateFile, type CodeAudience } from '../src/code/audience';
 import { chunkSource, languageOf } from '../src/code/chunker';
 import { findSecrets } from '../src/code/secretScan';
@@ -29,8 +28,10 @@ if (!process.env.FIRESTORE_EMULATOR_HOST) {
 }
 
 const PROJECT_ID = 'demo-aditum-chat';
-const REPO_PATH = process.env.ADITUM_JH_PATH ?? join(homedir(), 'Documents/GitHub/aditum-jh');
-const REF = `origin/${CODE_REPO.branch}`;
+// A local clone of the production repo. CODE_REPO and CODE_JAVA_PACKAGE are needed too, as in functions/.env.
+if (!process.env.CODE_REPO_PATH) throw new Error('bot-eval needs CODE_REPO_PATH, the path to a clone of the production repo.');
+const REPO_PATH = process.env.CODE_REPO_PATH;
+const REF = `origin/${codeRepo().branch}`;
 const OUT = process.env.EVAL_OUT ?? join(__dirname, 'bot-eval-results.json');
 const CONCURRENCY = 3;
 const REPLY_TIMEOUT_MS = 150_000;

@@ -1095,7 +1095,7 @@ export const ConversationView = forwardRef<
                 onClick={() => setInvestigarVisible(false)}
                 aria-label={t('inv.cerrarPanel')}
                 title={t('inv.cerrarPanel')}
-                className="flex flex-none rounded p-1 text-warm-gray hover:bg-cream-1 hover:text-ink focus-visible:outline-2 focus-visible:outline-ai"
+                className="flex flex-none rounded p-1 text-warm-gray hover:bg-cream-1 hover:text-ink focus-visible:outline-2 focus-visible:outline-ai touch:-my-1 touch:p-2.5"
               >
                 <span aria-hidden className="msr text-[20px]">keyboard_double_arrow_right</span>
               </button>

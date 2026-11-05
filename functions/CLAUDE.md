@@ -26,7 +26,7 @@ Secrets in `functions/.secret.local` (gitignored): `ANTHROPIC_API_KEY`, `VOYAGE_
 | Bot (Claude) | `botReply`, `testBot`, `aiAssist` — `bot.ts` |
 | KB / RAG | `kbIngestPdf` (onObjectFinalized), `kbSyncHelpCenter` (scheduled), `kbSyncNow`, `kbReindexAll` — `kb.ts` |
 | Code index | `codeSync` (every 30 min), `codeSyncNow` (admin), `searchCode` — `code/codeIndex.ts` |
-| Investigations | `requestInvestigation`, `cancelInvestigation` (agents), `investigationRunner` (the Pi's outbound calls: claim, progress, complete, and `attachment`, which sends one of a running job's files by id; bearer `RUNNER_SHARED_SECRET`), `setInvestigatorDb`, `testInvestigatorDb` (admins), `setInvestigatorPi`, `testInvestigatorPi` (admins; log in to the Pi over SSH from here and pin its host key, `piCheck.ts`), `installInvestigatorOnPi` (admins; runs `services/investigator/deploy/install.sh` on the Pi, `piInstall.ts`), `investigationGateway` (gives the MySQL password to the Pi's gateway; bearer `GATEWAY_SHARED_SECRET`) — `investigations.ts` |
+| Investigations | `requestInvestigation`, `cancelInvestigation` (agents), `investigationRunner` (the Pi's outbound calls: claim, progress, complete, and `attachment`, which sends one of a running job's files by id; bearer `RUNNER_SHARED_SECRET`), `setInvestigatorDb`, `testInvestigatorDb` (admins), `setInvestigatorPi`, `testInvestigatorPi` (admins; log in to the Pi over SSH from here and pin its host key, `piCheck.ts`), `installInvestigatorOnPi` (admins; runs `services/investigator/deploy/install.sh` on the Pi, `piInstall.ts`), `investigationGateway` (gives the MySQL password to the Pi's gateway; bearer `GATEWAY_SHARED_SECRET`) — `investigations.ts`. A saved password is only reused for the same host, port and user (`sameTarget`, shared with the writer), and the install needs a fresh login (`loginIsRecent` in `lib/guards.ts`) |
 | Follow-ups and backlog | `requestFollowUp` (agents; the Pi resumes Claude's session for the round and falls back on the history sent here) — `investigations.ts`. `addInvestigationToBacklog` (agents, one click), `setInvestigatorBacklog`, `testInvestigatorBacklog` (admins) — `backlog.ts` |
 | Production writes | `rehearseWriteProposal`, `confirmWriteStep`, `createReverseProposal`, `setInvestigatorWriter`, `testInvestigatorWriter`, `setWritesEnabled` (admins), `investigationWriter` (the writer's outbound calls: claim, committing, result; bearer `WRITER_SHARED_SECRET`; gives out the write password only with a job) — `writes.ts`. `stepProblem` is what guards an approval, `writer_jobs` and `investigator_secrets/writer` are denied to clients, `prod_write_audit` is admin read only |
 | Team / keys | `manageTeam`, `rotateSiteKey` (admin only) — `team.ts` |
@@ -59,10 +59,12 @@ AES/crypto helpers.
   A rejected draft gets one correction and goes through every check again; if that fails too, the
   user gets `fallbackReply` and it logs to `bot_gate_events`. Sources go to
   `bot_evidence/{messageId}` (refs only), never on the message, which the contact can read.
-- **Code index** (`code/`): private RAG over `aditum-jh@production`. `code_chunks` and `code_files`
+- **Code index** (`code/`): private RAG over the production repo, which is a setting and never named in this
+  public repo: `CODE_REPO=owner/repo@branch` and `CODE_JAVA_PACKAGE` in `functions/.env` (gitignored, see
+  `.env.example`). Without them the sync stops with an error instead of indexing less. `code_chunks` and `code_files`
   are denied to every client in `firestore.rules`. `audience.ts` decides who may get answers from each
   file, following the host's own `authorities`/`@Secured`: the chat is open to administrators and
-  accountants only (`AditumChatService` in aditum-jh), `searchCode` filters on `forManager`/
+  accountants only (the host's chat service decides that), `searchCode` filters on `forManager`/
   `forAccountant`, an unknown contact role gets no code, and a file neither role can reach is not
   indexed. `allowlist.ts` is deny-by-default; `secretScan.ts`
   runs before anything reaches Voyage and skips the whole file on a hit. The sync diffs the repo tree

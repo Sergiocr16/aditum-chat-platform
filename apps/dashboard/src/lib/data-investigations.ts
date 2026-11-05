@@ -26,6 +26,7 @@ import type {
   InvestigatorRunnerState,
   InvestigationCondominium,
 } from '@aditum-chat/shared';
+import { confirmPassword } from './auth';
 import { db, fns, storage } from './firebase';
 import { randomFileToken, useDoc, type Row } from './data';
 
@@ -196,6 +197,8 @@ export async function requestInvestigation(input: {
   question: string;
   uploads: { storagePath: string; name: string }[];
   condominiums: InvestigationCondominium[];
+  /** The investigation this one repeats: its files may be another agent's, and the server allows them. */
+  retryOf?: string;
 }): Promise<string> {
   const { data } = (await httpsCallable(fns, 'requestInvestigation')(input)) as { data: { id: string } };
   return data.id;
@@ -284,7 +287,9 @@ export async function testInvestigatorPi(): Promise<void> {
 }
 
 /** Waits for the whole install, which reports its progress on investigator/pi. */
-export async function installInvestigatorOnPi(claudeToken: string): Promise<void> {
+/** The install hands the Pi its secrets, so functions ask for a login that just happened. */
+export async function installInvestigatorOnPi(claudeToken: string, password: string): Promise<void> {
+  await confirmPassword(password);
   await httpsCallable(fns, 'installInvestigatorOnPi', { timeout: 1_560_000 })({ claudeToken });
 }
 

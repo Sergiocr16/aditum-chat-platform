@@ -1,30 +1,56 @@
 import { describe, expect, it } from 'vitest';
-import { isIndexablePath } from './allowlist';
+import { codeRepo, indexRoots, isIndexablePath, javaPackage } from './allowlist';
 import { audienceForContactRole, audiencesOf, buildAudienceMap } from './audience';
 import { chunkSource } from './chunker';
 import { findSecrets } from './secretScan';
 
 describe('isIndexablePath', () => {
   it.each([
-    'src/main/java/com/lighthouse/aditum/service/ChargeService.java',
-    'src/main/java/com/lighthouse/aditum/web/rest/HouseResource.java',
+    'src/main/java/com/example/app/service/ChargeService.java',
+    'src/main/java/com/example/app/web/rest/HouseResource.java',
     'src/main/webapp/app/entities/house/house.controller.js',
     'src/main/webapp/app/entities/house/house.html',
     'src/main/webapp/i18n/es/global.json',
   ])('allows %s', (path) => expect(isIndexablePath(path)).toBe(true));
 
   it.each([
-    'src/main/java/com/lighthouse/aditum/config/SecurityConfiguration.java',
-    'src/main/java/com/lighthouse/aditum/security/jwt/TokenProvider.java',
-    'src/main/java/com/lighthouse/aditum/service/mapper/HouseMapper.java',
+    'src/main/java/com/example/app/config/SecurityConfiguration.java',
+    'src/main/java/com/example/app/security/jwt/TokenProvider.java',
+    'src/main/java/com/example/app/service/mapper/HouseMapper.java',
     'src/main/resources/config/application-prod.yml',
-    'src/test/java/com/lighthouse/aditum/service/ChargeServiceTest.java',
+    'src/test/java/com/example/app/service/ChargeServiceTest.java',
     'src/main/webapp/app/services/customjs/viewer.min.js',
     'src/main/webapp/bower_components/angular/angular.js',
     'src/main/webapp/i18n/en/global.json',
     '.env',
     'docs/notes.md',
   ])('denies %s', (path) => expect(isIndexablePath(path)).toBe(false));
+});
+
+describe('code index settings', () => {
+  it('reads the repository as owner/repo@branch', () => {
+    expect(codeRepo({ CODE_REPO: 'acme/app@production' })).toEqual({ owner: 'acme', repo: 'app', branch: 'production' });
+    expect(() => codeRepo({})).toThrow(/CODE_REPO/);
+    expect(() => codeRepo({ CODE_REPO: 'acme/app' })).toThrow(/CODE_REPO/);
+  });
+  it('takes the Java package with slashes or dots', () => {
+    expect(javaPackage({ CODE_JAVA_PACKAGE: 'com.acme.app' })).toBe('com/acme/app');
+    expect(javaPackage({ CODE_JAVA_PACKAGE: 'com/acme/app' })).toBe('com/acme/app');
+    expect(javaPackage({ CODE_JAVA_PACKAGE: '../etc' })).toBeNull();
+    expect(javaPackage({})).toBeNull();
+  });
+  it('walks the package it was given and nothing else', () => {
+    const env = { CODE_JAVA_PACKAGE: 'com/acme/app' };
+    expect(indexRoots(env)).toContain('src/main/java/com/acme/app/service');
+    expect(isIndexablePath('src/main/java/com/acme/app/service/ChargeService.java', env)).toBe(true);
+    expect(isIndexablePath('src/main/java/com/other/app/service/ChargeService.java', env)).toBe(false);
+    expect(isIndexablePath('src/main/java/com/acme/app/service/.java', env)).toBe(false);
+    expect(isIndexablePath('src/main/java/com/acme/app/Application.java', env)).toBe(false);
+  });
+  it('stops instead of indexing less when the package is missing', () => {
+    expect(() => indexRoots({})).toThrow(/CODE_JAVA_PACKAGE/);
+    expect(() => isIndexablePath('src/main/java/com/acme/app/service/A.java', {})).toThrow(/CODE_JAVA_PACKAGE/);
+  });
 });
 
 describe('findSecrets', () => {
@@ -148,7 +174,7 @@ describe('audience', () => {
   });
 
   it('reads the access rule of a Java resource from the file', () => {
-    const java = 'src/main/java/com/lighthouse/aditum/web/rest/XResource.java';
+    const java = 'src/main/java/com/example/app/web/rest/XResource.java';
     expect(of(java, 'class X {}')).toEqual(['manager', 'accountant']);
     expect(of(java, '@Secured(AuthoritiesConstants.ADMIN)\nvoid a() {}')).toEqual([]);
     expect(of(java, '@Secured({AuthoritiesConstants.MANAGER, AuthoritiesConstants.ADMIN})')).toEqual(['manager']);

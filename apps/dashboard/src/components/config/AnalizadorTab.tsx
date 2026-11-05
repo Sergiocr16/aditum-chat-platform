@@ -17,7 +17,7 @@ import type {
   InvestigatorWriterState,
   InvestigatorWritesSwitch,
 } from '@aditum-chat/shared';
-import { useAuth } from '@/lib/auth';
+import { isWrongPassword, useAuth } from '@/lib/auth';
 import { fmtFecha, useDoc } from '@/lib/data';
 import {
   installInvestigatorOnPi,
@@ -50,6 +50,7 @@ const M = {
     usuario: 'Usuario',
     contrasena: 'Contraseña',
     contrasenaGuardada: 'Guardada. Dejala vacía para no cambiarla.',
+    contrasenaDeNuevo: 'Cambiaste el host, el puerto o el usuario: escribí la contraseña de nuevo.',
     base: 'Base',
     aviso: 'Usá un usuario de solo lectura sobre esta base. Si tiene más permisos, la conexión se rechaza.',
     guardar: 'Guardar y probar',
@@ -140,6 +141,9 @@ const M = {
         token: 'Token de Claude Code',
         tokenAyuda: 'Generalo con `claude setup-token` en una máquina con tu sesión de Claude.',
         tokenGuardado: 'Guardado. Dejalo vacío para no cambiarlo.',
+        tuContrasena: 'Tu contraseña de la consola',
+        tuContrasenaAyuda: 'Se pide en cada instalación, porque le entrega a esta máquina las claves del investigador.',
+        contrasenaMala: 'La contraseña no es correcta.',
         boton: 'Instalar en la Pi',
         actualizar: 'Actualizar la Pi',
         confirmar:
@@ -183,6 +187,7 @@ const M = {
     usuario: 'User',
     contrasena: 'Password',
     contrasenaGuardada: 'Saved. Leave it empty to keep it.',
+    contrasenaDeNuevo: 'You changed the host, the port or the user: type the password again.',
     base: 'Database',
     aviso: 'Use a read-only user on this database. A user with broader permissions is rejected.',
     guardar: 'Save and test',
@@ -273,6 +278,9 @@ const M = {
         token: 'Claude Code token',
         tokenAyuda: 'Generate it with `claude setup-token` on a machine signed in to Claude.',
         tokenGuardado: 'Saved. Leave it empty to keep it.',
+        tuContrasena: 'Your console password',
+        tuContrasenaAyuda: "Asked on every install, because it hands this machine the investigator's keys.",
+        contrasenaMala: 'That password is not correct.',
         boton: 'Install on the Pi',
         actualizar: 'Update the Pi',
         confirmar:
@@ -311,6 +319,10 @@ const M = {
 } as const;
 
 const inputClass = 'w-full rounded-lg border border-warm-border px-2.5 py-2 text-[13px] outline-none focus:border-navy';
+/** What a saved secret's field shows. Why it can stay empty goes under the field, where it wraps on a phone. */
+const SAVED_MASK = '••••••••';
+const hintClass = 'text-[11.5px] leading-snug text-warm-gray';
+const removeLink = 'ml-auto text-[12px] font-semibold text-warn-dark hover:underline touch:min-h-10';
 const primaryButton =
   'rounded-lg bg-navy px-3.5 py-2 text-[12.5px] font-semibold text-white hover:brightness-110 disabled:opacity-40';
 const secondaryButton =
@@ -514,7 +526,7 @@ function AnalyzerStatus({
           )}
           {install.log.length > 0 && (
             <details className="mt-2" open={install.status === 'failed'}>
-              <summary className="cursor-pointer text-[12px] font-semibold text-ink-2">{steps.detalle}</summary>
+              <summary className="cursor-pointer text-[12px] font-semibold text-ink-2 touch:py-2.5">{steps.detalle}</summary>
               <pre className="mt-1.5 max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-cream-3 bg-white p-2 font-mono text-[11px] text-ink-2">
                 {install.log.join('\n')}
               </pre>
@@ -580,23 +592,27 @@ function AnalyzerSection({
 }) {
   const m = M[idioma].pi.instalar;
   const [token, setToken] = useState('');
+  const [password, setPassword] = useState('');
   const [confirming, setConfirming] = useState(false);
   const [calling, setCalling] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const install = config?.install;
   const running = calling || install?.status === 'running';
-  const canInstall = (token.trim() || config?.hasClaudeToken) && !running;
+  const canInstall = (token.trim() || config?.hasClaudeToken) && password && !running;
   const piReady = Boolean(config?.hostKeyFingerprint) && config?.test?.status === 'ok';
 
   async function start() {
     setConfirming(false);
     setCalling(true);
     setError(null);
+    // La instalación tarda minutos: la contraseña no se queda escrita mientras tanto.
+    const typed = password;
+    setPassword('');
     try {
-      await installInvestigatorOnPi(token.trim());
+      await installInvestigatorOnPi(token.trim(), typed);
       setToken('');
     } catch (e) {
-      setError((e as { message?: string }).message || M[idioma].error);
+      setError(isWrongPassword(e) ? m.contrasenaMala : (e as { message?: string }).message || M[idioma].error);
     } finally {
       setCalling(false);
     }
@@ -620,13 +636,25 @@ function AnalyzerSection({
               value={token}
               onChange={(e) => setToken(e.target.value)}
               autoComplete="new-password"
-              placeholder={config?.hasClaudeToken ? m.tokenGuardado : ''}
+              placeholder={config?.hasClaudeToken ? SAVED_MASK : ''}
               className={inputClass}
             />
+            {config?.hasClaudeToken && !token && <span className={hintClass}>{m.tokenGuardado}</span>}
           </Campo>
           <p className="text-[11.5px] text-warm-gray">
             <WithCode text={m.tokenAyuda} />
           </p>
+          <Campo label={m.tuContrasena}>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
+              className={inputClass}
+              data-testid="pi-install-password"
+            />
+          </Campo>
+          <p className="text-[11.5px] text-warm-gray">{m.tuContrasenaAyuda}</p>
           {error && <p className="text-[12px] text-warn-dark">{error}</p>}
           {confirming ? (
             <ConfirmBar
@@ -669,8 +697,10 @@ function PiSection({ idioma, config }: { idioma: Idioma; config: InvestigatorPiC
     setLoadedVersion(version);
   }, [config, version, loadedVersion]);
 
+  // La contraseña guardada solo vale para el mismo destino: el servidor la pide de nuevo si cambia.
+  const keepsPassword = Boolean(config) && host.trim() === config?.host && Number(port) === config?.port && user.trim() === config?.user;
   const hasSaved = Boolean(config);
-  const canSave = host.trim() && user.trim() && (password || hasSaved) && !busy;
+  const canSave = host.trim() && user.trim() && (password || keepsPassword) && !busy;
 
   async function run(action: () => Promise<void>) {
     setBusy(true);
@@ -713,11 +743,13 @@ function PiSection({ idioma, config }: { idioma: Idioma; config: InvestigatorPiC
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               autoComplete="new-password"
-              placeholder={hasSaved ? m.contrasenaGuardada : ''}
+              placeholder={keepsPassword ? SAVED_MASK : ''}
               className={inputClass}
             />
+            {keepsPassword && !password && <span className={hintClass}>{m.contrasenaGuardada}</span>}
           </Campo>
         </div>
+        {hasSaved && !keepsPassword && !password && <p className="text-[11.5px] text-warn-dark">{m.contrasenaDeNuevo}</p>}
         <p className="text-[11.5px] text-warm-gray">{m.pi.aviso}</p>
         {error && <p className="text-[12px] text-warn-dark">{error}</p>}
         <div className="flex flex-wrap items-center gap-2">
@@ -733,7 +765,7 @@ function PiSection({ idioma, config }: { idioma: Idioma; config: InvestigatorPiC
             <button
               type="button"
               onClick={() => setConfirmRemove(true)}
-              className="ml-auto text-[12px] font-semibold text-warn-dark hover:underline"
+              className={removeLink}
             >
               {m.quitar}
             </button>
@@ -901,9 +933,10 @@ function WriterSection({ idioma }: { idioma: Idioma }) {
             value={password}
             onChange={(ev) => setPassword(ev.target.value)}
             autoComplete="new-password"
-            placeholder={hasSaved ? e.contrasenaGuardada : ''}
+            placeholder={hasSaved ? SAVED_MASK : ''}
             className={inputClass}
           />
+          {hasSaved && !password && <span className={hintClass}>{e.contrasenaGuardada}</span>}
         </Campo>
         <Campo label={e.ca}>
           <textarea
@@ -928,7 +961,7 @@ function WriterSection({ idioma }: { idioma: Idioma }) {
             </button>
           )}
           {hasSaved && !confirmRemove && (
-            <button type="button" onClick={() => setConfirmRemove(true)} className="ml-auto text-[12px] font-semibold text-warn-dark hover:underline">
+            <button type="button" onClick={() => setConfirmRemove(true)} className={removeLink}>
               {e.quitar}
             </button>
           )}
@@ -1056,9 +1089,10 @@ function BacklogSection({ idioma }: { idioma: Idioma }) {
             value={token}
             onChange={(e) => setToken(e.target.value)}
             autoComplete="new-password"
-            placeholder={hasSaved ? b.tokenGuardado : ''}
+            placeholder={hasSaved ? SAVED_MASK : ''}
             className={inputClass}
           />
+          {hasSaved && !token && <span className={hintClass}>{b.tokenGuardado}</span>}
         </Campo>
         <p className="text-[11.5px] text-warm-gray">{b.aviso}</p>
         {error && <p className="text-[12px] text-warn-dark">{error}</p>}
@@ -1072,7 +1106,7 @@ function BacklogSection({ idioma }: { idioma: Idioma }) {
             </button>
           )}
           {hasSaved && !confirmRemove && (
-            <button type="button" onClick={() => setConfirmRemove(true)} className="ml-auto text-[12px] font-semibold text-warn-dark hover:underline">
+            <button type="button" onClick={() => setConfirmRemove(true)} className={removeLink}>
               {b.quitar}
             </button>
           )}
@@ -1128,8 +1162,10 @@ export function AnalizadorTab() {
     setLoadedVersion(version);
   }, [saved, version, loadedVersion]);
 
+  const keepsPassword =
+    Boolean(saved) && host.trim() === saved?.data.host && Number(port) === saved?.data.port && user.trim() === saved?.data.user;
   const hasSaved = Boolean(saved);
-  const canSave = host.trim() && user.trim() && database.trim() && (password || hasSaved) && !busy;
+  const canSave = host.trim() && user.trim() && database.trim() && (password || keepsPassword) && !busy;
 
   async function run(action: () => Promise<void>) {
     setBusy(true);
@@ -1194,10 +1230,12 @@ export function AnalizadorTab() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               autoComplete="new-password"
-              placeholder={hasSaved ? m.contrasenaGuardada : ''}
+              placeholder={keepsPassword ? SAVED_MASK : ''}
               className={inputClass}
             />
+            {keepsPassword && !password && <span className={hintClass}>{m.contrasenaGuardada}</span>}
           </Campo>
+          {hasSaved && !keepsPassword && !password && <p className="text-[11.5px] text-warn-dark">{m.contrasenaDeNuevo}</p>}
           <p className="text-[11.5px] text-warm-gray">{m.aviso}</p>
           {error && <p className="text-[12px] text-warn-dark">{error}</p>}
           <div className="flex flex-wrap items-center gap-2">
@@ -1218,7 +1256,7 @@ export function AnalizadorTab() {
               <button
                 type="button"
                 onClick={() => setConfirmRemove(true)}
-                className="ml-auto text-[12px] font-semibold text-warn-dark hover:underline"
+                className={removeLink}
               >
                 {m.quitar}
               </button>

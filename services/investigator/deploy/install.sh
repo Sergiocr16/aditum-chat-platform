@@ -29,6 +29,10 @@ as_builder() { runuser -u investigator-build -- env HOME="$BUILD_HOME" PATH="$AP
 echo "::step prepare"
 exec 9>"${ROOT:-}/run/lock/aditum-investigator-install.lock"
 flock -n 9 || { echo "Ya hay una instalación corriendo en esta máquina."; exit 1; }
+# An older functions deploy doesn't send these, and the runner can't start without them.
+for name in REPO_URL REPO_BRANCH; do
+  [ -n "$(setting "$name")" ] || { echo "Falta $name en la configuración: desplegá functions con CODE_REPO y volvé a instalar."; exit 1; }
+done
 for tool in curl git setpriv sha256sum systemctl tar; do
   command -v "$tool" >/dev/null || { echo "Falta $tool en esta máquina."; exit 1; }
 done
@@ -119,6 +123,8 @@ RUNNER_FUNCTION_URL=$(setting RUNNER_FUNCTION_URL)
 RUNNER_SHARED_SECRET=$(setting RUNNER_SHARED_SECRET)
 GATEWAY_ADMIN_TOKEN=$ADMIN_TOKEN
 GITHUB_CODE_TOKEN=$(setting GITHUB_CODE_TOKEN)
+REPO_URL=$(setting REPO_URL)
+REPO_BRANCH=$(setting REPO_BRANCH)
 CLAUDE_CODE_OAUTH_TOKEN=$(setting CLAUDE_CODE_OAUTH_TOKEN)
 CLAUDE_TOKEN_ISSUED_AT=$(setting CLAUDE_TOKEN_ISSUED_AT)
 CLAUDE_BIN=${APP#"$ROOT"}/claude/bin/claude

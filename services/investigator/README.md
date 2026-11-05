@@ -32,6 +32,7 @@ Pi: writer (own OS user) ── write user with per-table GRANTs, password only 
 | Dying mid-write can't repeat it | `recover` reads the rows when the writer comes back, and an unclear result goes to a person. It never retries |
 | Everything is on record | `prod_write_audit`: admins read, only functions writes, nothing deletes |
 | Personal data is not masked | A decision: Claude reads real data. The prompt asks it to read and cite only what it needs, but nothing enforces that. Cited values reach Firestore, where agents can read them |
+| An open admin session can't collect the saved credentials | The Pi's and the read-only passwords are only reused for the host, port and user they were saved for (`sameTarget`); another address also drops the saved Claude token. Installing, which sends the Pi its secrets, needs a fresh login |
 | Claude can't reach credentials | Separate OS users; the password reaches only the gateway, with its own secret |
 | A broader user can't be pasted in | The gateway checks `SHOW GRANTS` and won't use anything beyond `SELECT` on that database |
 | Files only from their own chat | `requestInvestigation` takes attachments under that conversation's `adjuntos/{convId}/`, and uploads under the agent's own `investigaciones/{uid}/`; the Pi can only fetch a running job's files, by id |
@@ -81,16 +82,19 @@ must match `functions/.secret.local`.
    its own Node and Claude Code. Nothing else on the machine changes.
 
    Against the emulators, set `INVESTIGATOR_GIT_REF` and `INVESTIGATOR_PUBLIC_FUNCTIONS_URL` (a functions URL
-   the Pi can reach) in `functions/.env.local`.
+   the Pi can reach) in `functions/.env.local`. The repository Claude reads comes from `CODE_REPO` in
+   `functions/.env`: the install passes it to the Pi as `REPO_URL` and `REPO_BRANCH`.
 
 4. **Connection:** an admin enters the host, user and password under Configuración → Investigador, which
    shows the Pi's public IP for production's firewall. The gateway fetches them and tests them from
    the Pi. It refuses a user with more than `SELECT` on that database, and rechecks every hour.
+   Changing the host, port or user needs the password typed again.
    For MySQL's certificate to be verified, point `RO_DB_CA_FILE` at its CA (on RDS, the region's bundle).
 
 5. **Reaching the Pi:** the Cloud Function pins the Pi's host key on the first successful login, so a
    different key stops the login before the password is sent. The passwords and tokens stay encrypted in
-   `investigator_secrets/pi`. Cloud Functions has no fixed outbound IP, so the router can't limit the SSH
+   `investigator_secrets/pi`. Changing the host, port or user needs the password typed again, another
+   address forgets the Claude token, and every install asks the admin for their console password. Cloud Functions has no fixed outbound IP, so the router can't limit the SSH
    port to it. Once installed, the services only make outbound calls: you can remove the connection and
    close the port until the next update.
 

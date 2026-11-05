@@ -7,7 +7,7 @@ import type { CodeAudience, CodeChunk, CodeFileEntry, CodeIndexState } from '@ad
 import { db, FieldValue } from '../lib/admin.js';
 import { CODE_EMBEDDINGS, embed, rerank } from '../embeddings.js';
 import type { EvidenceSource } from '../evidence.js';
-import { CODE_REPO } from './allowlist.js';
+import { codeRepo } from './allowlist.js';
 import {
   audienceFollowsStates,
   audiencesOf,
@@ -226,8 +226,9 @@ export async function runCodeSync(token: string, voyageKey: string): Promise<Cod
 
     // Failed files keep their old manifest entry, so the next run retries them.
     const complete = done === pending.length && failed === 0;
+    const { owner, repo, branch } = codeRepo();
     const update: Record<string, unknown> = {
-      repo: `${CODE_REPO.owner}/${CODE_REPO.repo}@${CODE_REPO.branch}`,
+      repo: `${owner}/${repo}@${branch}`,
       targetSha: headSha,
       pendingFiles: pending.length - done + failed,
       failedFiles: failed,

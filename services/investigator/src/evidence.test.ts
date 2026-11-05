@@ -34,6 +34,10 @@ describe('codeEvidenceProblem', () => {
     expect(codeEvidenceProblem({ ...ok, endLine: 99 }, dir)).toMatch(/líneas/);
     expect(codeEvidenceProblem({ ...ok, path: 'src/Nope.java' }, dir)).toMatch(/no existe/);
   });
+  it('rejects a folder instead of throwing', () => {
+    expect(codeEvidenceProblem({ ...ok, path: 'src' }, dir)).toMatch(/no es un archivo/);
+    expect(codeEvidenceProblem({ ...ok, path: '' }, dir)).toMatch(/no es un archivo/);
+  });
 });
 
 const query = (over: Partial<LoggedQuery> = {}): LoggedQuery => ({

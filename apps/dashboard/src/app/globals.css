@@ -1,5 +1,8 @@
 @import 'tailwindcss';
 
+/* Touch screens: the same query the console uses to tell them apart in code. */
+@custom-variant touch (@media (hover: none));
+
 /* Tokens del diseño de Claude Design — ver packages/shared/src/tokens.ts */
 @theme {
   --font-sans: 'Instrument Sans', system-ui, -apple-system, sans-serif;

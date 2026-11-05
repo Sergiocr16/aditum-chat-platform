@@ -3,7 +3,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import type { InvestigationReport, InvestigatorWritesSwitch, WriteProposal, WriteReversal, WriteRowResult, WriteValue } from '@aditum-chat/shared';
 import { writeConfirmationPhrase, writeOperationSql } from '@aditum-chat/shared';
-import { useAuth } from '@/lib/auth';
+import { isWrongPassword, useAuth } from '@/lib/auth';
 import { fmtFecha, useDoc, type Row } from '@/lib/data';
 import { requestFollowUp } from '@/lib/data-investigations';
 import {
@@ -46,7 +46,7 @@ function useFailure() {
       await action();
     } catch (e) {
       const { code, message } = e as { code?: string; message?: string };
-      if (code === 'auth/wrong-password' || code === 'auth/invalid-credential') setFailed(t('wp.contrasenaMala'));
+      if (isWrongPassword(e)) setFailed(t('wp.contrasenaMala'));
       else setFailed(code?.startsWith('functions/') && message ? message : t('wp.error'));
     } finally {
       setBusy(false);
@@ -238,7 +238,7 @@ function Approval({ ids, proposal, email }: { ids: { investigationId: string; pr
       </ol>
       {failed && <p className="mb-2 text-[12.5px] leading-snug text-warn-dark">{failed}</p>}
       {mine && (
-        <button onClick={() => void run(() => cancelWriteApproval(ids))} disabled={busy} className="text-[12.5px] font-semibold text-warm-gray underline underline-offset-2 hover:text-ink">
+        <button onClick={() => void run(() => cancelWriteApproval(ids))} disabled={busy} className="text-[12.5px] font-semibold text-warm-gray underline underline-offset-2 hover:text-ink touch:min-h-10">
           {t('wp.cancelarAprobacion')}
         </button>
       )}
@@ -400,7 +400,7 @@ export function WriteProposals({ id, report, canFollowUp }: { id: string; report
       ))}
       {replaced.length > 0 && (
         <details className="group">
-          <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[12.5px] font-semibold text-warm-gray hover:text-ink [&::-webkit-details-marker]:hidden">
+          <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[12.5px] font-semibold text-warm-gray hover:text-ink touch:min-h-10 [&::-webkit-details-marker]:hidden">
             <span aria-hidden className="msr text-[16px] transition-transform duration-150 group-open:rotate-90">chevron_right</span>
             {t(replaced.length === 1 ? 'wp.reemplazadaUna' : 'wp.reemplazadas', { n: replaced.length })}
           </summary>

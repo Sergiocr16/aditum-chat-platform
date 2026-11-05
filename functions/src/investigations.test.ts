@@ -10,13 +10,16 @@ import {
   investigationSource,
   isCurrentRound,
   isOwnChatAttachment,
+  piSettingsProblem,
   roundTimes,
+  sameTarget,
   validateUploads,
   secretMatches,
   threadKeyOf,
   validateRequest,
   type JobTurn,
 } from './investigations.js';
+import { loginIsRecent, RECENT_LOGIN_MS } from './lib/guards.js';
 
 const ref = { conversationId: 'c', messageId: 'm' };
 
@@ -167,6 +170,37 @@ describe('secretMatches', () => {
   });
 });
 
+describe('sameTarget', () => {
+  const saved = { host: '203.0.113.10', port: 3306, user: 'aditum_investigator_ro' };
+  it('keeps the saved password only for the connection it was saved for', () => {
+    expect(sameTarget(saved, { ...saved })).toBe(true);
+    expect(sameTarget(saved, { ...saved, host: '198.51.100.7' })).toBe(false);
+    expect(sameTarget(saved, { ...saved, port: 3307 })).toBe(false);
+    expect(sameTarget(saved, { ...saved, user: 'root' })).toBe(false);
+  });
+  it('has nothing to keep before a connection is saved', () => {
+    expect(sameTarget(undefined, saved)).toBe(false);
+  });
+  it('asks for the password again when the target changes', () => {
+    const moved = { ...saved, host: '198.51.100.7', database: 'aditum', password: '' };
+    expect(dbSettingsProblem(moved, sameTarget(saved, moved))).toMatch(/contraseña/);
+    expect(piSettingsProblem(moved, sameTarget(saved, moved))).toMatch(/contraseña/);
+  });
+});
+
+describe('loginIsRecent', () => {
+  const now = Date.UTC(2026, 10, 5, 12);
+  it('accepts a password entered within the window', () => {
+    expect(loginIsRecent(Math.floor(now / 1000), now)).toBe(true);
+    expect(loginIsRecent(Math.floor((now - RECENT_LOGIN_MS + 1000) / 1000), now)).toBe(true);
+  });
+  it('rejects an old or missing login', () => {
+    expect(loginIsRecent(Math.floor((now - RECENT_LOGIN_MS - 1000) / 1000), now)).toBe(false);
+    expect(loginIsRecent(undefined, now)).toBe(false);
+    expect(loginIsRecent('1762344000', now)).toBe(false);
+  });
+});
+
 describe('dbSettingsProblem', () => {
   const ok = { host: '203.0.113.10', port: 3306, user: 'aditum_investigator_ro', database: 'aditum', password: 'x' };
   it('accepts a complete connection', () => {
@@ -198,6 +232,8 @@ describe('investigation files', () => {
     expect(validateUploads(undefined, 'u1')).toBeNull();
     expect(validateUploads([own], 'u1')).toBeNull();
     expect(validateUploads([own], 'u2')).not.toBeNull();
+    expect(validateUploads([own], 'u2', new Set([own.storagePath]))).toBeNull();
+    expect(validateUploads([{ ...own, storagePath: 'investigaciones/u1/otro.pdf' }], 'u2', new Set([own.storagePath]))).not.toBeNull();
     expect(validateUploads([{ ...own, storagePath: 'adjuntos/c1/x.pdf' }], 'u1')).not.toBeNull();
     expect(validateUploads([{ ...own, storagePath: 'investigaciones/u1/../u2/x.pdf' }], 'u1')).not.toBeNull();
     expect(validateUploads('nope', 'u1')).not.toBeNull();

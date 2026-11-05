@@ -1,6 +1,6 @@
 /**
  * Who may get answers built from each indexed file. The bot talks only to the roles
- * the host lets into the chat (`AditumChatService` in aditum-jh): condominium
+ * the host lets into the chat: condominium
  * administrators and accountants. A screen that only accountants can open must not
  * inform an answer to an administrator, so visibility follows the authorities the
  * host itself enforces. Deny by default: a file nobody in the chat can reach is not

@@ -15,7 +15,7 @@ import { getKek } from './pushConfig.js';
 
 /**
  * Turns what an investigation found into a row of the product backlog in Notion, as the
- * `aditum-backlog-definer` skill in aditum-jh would. Claude on the Pi writes the definition and looks
+ * `aditum-backlog-definer` skill in the production repo would. Claude on the Pi writes the definition and looks
  * for duplicates, since it has no Notion access: this reads the board for it and creates the row.
  * If the skill's template or the board's columns change, this and the Pi's prompt follow.
  */

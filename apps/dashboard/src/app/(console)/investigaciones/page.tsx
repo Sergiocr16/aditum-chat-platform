@@ -44,7 +44,7 @@ function Origin({ row }: { row: Row<Investigation> }) {
       {shown}
       <button
         onClick={() => router.push(`/inbox?c=${encodeURIComponent(row.data.conversationId)}&inv=${encodeURIComponent(row.id)}`)}
-        className="inline-flex items-center gap-0.5 font-semibold text-navy hover:underline"
+        className="inline-flex items-center gap-0.5 font-semibold text-navy hover:underline touch:min-h-10"
       >
         {t('inv.irAlChat')}
         <span className="msr text-[15px]">arrow_forward</span>
@@ -76,7 +76,7 @@ function OutcomeFilter({
     <button
       onClick={onClick}
       aria-pressed={active}
-      className={`flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[12px] text-ink-2 hover:bg-cream-1 focus-visible:outline-2 focus-visible:outline-navy ${
+      className={`flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[12px] text-ink-2 hover:bg-cream-1 focus-visible:outline-2 focus-visible:outline-navy touch:min-h-9 touch:px-2 ${
         active ? 'bg-cream-2 font-semibold text-ink' : ''
       }`}
     >
@@ -217,7 +217,8 @@ export default function InvestigacionesPage() {
   const { stats, error: statsError } = useInvestigationStats(siteId ?? null, refreshKey);
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    // On a phone the list gets the whole page: the state, the title and the filters scroll away with it.
+    <div className={`flex h-full min-h-0 flex-col ${selectedId ? '' : 'overflow-y-auto md:overflow-visible'}`}>
       <StatsStrip
         runner={runner}
         stats={stats}
@@ -226,14 +227,14 @@ export default function InvestigacionesPage() {
         onFilter={setFilter}
         className={selectedId ? 'hidden md:flex' : 'flex'}
       />
-      <div className="flex min-h-0 flex-1">
+      <div className={`flex md:min-h-0 md:flex-1 ${selectedId ? 'min-h-0 flex-1' : 'flex-none'}`}>
       <div className={`min-h-0 w-full flex-none flex-col border-r border-warm-border bg-white md:flex md:w-[380px] ${selectedId ? 'hidden' : 'flex'}`}>
         <header className="flex-none border-b border-cream-3 px-4 pb-3 pt-4">
           <h1 className="text-[19px] font-bold text-ink">{t('inv.titulo')}</h1>
           <InvestigationFilters search={search} onSearch={setSearch} filter={filter} onFilter={setFilter} />
         </header>
 
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="md:min-h-0 md:flex-1 md:overflow-y-auto">
           {list.error ? (
             <p className="p-4 text-[12.5px] text-warn-dark">{t('inv.errorLista')}</p>
           ) : list.loading ? null : !hasAny ? (
@@ -264,7 +265,7 @@ export default function InvestigacionesPage() {
         {selectedId && (
           <button
             onClick={() => setSelectedId(null)}
-            className="mb-2 flex flex-none items-center gap-1 self-start text-[12.5px] font-semibold text-warm-gray hover:text-ink md:hidden"
+            className="mb-2 flex flex-none items-center gap-1 self-start text-[12.5px] font-semibold text-warm-gray hover:text-ink md:hidden touch:-mt-2 touch:mb-0 touch:min-h-10 touch:pr-2"
           >
             <span className="msr text-[17px]">arrow_back</span>
             {t('inv.volver')}

@@ -1,8 +1,11 @@
-import { CODE_REPO, INDEX_ROOTS, isIndexablePath, MAX_FILE_BYTES } from './allowlist.js';
+import { codeRepo, indexRoots, isIndexablePath, MAX_FILE_BYTES } from './allowlist.js';
 
 /** Read-only GitHub client for the code index. Needs only "Contents: read" on the repository. */
 
-const API = `https://api.github.com/repos/${CODE_REPO.owner}/${CODE_REPO.repo}`;
+const api = () => {
+  const { owner, repo } = codeRepo();
+  return `https://api.github.com/repos/${owner}/${repo}`;
+};
 
 export interface RepoFile {
   path: string;
@@ -17,7 +20,7 @@ interface TreeEntry {
 }
 
 async function gh(token: string, path: string, accept = 'application/vnd.github+json'): Promise<Response> {
-  const res = await fetch(`${API}${path}`, {
+  const res = await fetch(`${api()}${path}`, {
     headers: {
       Accept: accept,
       Authorization: `Bearer ${token}`,
@@ -30,7 +33,7 @@ async function gh(token: string, path: string, accept = 'application/vnd.github+
 }
 
 export async function fetchBranchHead(token: string): Promise<string> {
-  const res = await gh(token, `/branches/${CODE_REPO.branch}`);
+  const res = await gh(token, `/branches/${codeRepo().branch}`);
   const body = (await res.json()) as { commit: { sha: string } };
   return body.commit.sha;
 }
@@ -61,7 +64,7 @@ async function resolveDirectory(token: string, commitSha: string, root: string):
  */
 export async function listIndexableFiles(token: string, commitSha: string): Promise<RepoFile[]> {
   const files: RepoFile[] = [];
-  for (const root of INDEX_ROOTS) {
+  for (const root of indexRoots()) {
     const treeSha = await resolveDirectory(token, commitSha, root);
     if (!treeSha) continue;
     for (const entry of await readTree(token, treeSha, true)) {

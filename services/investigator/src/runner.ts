@@ -34,8 +34,9 @@ export function loadConfig() {
   if (process.env.ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY no debe estar definida: el análisis usa la suscripción.');
   const stateDir = required('INVESTIGATOR_STATE_DIR');
   const checkout: CheckoutConfig = {
-    repoUrl: process.env.REPO_URL ?? 'https://github.com/Sergiocr16/aditum-jh.git',
-    branch: process.env.REPO_BRANCH ?? 'production',
+    // Which repository is production's comes from the install: this repo is public and doesn't name it.
+    repoUrl: required('REPO_URL'),
+    branch: required('REPO_BRANCH'),
     token: process.env.GITHUB_CODE_TOKEN ?? null,
     mirrorDir: join(stateDir, 'mirror'),
     workspaceDir: join(stateDir, 'checkouts'),
@@ -247,21 +248,31 @@ export async function runJob(config: Config, job: InvestigationJob): Promise<Job
   const flush = async (checkoutDir: string | null) => {
     const events = pendingEvents.splice(0);
     let queries: LoggedQuery[] = [];
-    if (checkoutDir) {
-      const log = await callGateway<{ queries: LoggedQuery[] }>(config, 'GET', `/jobs/${gatewayJob}`);
-      queries = log.queries.slice(sentQueries);
-      sentQueries = log.queries.length;
-    }
+    let logged = sentQueries;
     const heartbeat = Date.now() - lastBeat >= HEARTBEAT_MS;
+    let cancel: boolean;
+    try {
+      if (checkoutDir) {
+        const log = await callGateway<{ queries: LoggedQuery[] }>(config, 'GET', `/jobs/${gatewayJob}`);
+        queries = log.queries.slice(sentQueries);
+        logged = log.queries.length;
+      }
+      ({ cancel } = await callFunction<{ cancel: boolean }>(config, 'progress', {
+        id: job.id,
+        turn: job.turn ?? 1,
+        heartbeat,
+        events,
+        // Rows stay here. Firestore only learns what was asked and how much came back.
+        queries: queries.map(({ rows, ...query }) => ({ ...query, rowCount: rows.length })),
+      }));
+    } catch (e) {
+      // Nothing counts as sent until the server took it: the next flush sends it again.
+      // Queries are saved by id, so one that did arrive isn't recorded twice.
+      pendingEvents.unshift(...events);
+      throw e;
+    }
+    sentQueries = Math.max(sentQueries, logged);
     if (heartbeat) lastBeat = Date.now();
-    const { cancel } = await callFunction<{ cancel: boolean }>(config, 'progress', {
-      id: job.id,
-      turn: job.turn ?? 1,
-      heartbeat,
-      events,
-      // Rows stay here. Firestore only learns what was asked and how much came back.
-      queries: queries.map(({ rows, ...query }) => ({ ...query, rowCount: rows.length })),
-    });
     if (cancel && !cancelled) {
       cancelled = true;
       stop();

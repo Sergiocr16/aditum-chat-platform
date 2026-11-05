@@ -66,6 +66,8 @@ interface FormStart {
   refs?: InvestigationMessageRef[];
   uploads?: { storagePath: string; name: string; size: number }[];
   condominiums?: InvestigationCondominium[];
+  /** The investigation being retried, which is where `uploads` came from. */
+  retryOf?: string;
 }
 
 /** A file the agent added. `problem` is an i18n key: the file stays listed so they see why it won't go. */
@@ -217,7 +219,7 @@ export function InvestigationPanel({
       {pane !== null && (
         <button
           onClick={() => setPane(null)}
-          className="-ml-0.5 mb-2.5 flex flex-none items-center gap-1 self-start rounded text-[12.5px] font-semibold text-warm-gray hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-navy"
+          className="-ml-0.5 mb-2.5 flex flex-none items-center gap-1 self-start rounded text-[12.5px] font-semibold text-warm-gray hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-navy touch:-mt-2 touch:mb-0 touch:min-h-10 touch:pr-2"
         >
           <span aria-hidden className="msr text-[17px]">arrow_back</span>
           {t('inv.titulo')}
@@ -278,6 +280,7 @@ export function InvestigationPanel({
                       question: selected.data.question,
                       refs: selected.data.messageRefs,
                       condominiums: selected.data.condominiums,
+                      retryOf: selectedId,
                       uploads: (selected.data.files ?? [])
                         .filter((file) => file.source === 'agent')
                         .map(({ storagePath, name, size }) => ({ storagePath, name, size })),
@@ -365,7 +368,7 @@ export function InvestigationFilters({
           key={value}
           onClick={() => onFilter(value)}
           aria-pressed={filter === value}
-          className={`rounded-full border px-2.5 py-1 text-[11.5px] font-semibold focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-navy ${
+          className={`rounded-full border px-2.5 py-1 text-[11.5px] font-semibold focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-navy touch:min-h-9 touch:px-3 ${
             filter === value ? 'border-navy bg-navy text-white' : 'border-warm-border text-ink-2 hover:border-navy'
           }`}
         >
@@ -765,9 +768,10 @@ function NewInvestigation({
         storagePath && !problem ? [{ storagePath, name, size }] : [],
       ),
       condominiums: pickedCondominiums ?? undefined,
+      retryOf: start.retryOf,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- onDraft is rebuilt on every render of the panel.
-  }, [question, selected, uploads, pickedCondominiums, start.nonce, start.refs]);
+  }, [question, selected, uploads, pickedCondominiums, start.nonce, start.refs, start.retryOf]);
 
   const marked = selected ?? new Set<string>();
   const full = marked.size >= MAX_MESSAGES;
@@ -844,6 +848,7 @@ function NewInvestigation({
           question: question.trim(),
           uploads: readyUploads.map((u) => ({ storagePath: u.storagePath!, name: u.name })),
           condominiums,
+          ...(start.retryOf && { retryOf: start.retryOf }),
         }),
       );
     } catch (e) {
@@ -1198,7 +1203,7 @@ function Working({ row, actions }: { row: Row<Investigation>; actions?: Investig
       {actions && <NotifyClient notified={actions.notified} onNotifyClient={actions.onNotifyClient} />}
       <button
         onClick={() => void cancelInvestigation(row.id)}
-        className="mt-auto self-center rounded-lg px-3 py-1.5 text-[13px] font-semibold text-warm-gray hover:text-danger focus-visible:outline-2 focus-visible:outline-danger"
+        className="mt-auto self-center rounded-lg px-3 py-1.5 text-[13px] font-semibold text-warm-gray hover:text-danger focus-visible:outline-2 focus-visible:outline-danger touch:min-h-10"
       >
         {t('inv.cancelar')}
       </button>
@@ -1388,7 +1393,7 @@ function BacklogDefinition({ draft }: { draft: InvestigationBacklogDraft }) {
     );
   return (
     <details className="group mt-2.5">
-      <summary className="inline-flex cursor-pointer list-none items-center gap-1 text-[12.5px] font-semibold text-navy hover:underline focus-visible:outline-2 focus-visible:outline-ai [&::-webkit-details-marker]:hidden">
+      <summary className="inline-flex cursor-pointer list-none items-center gap-1 text-[12.5px] font-semibold text-navy hover:underline focus-visible:outline-2 focus-visible:outline-ai touch:min-h-10 [&::-webkit-details-marker]:hidden">
         <span aria-hidden className="flex transition-transform duration-150 group-open:rotate-90"><span className="msr text-[16px]">chevron_right</span></span>
         {t('inv.backlogDefinicion')}
       </summary>
@@ -1585,7 +1590,7 @@ function FollowUpComposer({ id }: { id: string }) {
           disabled={typed < MIN_FOLLOW_UP_CHARS || sending}
           aria-label={t('inv.enviar')}
           title={t('inv.enviar')}
-          className="flex h-[30px] w-[30px] flex-none items-center justify-center rounded-md bg-navy text-white hover:bg-navy-light focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-navy disabled:opacity-40"
+          className="flex h-[30px] w-[30px] flex-none items-center justify-center rounded-md bg-navy text-white touch:h-10 touch:w-10 hover:bg-navy-light focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-navy disabled:opacity-40"
         >
           <span aria-hidden className="msr text-[18px]">arrow_upward</span>
         </button>

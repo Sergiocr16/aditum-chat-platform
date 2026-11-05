@@ -81,7 +81,7 @@ describe('leaksCode', () => {
     'La tabla booking_slot guarda eso.',
     'Corre SELECT id FROM reservation.',
     'Mirá `cancel`.',
-    'Viene de com.lighthouse.aditum.',
+    'Viene de com.example.app.',
   ])('flags %s', (reply) => {
     expect(leaksCode(reply, [code])).toBe(true);
   });

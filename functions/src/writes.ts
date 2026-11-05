@@ -18,9 +18,9 @@ import {
 } from '@aditum-chat/shared';
 import { db, FieldValue } from './lib/admin.js';
 import { decryptJson, encryptJson } from './lib/crypto.js';
-import { requireActiveAdmin } from './lib/guards.js';
+import { loginIsRecent, RECENT_LOGIN_MS, requireActiveAdmin } from './lib/guards.js';
 import { getKek } from './pushConfig.js';
-import { callerIp, dbSettingsProblem, secretMatches, type DbSettingsInput } from './investigations.js';
+import { callerIp, dbSettingsProblem, sameTarget, secretMatches, type DbSettingsInput } from './investigations.js';
 
 /**
  * The only way a change reaches production. Claude proposes, an admin rehearses and confirms, and
@@ -37,8 +37,7 @@ const SWITCH_DOC = 'investigator/writes';
 const STATE_DOC = 'investigator/writerState';
 
 export const APPROVAL_WINDOW_MS = 10 * 60_000;
-/** The password was just typed: a stolen open session isn't enough for the last step. */
-export const RECENT_LOGIN_MS = 5 * 60_000;
+export { RECENT_LOGIN_MS };
 /** A job nobody picked up in this long is off: an approval shouldn't take effect hours later. */
 export const JOB_EXPIRY_MS = 2 * 60_000;
 const WRITER_OFFLINE_MS = 90_000;
@@ -124,8 +123,7 @@ export function stepProblem(proposal: WriteProposal | undefined, enabled: boolea
   if (input.step === 2) return null;
 
   if (input.typed !== writeConfirmationPhrase(proposal.operations)) return 'El texto no coincide.';
-  const authTime = typeof input.authTimeSeconds === 'number' ? input.authTimeSeconds * 1000 : 0;
-  if (input.now - authTime > RECENT_LOGIN_MS) return 'Volvé a ingresar tu contraseña.';
+  if (!loginIsRecent(input.authTimeSeconds, input.now)) return 'Volvé a ingresar tu contraseña.';
   return null;
 }
 
@@ -318,9 +316,8 @@ export const setInvestigatorWriter = onCall({ region: 'us-central1', secrets: [c
     db.doc(WRITER_DOC).get().then((doc) => doc.data() as InvestigatorWriterConfig | undefined),
   ]);
   // The saved password only goes where it already was: an open session can't point it at another server.
-  const sameTarget =
-    current?.host === input.host && current?.port === input.port && current?.user === input.user && (!input.ca || input.ca === stored?.ca);
-  const problem = dbSettingsProblem(input, Boolean(stored?.cipher) && sameTarget) ?? caProblem(input.ca);
+  const unchanged = sameTarget(current, input) && (!input.ca || input.ca === stored?.ca);
+  const problem = dbSettingsProblem(input, Boolean(stored?.cipher) && unchanged) ?? caProblem(input.ca);
   if (problem) throw new HttpsError('invalid-argument', problem);
   const cipher = input.password ? encryptJson(getKek(), { password: input.password }) : stored!.cipher!;
   const ca = (input.ca as string | undefined) || stored?.ca || null;

@@ -5,6 +5,8 @@
  * an agent) and an invented answer is not.
  */
 
+import { javaPackage } from './code/allowlist.js';
+
 export type EvidenceKind = 'kb' | 'code' | 'context';
 
 /** One retrieved fragment the model may cite. `id` is what citations point back to. */
@@ -136,7 +138,6 @@ const CODE_LEAK_PATTERNS: RegExp[] = [
   /`[^`\n]+`/, // inline code
   /```/,
   /\bsrc\/main\b/i,
-  /\bcom\.lighthouse\b/i,
   /\b[\w-]+\.(java|js|html|xml|yml|yaml|sql)\b/i,
   /\b(?!WhatsApp\b|YouTube\b|PayPal\b|LinkedIn\b|GitHub\b|JavaScript\b)[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]+)+\b/, // PascalCase class name
   /\b[A-Z][a-z0-9]+(?:Service|Repository|Resource|Controller|Mapper|DTO|Dto|Entity|Exception)\b/,
@@ -150,6 +151,12 @@ const CODE_LEAK_PATTERNS: RegExp[] = [
   /\b(endpoints?|backend|frontend|api rest)\b/i,
   /@(Service|Transactional|Autowired|RestController|Entity|Table|Column)\b/,
 ];
+
+/** The production package, as it would show up in a reply: `com.example` of `com/example/app`. */
+function namesPackage(reply: string): boolean {
+  const prefix = javaPackage()?.split('/').slice(0, 2).join('.');
+  return prefix !== undefined && reply.toLowerCase().includes(prefix.toLowerCase());
+}
 
 /** Consecutive non-space characters shared with a source that count as quoting it. */
 const VERBATIM_WINDOW = 40;
@@ -176,6 +183,7 @@ export function leaksCode(reply: string, sources: EvidenceSource[]): boolean {
   const code = sources.filter((source) => source.kind === 'code');
   if (code.length === 0) return false;
   if (CODE_LEAK_PATTERNS.some((pattern) => pattern.test(reply))) return true;
+  if (namesPackage(reply)) return true;
   return code.some((source) => !source.uiText && quotesVerbatim(reply, source.text));
 }
 

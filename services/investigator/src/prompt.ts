@@ -151,7 +151,9 @@ EL REPORTE, en el idioma de la pregunta
 - recommendation: qué debería hacer el agente. Si hay que cambiar datos, eso va en write_proposal y no como SQL en este texto.
 - suggested_reply: respuesta para el cliente, en español de Costa Rica con voseo y sin mencionar código, tablas ni nombres internos. Vacía si la conclusión no es confirmed.`;
 
-const escape = (value: string) => value.replace(/<\/?(conversation|message|previous_turns|turn|backlog_activo)\b/gi, (tag) => tag.replace('<', '&lt;'));
+/** Every tag this prompt uses to frame something. Text from a chat or a name can't open or close one. */
+const escape = (value: string) =>
+  value.replace(/<\/?(conversation|message|previous_turns|turn|backlog_activo|task|files|file)\b/gi, (tag) => tag.replace('<', '&lt;'));
 
 const attribute = (value: string) => escape(value).replace(/["<>]/g, "'");
 
@@ -215,8 +217,8 @@ export function buildPrompt(job: InvestigationJob, files: PreparedFile[] = []): 
         ? `\n${m.attachments
             .map((a) =>
               a.fileId && ready.has(a.fileId)
-                ? `[adjunto ${a.fileId}: ${a.name ?? 'sin nombre'}]`
-                : `[adjunto sin contenido disponible: ${a.name ?? 'sin nombre'} (${a.mimeType ?? a.type})]`,
+                ? `[adjunto ${a.fileId}: ${escape(a.name ?? 'sin nombre')}]`
+                : `[adjunto sin contenido disponible: ${escape(a.name ?? 'sin nombre')} (${escape(a.mimeType ?? a.type)})]`,
             )
             .join('\n')}`
         : '';
@@ -236,7 +238,7 @@ export function buildPrompt(job: InvestigationJob, files: PreparedFile[] = []): 
   return `Lo que el agente ${job.followUp ? 'quiso averiguar al principio' : 'quiere averiguar'}:
 ${escape(job.question)}
 
-Cliente: ${clientNombre ?? 'sin dato'} (sitio ${siteId}). Contacto: ${contactNombre ?? 'sin dato'}, rol ${contactRol ?? 'sin dato'}.${caseCondominiums(job)}
+Cliente: ${escape(clientNombre ?? 'sin dato')} (sitio ${escape(siteId)}). Contacto: ${escape(contactNombre ?? 'sin dato')}, rol ${escape(contactRol ?? 'sin dato')}.${caseCondominiums(job)}
 
 <conversation>
 ${messages}

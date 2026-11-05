@@ -34,7 +34,13 @@ export function codeEvidenceProblem(evidence: InvestigationCodeEvidence, checkou
   } catch {
     return `no existe ${path}`;
   }
-  const lines = readFileSync(file, 'utf8').split('\n');
+  let lines: string[];
+  try {
+    lines = readFileSync(file, 'utf8').split('\n');
+  } catch {
+    // A folder, say. It's a bad citation like any other, not a reason to lose the whole report.
+    return `${path || 'la ruta'} no es un archivo`;
+  }
   if (!Number.isInteger(startLine) || !Number.isInteger(endLine) || startLine < 1 || endLine < startLine) {
     return 'el rango de líneas no es válido';
   }

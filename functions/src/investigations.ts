@@ -32,9 +32,10 @@ import type {
   WriteProposal,
 } from '@aditum-chat/shared';
 import { activeBacklogRows } from './backlog.js';
+import { codeRepo } from './code/allowlist.js';
 import { db, FieldValue, storage } from './lib/admin.js';
 import { decryptJson, encryptJson } from './lib/crypto.js';
-import { requireActiveAdmin } from './lib/guards.js';
+import { loginIsRecent, requireActiveAdmin } from './lib/guards.js';
 import { getKek } from './pushConfig.js';
 import { checkPi } from './piCheck.js';
 import { installOnPi, isCleanSetting } from './piInstall.js';
@@ -141,13 +142,14 @@ export function isOwnChatAttachment(storagePath: unknown, conversationId: string
 }
 
 /** An agent can only hand in what they uploaded themselves. */
-export function validateUploads(uploads: unknown, uid: string): string | null {
+/** `inherited` are the files of the investigation being retried, which another agent may have uploaded. */
+export function validateUploads(uploads: unknown, uid: string, inherited: ReadonlySet<string> = new Set()): string | null {
   if (uploads === undefined) return null;
   if (!Array.isArray(uploads) || uploads.length > INVESTIGATION_MAX_FILES) return 'Hay demasiados archivos.';
   const valid = uploads.every(
     (u) =>
       typeof u?.storagePath === 'string' &&
-      u.storagePath.startsWith(`investigaciones/${uid}/`) &&
+      (u.storagePath.startsWith(`investigaciones/${uid}/`) || inherited.has(u.storagePath)) &&
       !u.storagePath.includes('..') &&
       typeof u?.name === 'string' &&
       u.name.length > 0 &&
@@ -194,13 +196,18 @@ const dayKey = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Costa
 
 export const requestInvestigation = onCall({ region: 'us-central1' }, async (req) => {
   if (req.auth?.token.kind !== 'agent') throw new HttpsError('permission-denied', 'Solo agentes.');
-  const { conversationId, messages, question, uploads } = req.data as {
+  const { conversationId, messages, question, uploads, retryOf } = req.data as {
     conversationId: string;
     messages: InvestigationMessageRef[];
     question: string;
     uploads?: { storagePath: string; name: string }[];
+    retryOf?: unknown;
   };
-  const invalid = validateRequest(question, messages) ?? validateUploads(uploads, req.auth.uid);
+  // A retry keeps the files of the investigation it repeats, even when another agent uploaded them.
+  const retried =
+    typeof retryOf === 'string' && retryOf ? ((await db.doc(`investigations/${retryOf}`).get()).data() as Investigation | undefined) : undefined;
+  const inherited = new Set((retried?.files ?? []).filter((file) => file.source === 'agent').map((file) => file.storagePath));
+  const invalid = validateRequest(question, messages) ?? validateUploads(uploads, req.auth.uid, inherited);
   if (invalid || typeof conversationId !== 'string' || !conversationId) {
     throw new HttpsError('invalid-argument', invalid ?? 'Falta la conversación.');
   }
@@ -210,6 +217,7 @@ export const requestInvestigation = onCall({ region: 'us-central1' }, async (req
   const anchor = (await db.doc(`conversations/${conversationId}`).get()).data() as Conversation | undefined;
   const threadKey = anchor ? threadKeyOf(anchor) : null;
   if (!anchor || !threadKey) throw new HttpsError('not-found', 'No existe la conversación.');
+  if (retried && retried.threadKey !== threadKey) throw new HttpsError('permission-denied', 'Esa investigación no es de este chat.');
 
   // Every message has to belong to this chat, whatever the client claims.
   const conversationIds = [...new Set(messages.map((m) => m.conversationId))];
@@ -455,10 +463,11 @@ export function boundedHistory(turns: JobTurn[], maxChars = MAX_HISTORY_CHARS): 
 async function historyOf(ref: FirebaseFirestore.DocumentReference) {
   const [turns, queries, proposals] = await Promise.all([
     ref.collection('turns').orderBy('n', 'asc').get(),
-    ref.collection('queries').orderBy('at', 'asc').limit(MAX_HISTORY_QUERIES).get(),
+    // The latest ones: past the limit, what the last rounds asked matters more than the first.
+    ref.collection('queries').orderBy('at', 'desc').limit(MAX_HISTORY_QUERIES).get(),
     ref.collection('proposals').get(),
   ]);
-  const records = queries.docs.map((doc) => doc.data() as InvestigationQueryRecord);
+  const records = queries.docs.map((doc) => doc.data() as InvestigationQueryRecord).reverse();
   const proposalOf = (id: string | null | undefined) => {
     const proposal = proposals.docs.find((doc) => doc.id === id)?.data() as WriteProposal | undefined;
     return proposal ? { status: proposal.status, error: proposal.error ?? proposal.execution?.detail ?? null, operations: proposal.operations } : null;
@@ -689,6 +698,12 @@ export function dbSettingsProblem(input: DbSettingsInput, hasStoredPassword: boo
   return null;
 }
 
+type Target = { host?: unknown; port?: unknown; user?: unknown };
+
+/** The saved password only goes where it already was: an open session can't point it at another server. */
+export const sameTarget = (current: Target | undefined, input: Target) =>
+  current !== undefined && current.host === input.host && current.port === input.port && current.user === input.user;
+
 const pendingTest = () => ({ status: 'pending', requestedAt: FieldValue.serverTimestamp() });
 
 export const setInvestigatorDb = onCall({ region: 'us-central1', secrets: [configKek] }, async (req) => {
@@ -698,8 +713,11 @@ export const setInvestigatorDb = onCall({ region: 'us-central1', secrets: [confi
     await Promise.all([db.doc(DB_DOC).delete(), db.doc(DB_SECRET_DOC).delete()]);
     return { ok: true };
   }
-  const stored = (await db.doc(DB_SECRET_DOC).get()).data() as { cipher?: string } | undefined;
-  const problem = dbSettingsProblem(input, Boolean(stored?.cipher));
+  const [stored, current] = await Promise.all([
+    db.doc(DB_SECRET_DOC).get().then((doc) => doc.data() as { cipher?: string } | undefined),
+    db.doc(DB_DOC).get().then((doc) => doc.data() as Target | undefined),
+  ]);
+  const problem = dbSettingsProblem(input, Boolean(stored?.cipher) && sameTarget(current, input));
   if (problem) throw new HttpsError('invalid-argument', problem);
 
   const cipher = input.password ? encryptJson(getKek(), { password: input.password }) : stored!.cipher!;
@@ -754,19 +772,24 @@ export const setInvestigatorPi = onCall({ region: 'us-central1', secrets: [confi
     await Promise.all([db.doc(PI_DOC).delete(), db.doc(PI_SECRET_DOC).delete()]);
     return { ok: true };
   }
-  const stored = (await db.doc(PI_SECRET_DOC).get()).data() as { cipher?: string } | undefined;
-  const problem = piSettingsProblem(input, Boolean(stored?.cipher));
+  const [stored, previous] = await Promise.all([
+    db.doc(PI_SECRET_DOC).get().then((doc) => doc.data() as { cipher?: string; claudeCipher?: string } | undefined),
+    db.doc(PI_DOC).get().then((doc) => doc.data() as InvestigatorPiConfig | undefined),
+  ]);
+  const problem = piSettingsProblem(input, Boolean(stored?.cipher) && sameTarget(previous, input));
   if (problem) throw new HttpsError('invalid-argument', problem);
-  const previous = (await db.doc(PI_DOC).get()).data() as InvestigatorPiConfig | undefined;
   // Another address is another machine, whose key is unknown. A new password or user is the same machine.
-  const pinned = previous && previous.host === input.host && previous.port === input.port ? previous.hostKeyFingerprint : null;
+  const sameMachine = previous !== undefined && previous.host === input.host && previous.port === input.port;
+  const pinned = sameMachine ? previous.hostKeyFingerprint : null;
 
   const cipher = input.password ? encryptJson(getKek(), { password: input.password }) : stored!.cipher!;
   const version = randomUUID();
-  await db.doc(PI_SECRET_DOC).set({ cipher, enc: 'aes-256-gcm+kek' }, { merge: true });
+  // The Claude token stays with the machine it was saved for: an install on another one asks for it again.
+  const claudeCipher = sameMachine ? stored?.claudeCipher : undefined;
+  await db.doc(PI_SECRET_DOC).set({ cipher, enc: 'aes-256-gcm+kek', ...(claudeCipher && { claudeCipher }) });
   await db.doc(PI_DOC).set({
-    ...(previous?.hasClaudeToken && { hasClaudeToken: true }),
-    ...(previous?.claudeTokenIssuedAt && { claudeTokenIssuedAt: previous.claudeTokenIssuedAt }),
+    ...(claudeCipher && previous?.hasClaudeToken && { hasClaudeToken: true }),
+    ...(claudeCipher && previous?.claudeTokenIssuedAt && { claudeTokenIssuedAt: previous.claudeTokenIssuedAt }),
     ...(previous?.install && { install: previous.install }),
     host: input.host,
     port: input.port,
@@ -803,6 +826,15 @@ function functionsBaseUrl(): string {
   return `https://us-central1-${process.env.GCLOUD_PROJECT}.cloudfunctions.net`;
 }
 
+/** The repository Claude reads on the Pi is the one the code index reads. */
+function productionRepo() {
+  try {
+    return codeRepo();
+  } catch {
+    throw new HttpsError('failed-precondition', 'Falta CODE_REPO en la configuración de functions.');
+  }
+}
+
 /** Long, but the Pi builds on its own and the script can run again if this one is cut short. */
 export const installInvestigatorOnPi = onCall(
   {
@@ -812,6 +844,8 @@ export const installInvestigatorOnPi = onCall(
   },
   async (req) => {
     const admin = await requireActiveAdmin(req.auth);
+    // This hands the Pi's secrets to whatever machine is configured, so an open session isn't enough.
+    if (!loginIsRecent(req.auth!.token.auth_time, Date.now())) throw new HttpsError('failed-precondition', 'Volvé a ingresar tu contraseña.');
     const claudeToken = (req.data as { claudeToken?: unknown }).claudeToken;
     if (claudeToken !== undefined && claudeToken !== '' && !isCleanSetting(claudeToken)) {
       throw new HttpsError('invalid-argument', 'El token de Claude Code no es válido.');
@@ -820,6 +854,7 @@ export const installInvestigatorOnPi = onCall(
     const secretRef = db.doc(PI_SECRET_DOC);
     const baseUrl = functionsBaseUrl();
     const gitRef = process.env.INVESTIGATOR_GIT_REF || 'main';
+    const production = productionRepo();
 
     await db.runTransaction(async (tx) => {
       const config = (await tx.get(ref)).data() as InvestigatorPiConfig | undefined;
@@ -854,6 +889,8 @@ export const installInvestigatorOnPi = onCall(
         GATEWAY_SHARED_SECRET: gatewaySecret.value(),
         WRITER_SHARED_SECRET: writerSecret.value(),
         GITHUB_CODE_TOKEN: githubCodeToken.value(),
+        REPO_URL: `https://github.com/${production.owner}/${production.repo}.git`,
+        REPO_BRANCH: production.branch,
         CLAUDE_CODE_OAUTH_TOKEN: token,
         CLAUDE_TOKEN_ISSUED_AT: config.claudeTokenIssuedAt ?? new Date().toISOString().slice(0, 10),
       };

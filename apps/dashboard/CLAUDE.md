@@ -59,7 +59,7 @@ src/lib/            firebase.ts (SDK + emulator wiring), auth.tsx, i18n.ts, soun
   each as a `historial` event; internal notes are editable (`updateTicketNote`). The context panels
   (`ContextPanel` / `GroupContextPanel`) use `PanelLista` + `ConvHistorialRow` + `TicketCard`.
 
-- **Production writes** (`WriteProposal.tsx`, `lib/data-writes.ts`): under a report, the change Claude proposed. Admins rehearse it and go through three steps in the page (no modals), the last one with a typed phrase and their password via `reauthenticateWithCredential`. All checks are server-side (`stepProblem` in functions); this only shows the state. Connection, permissions, switch and log are in `AnalizadorTab`.
+- **Production writes** (`WriteProposal.tsx`, `lib/data-writes.ts`): under a report, the change Claude proposed. Admins rehearse it and go through three steps in the page (no modals), the last one with a typed phrase and their password via `reauthenticateWithCredential`. All checks are server-side (`stepProblem` in functions); this only shows the state. Connection, permissions, switch and log are in `AnalizadorTab`, where installing on the Pi asks for the password the same way (`confirmPassword` in `lib/auth.tsx`).
 - **Investigations** (`InvestigationPanel`, mounted by `ConversationView`) open from the "Investigar" button next
   to "Enviar", which always goes to the form, as a side panel next to the chat, resizable by dragging
   (`useColumnWidth`), taking the context panel's place while open. Opening a chat remounts the view, so each chat's
@@ -87,6 +87,9 @@ src/lib/            firebase.ts (SDK + emulator wiring), auth.tsx, i18n.ts, soun
   for favicon/PWA `any`, full-bleed plum for maskable/apple-touch) — regenerate from
   `logo/aditum-chat-logo-master-2048.png`, don't hand-edit.
 - Mobile (≤640px) forces 16px font on inputs (`globals.css`) to kill the iOS focus zoom.
+- **Touch targets:** the `touch:` variant (`globals.css`, `(hover: none)`) grows small controls for a
+  finger (`touch:min-h-10`) and leaves the desktop layout alone. Long help goes under the field, not
+  in its placeholder, which gets cut on a phone.
 - **EquipoTab row actions:** key = reset password (server generates it via `manageTeam
   resetPassword`; show-once modal with copy), trash = delete agent (`eliminar`; hidden on your own
   row). Both use the inline Sí/No confirm pattern.
