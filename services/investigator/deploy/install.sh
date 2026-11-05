@@ -86,8 +86,8 @@ mv "$BUILD_HOME/out" "$RELEASE"
 chown -R root:root "$RELEASE"
 chmod -R a+rX "$RELEASE"
 rm -rf "$BUILD"
-ln -sfn "$RELEASE" "$APP/current.new"
-mv -f "$APP/current.new" "$APP/current"
+# Not `mv`: given a link to a directory it moves into that directory and the link keeps the old release.
+ln -sfn "$RELEASE" "$APP/current"
 # Keeps this release and the one before it.
 (cd "$APP/releases" && ls -1t | tail -n +3 | xargs -r rm -rf)
 
@@ -143,6 +143,7 @@ systemctl enable --quiet aditum-mysql-gateway aditum-investigator
 systemctl restart aditum-mysql-gateway aditum-investigator
 
 echo "::step verify"
+[ "$(readlink "$APP/current")" = "$RELEASE" ] || { echo "La versión activa no es la que se acaba de instalar."; exit 1; }
 sleep 15
 for service in aditum-mysql-gateway aditum-investigator; do
   if ! systemctl is-active --quiet "$service"; then
