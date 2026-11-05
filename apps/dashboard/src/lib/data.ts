@@ -742,7 +742,7 @@ function destinosNoLeidos(conv: Row<Conversation>): string[] {
 
 /** Segmento aleatorio no adivinable para la ruta del adjunto (ver storage.rules):
  *  conocer el convId no alcanza para construir/descargar la ruta de otra conversación. */
-function randomFileToken(): string {
+export function randomFileToken(): string {
   const c = globalThis.crypto;
   if (c?.randomUUID) return c.randomUUID();
   const b = new Uint8Array(16);

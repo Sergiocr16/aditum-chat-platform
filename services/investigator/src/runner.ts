@@ -1,12 +1,13 @@
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { chmodSync, chownSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { InvestigationStatus } from '@aditum-chat/shared';
 import { checkoutProduction, type CheckoutConfig } from './checkout.js';
 import { REPORT_SCHEMA, verifyReport, type LoggedQuery, type RawReport } from './evidence.js';
-import { buildPrompt, SYSTEM_PROMPT, type InvestigationJob } from './prompt.js';
+import { MAX_FILE_BYTES, prepareFiles } from './files.js';
+import { buildPrompt, SYSTEM_PROMPT, type InvestigationJob, type PreparedFile } from './prompt.js';
 import { describeLine, isRateLimited, resultFrom, type ClaudeResult, type ProgressEvent } from './stream.js';
 
 const POLL_MS = 10_000;
@@ -66,8 +67,10 @@ export const RUN_SETTINGS = {
   disableAllHooks: true,
 };
 
-export function claudeArgs(model: string, mcpConfigFile: string, settingsFile: string): string[] {
+export function claudeArgs(model: string, mcpConfigFile: string, settingsFile: string, filesDir?: string): string[] {
   return [
+    // `--allowedTools Read` isn't confined to the checkout: what limits it is Claude's OS user.
+    ...(filesDir ? ['--add-dir', filesDir] : []),
     '-p',
     '--output-format', 'stream-json',
     '--verbose',
@@ -110,6 +113,36 @@ async function callFunction<T>(config: Config, action: string, body: object = {}
   return (await response.json()) as T;
 }
 
+/** Raw bytes rather than JSON, with more time: a file can take a while to reach the Pi. */
+async function downloadFile(config: Config, id: string, fileId: string): Promise<Buffer> {
+  const response = await fetch(config.functionUrl, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${config.secret}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ action: 'attachment', id, fileId }),
+    signal: AbortSignal.timeout(180_000),
+  });
+  if (!response.ok) throw new Error(`attachment ${fileId}: HTTP ${response.status}`);
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (bytes.length > MAX_FILE_BYTES) throw new Error(`attachment ${fileId}: too large`);
+  return bytes;
+}
+
+/**
+ * Runs as Claude's user, with no secrets and a memory cap: parsing a file someone uploaded
+ * shouldn't happen in the process holding the runner's credentials.
+ */
+function convertOffice(config: Config, path: string, kind: 'spreadsheet' | 'document'): string {
+  const script = join(dirname(fileURLToPath(import.meta.url)), 'convert-office.js');
+  const [command, args] = claudeCommand(process.execPath, ['--max-old-space-size=512', script, path, kind], config.claudeUid, config.claudeGid);
+  return execFileSync(command, args, {
+    env: { PATH: process.env.PATH },
+    timeout: 60_000,
+    maxBuffer: 8 * 1024 * 1024,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'inherit'],
+  });
+}
+
 async function callGateway<T>(config: Config, method: string, path: string, body?: object): Promise<T> {
   const response = await fetch(`${config.gatewayUrl}${path}`, {
     method,
@@ -135,10 +168,11 @@ interface JobOutcome {
   usedDatabase: boolean;
   costUsd: number | null;
   report: ReturnType<typeof verifyReport> | null;
+  unreadableFiles: string[];
 }
 
 async function runJob(config: Config, job: InvestigationJob): Promise<JobOutcome | null> {
-  const outcome: JobOutcome = { status: 'failed', sha: null, error: null, usedDatabase: false, costUsd: null, report: null };
+  const outcome: JobOutcome = { status: 'failed', sha: null, error: null, usedDatabase: false, costUsd: null, report: null, unreadableFiles: [] };
   const pendingEvents: ProgressEvent[] = [];
   let sentQueries = 0;
   let cancelled = false;
@@ -187,13 +221,33 @@ async function runJob(config: Config, job: InvestigationJob): Promise<JobOutcome
       for (const file of [mcpConfigFile, settingsFile]) chmodSync(file, 0o640);
     }
 
-    const [command, args] = claudeCommand(config.claudeBin, claudeArgs(config.model, mcpConfigFile, settingsFile), config.claudeUid, config.claudeGid);
+    let files: PreparedFile[] = [];
+    const filesDir = join(jobConfigDir, 'files');
+    if (job.files?.length) {
+      pendingEvents.push({ kind: 'status', text: 'Bajando los archivos' });
+      const prepared = await prepareFiles(job.files, filesDir, {
+        beforeEach: () => flush(null),
+        download: (fileId) => downloadFile(config, job.id, fileId),
+        convert: (path, kind) => convertOffice(config, path, kind),
+        shareWith: config.claudeGid,
+      });
+      files = prepared.ready;
+      outcome.unreadableFiles = prepared.unreadable;
+      if (cancelled) return null;
+    }
+
+    const [command, args] = claudeCommand(
+      config.claudeBin,
+      claudeArgs(config.model, mcpConfigFile, settingsFile, files.length ? filesDir : undefined),
+      config.claudeUid,
+      config.claudeGid,
+    );
     child = spawn(command, args, {
       cwd: checkout.dir,
       env: claudeEnv(),
       stdio: ['pipe', 'pipe', 'pipe'],
     });
-    child.stdin!.end(buildPrompt(job));
+    child.stdin!.end(buildPrompt(job, files));
 
     let stderr = '';
     child.stderr!.on('data', (chunk) => {
@@ -203,7 +257,7 @@ async function runJob(config: Config, job: InvestigationJob): Promise<JobOutcome
     let result: ClaudeResult | null = null;
     const lines = createInterface({ input: child.stdout! });
     lines.on('line', (line) => {
-      pendingEvents.push(...describeLine(line, checkout.dir));
+      pendingEvents.push(...describeLine(line, checkout.dir, filesDir));
       result = resultFrom(line) ?? result;
     });
 

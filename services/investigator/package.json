@@ -3,11 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "build": "esbuild src/runner.ts src/gateway-main.ts src/classify-schema.ts src/generate-views.ts --bundle --platform=node --format=esm --packages=external --outdir=dist --log-level=warning",
+    "build": "esbuild src/runner.ts src/gateway-main.ts src/convert-office.ts src/classify-schema.ts src/generate-views.ts --bundle --platform=node --format=esm --packages=external --outdir=dist --log-level=warning",
     "runner": "tsx src/runner.ts",
     "gateway": "tsx src/gateway-main.ts",
     "classify": "tsx src/classify-schema.ts",
@@ -15,7 +17,9 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.2",
+    "mammoth": "1.13.0",
     "mysql2": "3.24.6",
+    "read-excel-file": "9.3.14",
     "yaml": "2.9.1",
     "zod": "^3.25.0"
   },

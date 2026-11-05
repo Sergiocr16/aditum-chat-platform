@@ -19,6 +19,9 @@ Pi: runner ──── claude -p (Read, Grep, Glob + MCP) ── checkout of on
 | Personal data is not masked | A decision: Claude reads real data. The prompt asks it to read and cite only what it needs, but nothing enforces that. Cited values reach Firestore, where agents can read them |
 | Claude can't reach credentials | Separate OS users; the password reaches only the gateway, with its own secret |
 | A broader user can't be pasted in | The gateway checks `SHOW GRANTS` and won't use anything beyond `SELECT` on that database |
+| Files only from their own chat | `requestInvestigation` takes attachments under that conversation's `adjuntos/{convId}/`, and uploads under the agent's own `investigaciones/{uid}/`; the Pi can only fetch a running job's files, by id |
+| A hostile file can't reach the runner's secrets | Excel and Word are converted in a separate process as Claude's user, with only `PATH` in its environment and capped memory and time. Files are deleted after the job |
+| Claude reads only what its OS user can | `--allowedTools Read` isn't confined to the checkout or the files folder: a probe read a file outside both. What holds is that `investigator-claude` can't read the secrets |
 | Claude can't send data out | It has no Bash, write or web tools (`--tools`), so its only output is the report |
 | Nothing invented | `verifyReport` checks every citation in code. One bad citation loses `confirmed` and the suggested reply |
 | The chat can't steer it | Messages go in as marked untrusted data, and the limits above don't depend on the model obeying |

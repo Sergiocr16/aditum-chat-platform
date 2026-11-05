@@ -152,3 +152,6 @@ Functions need their prod secrets already set (`ANTHROPIC_API_KEY`, `CONFIG_KEK`
   In the console they live in the "Investigar" composer tab (next to Responder / Nota interna): every
   investigation stays in its list, and while one runs the agent sees only a rough phase taken from its
   latest progress event (`useInvestigationPhase`), with a robot whose look follows the phase.
+  They can read files: the attachments of the selected messages (only under that conversation's own
+  `adjuntos/{convId}/`, same check as `botReply`) and what the agent uploads. The Pi fetches each by id,
+  turns Excel and Word into text in a separate process as Claude's user, and deletes them after the job.

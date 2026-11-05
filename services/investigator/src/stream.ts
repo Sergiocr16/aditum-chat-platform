@@ -1,12 +1,12 @@
 import { isAbsolute, relative } from 'node:path';
 
 export interface ProgressEvent {
-  kind: 'code' | 'database' | 'status';
+  kind: 'code' | 'database' | 'attachment' | 'status';
   text: string;
 }
 
 /** Turns one line of Claude's stream-json into what the agent sees while it runs. */
-export function describeLine(line: string, checkoutDir: string): ProgressEvent[] {
+export function describeLine(line: string, checkoutDir: string, filesDir?: string): ProgressEvent[] {
   let event: { type?: string; message?: { content?: unknown } };
   try {
     event = JSON.parse(line);
@@ -21,7 +21,8 @@ export function describeLine(line: string, checkoutDir: string): ProgressEvent[]
     const name = String(block.name ?? '').replace(/^mcp__prod_ro__/, '');
     if (name === 'Read') {
       const file = String(input.file_path ?? '');
-      out.push({ kind: 'code', text: `Leyó ${isAbsolute(file) ? relative(checkoutDir, file) : file}` });
+      if (filesDir && file.startsWith(`${filesDir}/`)) out.push({ kind: 'attachment', text: `Leyó el adjunto ${relative(filesDir, file)}` });
+      else out.push({ kind: 'code', text: `Leyó ${isAbsolute(file) ? relative(checkoutDir, file) : file}` });
     } else if (name === 'Grep') {
       out.push({ kind: 'code', text: `Buscó "${String(input.pattern ?? '').slice(0, 80)}" en el código` });
     } else if (name === 'request_db_access') {

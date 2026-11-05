@@ -766,6 +766,17 @@ export interface InvestigationMessageRef {
 }
 
 /** investigations/{id}. Agents read, only functions write. */
+/** A file an investigation reads. It never comes from the client as text: the server checks each one. */
+export interface InvestigationFile {
+  id: string;
+  /** `chat`: attached to a selected message. `agent`: uploaded for this investigation, the client never sees it. */
+  source: 'chat' | 'agent';
+  storagePath: string;
+  name: string;
+  mimeType: string;
+  size: number;
+}
+
 export interface Investigation {
   /** `contact:{id}` or `group:{id}`: the chat this belongs to across segments. */
   threadKey: string;
@@ -774,6 +785,10 @@ export interface Investigation {
   question: string;
   messageCount: number;
   messageRefs: InvestigationMessageRef[];
+  /** Files it was given: from the selected messages, and uploaded by the agent. */
+  files?: InvestigationFile[];
+  /** Names of the files the analyzer couldn't open. */
+  unreadableFiles?: string[];
   /** SHA-256 of exactly what the analyzer received. */
   contentHash: string;
   requestedBy: { uid: string; nombre: string };
@@ -792,7 +807,7 @@ export interface Investigation {
 
 /** investigations/{id}/events/{eventId}: progress shown while it runs. */
 export interface InvestigationEvent {
-  kind: 'code' | 'database' | 'status';
+  kind: 'code' | 'database' | 'attachment' | 'status';
   text: string;
   at: unknown;
 }

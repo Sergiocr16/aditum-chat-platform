@@ -4,15 +4,25 @@ import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } 
 import type {
   Conversation,
   Investigation,
+  InvestigationFile,
   InvestigationConclusion,
   InvestigationMessageRef,
   InvestigationStatus,
   Message,
 } from '@aditum-chat/shared';
+import {
+  INVESTIGATION_FILE_ACCEPT,
+  INVESTIGATION_MAX_FILE_BYTES,
+  INVESTIGATION_MAX_FILES,
+  investigationFileKind,
+} from '@aditum-chat/shared';
+import { useAuth } from '@/lib/auth';
 import { fmtFecha, useContactThread, useDoc, useGroupThread, useMessages, type Row, type ThreadRow } from '@/lib/data';
 import {
   cancelInvestigation,
+  investigationFileUrl,
   requestInvestigation,
+  uploadInvestigationFile,
   type InvestigationPhase,
   useInvestigationList,
   useInvestigationPhase,
@@ -36,6 +46,15 @@ interface FormStart {
   nonce: number;
   question?: string;
   refs?: InvestigationMessageRef[];
+  uploads?: { storagePath: string; name: string }[];
+}
+
+/** A file the agent added. `problem` is an i18n key: the file stays listed so they see why it won't go. */
+interface Upload {
+  key: string;
+  name: string;
+  storagePath: string | null;
+  problem: 'inv.archivoTipo' | 'inv.archivoGrande' | 'inv.archivoError' | null;
 }
 
 /** null: the list (on a wide panel, the list next to the form). */
@@ -196,7 +215,14 @@ export function InvestigationPanel({
                         setNotified((current) => new Set(current).add(selectedId));
                       },
                       onRetry: () =>
-                        openForm({ nonce: Date.now(), question: selected.data.question, refs: selected.data.messageRefs }),
+                        openForm({
+                          nonce: Date.now(),
+                          question: selected.data.question,
+                          refs: selected.data.messageRefs,
+                          uploads: (selected.data.files ?? [])
+                            .filter((file) => file.source === 'agent')
+                            .map(({ storagePath, name }) => ({ storagePath, name })),
+                        }),
                     }
                   : undefined
               }
@@ -232,7 +258,7 @@ type RobotPose = 'queued' | InvestigationPhase;
  */
 function InvestigatorRobot({ pose, label }: { pose: RobotPose; label: string }) {
   const onDatabase = pose === 'database';
-  const onCode = pose === 'code';
+  const onCode = pose === 'code' || pose === 'files';
   const dancing = pose === 'starting' || pose === 'preparing';
   const queued = pose === 'queued';
   const body = onDatabase ? 'var(--color-navy)' : queued ? 'var(--color-warm-gray-3)' : 'var(--color-ai)';
@@ -503,7 +529,13 @@ function NewInvestigation({
   const [question, setQuestion] = useState(start.question ?? '');
   const [selected, setSelected] = useState<Set<string> | null>(start.refs ? new Set(start.refs.map(keyOf)) : null);
   const [sending, setSending] = useState(false);
-  const [failed, setFailed] = useState(false);
+  const [failed, setFailed] = useState<string | null>(null);
+  const { agent } = useAuth();
+  const [uploads, setUploads] = useState<Upload[]>(() =>
+    (start.uploads ?? []).map(({ storagePath, name }) => ({ key: storagePath, name, storagePath, problem: null })),
+  );
+  const [dragging, setDragging] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Waits for the conversation's messages, so it doesn't mark an empty list.
   useEffect(() => {
@@ -513,7 +545,33 @@ function NewInvestigation({
   const marked = selected ?? new Set<string>();
   const full = marked.size >= MAX_MESSAGES;
   const typed = question.trim().length;
-  const canSend = typed >= MIN_QUESTION_CHARS && marked.size > 0 && !sending;
+  const chatFiles = rows
+    .filter((r) => marked.has(keyOf({ conversationId: r.convId, messageId: r.msg.id })))
+    .flatMap((r) => r.msg.data.adjuntos ?? [])
+    .filter((a) => investigationFileKind(a.mimeType, a.nombre));
+  const readyUploads = uploads.filter((u) => u.storagePath && !u.problem);
+  const fileCount = chatFiles.length + readyUploads.length;
+  const tooManyFiles = fileCount > INVESTIGATION_MAX_FILES;
+  const uploading = uploads.some((u) => !u.storagePath && !u.problem);
+  const canSend = typed >= MIN_QUESTION_CHARS && marked.size > 0 && !sending && !uploading && !tooManyFiles;
+
+  function addFiles(list: FileList | File[]) {
+    for (const file of Array.from(list)) {
+      const key = `${file.name}_${Date.now()}_${Math.random()}`;
+      const problem = !investigationFileKind(file.type, file.name)
+        ? 'inv.archivoTipo'
+        : file.size > INVESTIGATION_MAX_FILE_BYTES
+          ? 'inv.archivoGrande'
+          : null;
+      setUploads((current) => [...current, { key, name: file.name, storagePath: null, problem }]);
+      if (problem || !agent) continue;
+      const update = (patch: Partial<Upload>) =>
+        setUploads((current) => current.map((u) => (u.key === key ? { ...u, ...patch } : u)));
+      uploadInvestigationFile(agent.uid, file)
+        .then((storagePath) => update({ storagePath }))
+        .catch(() => update({ problem: 'inv.archivoError' }));
+    }
+  }
 
   const templates = QUESTION_TEMPLATES.map((id) => ({
     id,
@@ -543,21 +601,52 @@ function NewInvestigation({
 
   async function send() {
     setSending(true);
-    setFailed(false);
+    setFailed(null);
     try {
       const messages = [...marked].map((key) => {
         const [conversationId, messageId] = key.split('/');
         return { conversationId, messageId };
       });
-      onCreated(await requestInvestigation({ conversationId: conv.id, messages, question: question.trim() }));
-    } catch {
-      setFailed(true);
+      onCreated(
+        await requestInvestigation({
+          conversationId: conv.id,
+          messages,
+          question: question.trim(),
+          uploads: readyUploads.map((u) => ({ storagePath: u.storagePath!, name: u.name })),
+        }),
+      );
+    } catch (e) {
+      // The server explains these in the agent's terms: too many files, a daily limit.
+      const { code, message } = e as { code?: string; message?: string };
+      const explained = code === 'functions/invalid-argument' || code === 'functions/resource-exhausted';
+      setFailed(explained && message ? message : t('inv.errorEnviar'));
       setSending(false);
     }
   }
 
   return (
-    <>
+    <div
+      className="relative flex min-h-0 flex-1 flex-col"
+      onDragEnter={(e) => {
+        if ([...e.dataTransfer.types].includes('Files')) setDragging(true);
+      }}
+      onDragOver={(e) => {
+        if ([...e.dataTransfer.types].includes('Files')) e.preventDefault();
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        setDragging(false);
+        addFiles(e.dataTransfer.files);
+      }}
+    >
+      {dragging && (
+        <div
+          className="absolute inset-0 z-10 flex items-center justify-center rounded-lg border-2 border-dashed border-ai bg-ai-bg/90 text-[13px] font-semibold text-ai"
+          onDragLeave={() => setDragging(false)}
+        >
+          {t('inv.soltar')}
+        </div>
+      )}
       <label htmlFor={`inv-question-${conv.id}`} className="block flex-none text-[13px] font-bold text-ink">
         {t('inv.pregunta')}
       </label>
@@ -566,6 +655,12 @@ function NewInvestigation({
         ref={questionRef}
         value={question}
         onChange={(e) => setQuestion(e.target.value)}
+        onPaste={(e) => {
+          if (e.clipboardData.files.length > 0) {
+            e.preventDefault();
+            addFiles(e.clipboardData.files);
+          }
+        }}
         placeholder={t('inv.preguntaAyuda')}
         rows={3}
         maxLength={1000}
@@ -588,6 +683,65 @@ function NewInvestigation({
             {template.label}
           </button>
         ))}
+      </div>
+
+      <div className="mt-2.5 flex-none">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            title={t('inv.archivosAyuda')}
+            className="flex items-center gap-1 rounded-lg border border-warm-border px-2.5 py-1 text-[11.5px] font-semibold text-ink-2 hover:border-ai hover:text-ai focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ai"
+          >
+            <span className="msr text-[15px]">attach_file</span>
+            {t('inv.adjuntar')}
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept={INVESTIGATION_FILE_ACCEPT}
+            className="hidden"
+            onChange={(e) => {
+              if (e.target.files) addFiles(e.target.files);
+              e.target.value = '';
+            }}
+          />
+          <span className={`text-[11px] ${tooManyFiles ? 'font-semibold text-warn-dark' : 'text-warm-gray'}`}>
+            {t('inv.archivos')}: {t('inv.archivosConteo', { n: fileCount, max: INVESTIGATION_MAX_FILES })}
+          </span>
+        </div>
+        {tooManyFiles && (
+          <p className="mt-1 text-[11.5px] text-warn-dark">{t('inv.archivosDemasiados', { max: INVESTIGATION_MAX_FILES })}</p>
+        )}
+        {uploads.length > 0 && (
+          <ul className="mt-1.5 flex max-h-20 flex-wrap gap-1.5 overflow-y-auto">
+            {uploads.map((upload) => (
+              <li
+                key={upload.key}
+                title={upload.problem ? t(upload.problem) : upload.name}
+                className={`flex max-w-full items-center gap-1 rounded-md py-0.5 pl-2 pr-1 text-[11.5px] ${
+                  upload.problem ? 'bg-warn-bg text-warn-dark' : 'bg-cream-2 text-ink-2'
+                }`}
+              >
+                <span className={`msr text-[14px] ${!upload.storagePath && !upload.problem ? 'motion-safe:animate-spin' : ''}`}>
+                  {upload.problem ? 'error' : upload.storagePath ? 'description' : 'progress_activity'}
+                </span>
+                <span className="min-w-0 truncate">{upload.name}</span>
+                {upload.problem && <span className="flex-none font-semibold">{t(upload.problem)}</span>}
+                <button
+                  type="button"
+                  onClick={() => setUploads((current) => current.filter((u) => u.key !== upload.key))}
+                  aria-label={t('inv.archivoQuitar', { name: upload.name })}
+                  title={t('inv.archivoQuitar', { name: upload.name })}
+                  className="flex flex-none rounded p-0.5 hover:bg-black/5"
+                >
+                  <span className="msr text-[13px]">close</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
 
       <div className="mt-3 flex flex-none items-baseline gap-2">
@@ -627,7 +781,16 @@ function NewInvestigation({
                     {isSystem(m) && <span className="flex-none">{t('inv.sistema')}</span>}
                   </span>
                   {m.texto && <span className="line-clamp-2 whitespace-pre-wrap break-words text-[12.5px] text-ink">{m.texto}</span>}
-                  {(m.adjuntos?.length ?? 0) > 0 && <span className="mt-0.5 block text-[11px] text-warm-gray">{t('inv.adjunto')}</span>}
+                  {(m.adjuntos ?? []).map((a) => {
+                    const readable = !!investigationFileKind(a.mimeType, a.nombre);
+                    return (
+                      <span key={a.storagePath} className={`mt-0.5 flex items-center gap-1 text-[11px] ${readable ? 'text-ink-2' : 'text-warm-gray'}`}>
+                        <span className="msr flex-none text-[13px]">{readable ? 'attach_file' : 'block'}</span>
+                        <span className="min-w-0 truncate">{a.nombre ?? a.tipo}</span>
+                        {!readable && <span className="flex-none">· {t('inv.archivoSinLeer')}</span>}
+                      </span>
+                    );
+                  })}
                 </span>
               </label>
             </li>
@@ -637,7 +800,7 @@ function NewInvestigation({
 
       <div className="mt-2 flex flex-none items-center justify-end gap-3">
         <p className="min-w-0 flex-1 text-[11.5px] text-warn-dark">
-          {failed ? t('inv.errorEnviar') : typed > 0 && typed < MIN_QUESTION_CHARS ? t('inv.preguntaCorta') : ''}
+          {failed ?? (typed > 0 && typed < MIN_QUESTION_CHARS ? t('inv.preguntaCorta') : '')}
         </p>
         <button
           onClick={() => void send()}
@@ -648,7 +811,7 @@ function NewInvestigation({
           {sending ? t('inv.enviando') : t('inv.enviar')}
         </button>
       </div>
-    </>
+    </div>
   );
 }
 
@@ -671,6 +834,35 @@ function Collapsible({ title, count, children }: { title: string; count: number;
       </summary>
       <div className="mt-2">{children}</div>
     </details>
+  );
+}
+
+function FileRow({ file }: { file: InvestigationFile }) {
+  const t = useT();
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    investigationFileUrl(file.storagePath)
+      .then((value) => {
+        if (alive) setUrl(value);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [file.storagePath]);
+  return (
+    <li className="flex items-center gap-1.5 text-[12px]">
+      <span className="msr flex-none text-[15px] text-warm-gray">description</span>
+      {url ? (
+        <a href={url} target="_blank" rel="noreferrer" className="min-w-0 truncate font-semibold text-navy hover:underline">
+          {file.name}
+        </a>
+      ) : (
+        <span className="min-w-0 truncate font-semibold text-ink-2">{file.name}</span>
+      )}
+      <span className="flex-none text-[11px] text-warm-gray">{t(file.source === 'chat' ? 'inv.archivoChat' : 'inv.archivoAgente')}</span>
+    </li>
   );
 }
 
@@ -777,7 +969,7 @@ export function InvestigationDetail({
   origin?: ReactNode;
 }) {
   const t = useT();
-  const { status, report, question, error, usedDatabase, messageCount, sha, requestedBy, createdAt } = row.data;
+  const { status, report, question, error, usedDatabase, messageCount, sha, requestedBy, createdAt, files, unreadableFiles } = row.data;
   const queries = useInvestigationQueries(row.id);
   const unfinished = status === 'failed' || status === 'rate_limited' || status === 'cancelled';
 
@@ -899,6 +1091,18 @@ export function InvestigationDetail({
               )}
             </div>
           </div>
+        )}
+
+        {(unreadableFiles?.length ?? 0) > 0 && (
+          <p className="mt-2 text-[12px] text-warn-dark">{t('inv.archivosNoLeidos', { names: unreadableFiles!.join(', ') })}</p>
+        )}
+
+        {(files?.length ?? 0) > 0 && (
+          <Collapsible title={t('inv.archivos')} count={files!.length}>
+            <ul className="space-y-1">
+              {files!.map((file) => <FileRow key={file.id} file={file} />)}
+            </ul>
+          </Collapsible>
         )}
 
         {queries.length > 0 && (

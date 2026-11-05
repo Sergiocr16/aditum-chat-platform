@@ -15,8 +15,8 @@ import type {
   InvestigatorGatewayState,
   InvestigatorRunnerState,
 } from '@aditum-chat/shared';
-import { db, fns } from './firebase';
-import { useDoc, type Row } from './data';
+import { db, fns, storage } from './firebase';
+import { randomFileToken, useDoc, type Row } from './data';
 
 /** Con este tiempo sin noticias de la Pi, se le avisa al agente. */
 const RUNNER_OFFLINE_MS = 3 * 60_000;
@@ -94,10 +94,11 @@ export function useActiveInvestigations(threadKey: string | null): number {
 }
 
 /** What a running investigation is broadly doing, for the agent. The individual steps aren't shown. */
-export type InvestigationPhase = 'starting' | 'preparing' | 'code' | 'database';
+export type InvestigationPhase = 'starting' | 'preparing' | 'files' | 'code' | 'database';
 
 const PHASE_OF: Record<InvestigationEvent['kind'], InvestigationPhase> = {
   status: 'preparing',
+  attachment: 'files',
   code: 'code',
   database: 'database',
 };
@@ -130,9 +131,35 @@ export async function requestInvestigation(input: {
   conversationId: string;
   messages: InvestigationMessageRef[];
   question: string;
+  uploads: { storagePath: string; name: string }[];
 }): Promise<string> {
   const { data } = (await httpsCallable(fns, 'requestInvestigation')(input)) as { data: { id: string } };
   return data.id;
+}
+
+const TYPE_BY_EXTENSION: Record<string, string> = {
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  csv: 'text/csv',
+  md: 'text/markdown',
+  txt: 'text/plain',
+  pdf: 'application/pdf',
+};
+
+/** Private to the investigation: it doesn't go through the chat, so the client never sees it. */
+export async function uploadInvestigationFile(uid: string, file: File): Promise<string> {
+  const { ref, uploadBytes } = await import('firebase/storage');
+  const storagePath = `investigaciones/${uid}/${randomFileToken()}_${file.name}`;
+  const extension = file.name.toLowerCase().split('.').pop() ?? '';
+  // Browsers leave the type empty for some of these, and report CSV as an Excel file on Windows.
+  const contentType = TYPE_BY_EXTENSION[extension] ?? file.type;
+  await uploadBytes(ref(storage, storagePath), file, { contentType });
+  return storagePath;
+}
+
+export async function investigationFileUrl(storagePath: string): Promise<string> {
+  const { getDownloadURL, ref } = await import('firebase/storage');
+  return getDownloadURL(ref(storage, storagePath));
 }
 
 export async function cancelInvestigation(id: string): Promise<void> {

@@ -62,7 +62,10 @@ src/lib/            firebase.ts (SDK + emulator wiring), auth.tsx, i18n.ts, soun
 - **Investigations** (`InvestigationPanel`, mounted by `ConversationView`) are a third composer tab that
   takes about 70% of the column. Master-detail through container queries (`@2xl`): the saved list and
   the form or report side by side when wide, one at a time when not. The steps an investigation takes
-  are never listed: only a phase and a robot (`InvestigatorRobot`, keyframes in `globals.css`). The
+  are never listed: only a phase and a robot (`InvestigatorRobot`, keyframes in `globals.css`). Files:
+  attachments on marked messages go along by themselves, and the agent can add more, uploaded to
+  `investigaciones/{uid}/`, which the client can't read. `investigationFileKind` (shared) decides what
+  can be analyzed, for the console and the server alike. The
   `/investigaciones` page lists all of them across chats; its "Ir al chat" links to
   `/inbox?c=<convId>&inv=<id>`, which opens that report in the tab, where the reply can be used.
 

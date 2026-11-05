@@ -19,3 +19,4 @@ export function contactIdFor(siteId: string, externalId: string): string {
 export function groupConversationIdFor(siteId: string, groupId: string): string {
   return `grupo_${siteId}_${groupId}`;
 }
+export * from './investigations';

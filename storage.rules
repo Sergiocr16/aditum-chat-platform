@@ -31,6 +31,19 @@ service firebase.storage {
          request.resource.contentType.matches('text/.*'));
     }
 
+    // Archivos que un agente sube para una investigación: investigaciones/{uid}/{archivo}.
+    // El cliente nunca los ve; solo el agente que los subió puede crearlos.
+    match /investigaciones/{uid}/{file} {
+      allow read: if isAgent();
+      allow write: if isAgent() && request.auth.uid == uid &&
+        request.resource.size < 25 * 1024 * 1024 &&
+        (request.resource.contentType.matches('image/.*') ||
+         request.resource.contentType.matches('application/pdf') ||
+         request.resource.contentType.matches('application/.*document.*') ||
+         request.resource.contentType.matches('application/.*spreadsheet.*') ||
+         request.resource.contentType.matches('text/.*'));
+    }
+
     // Archivos de la base de conocimiento: kb/{docId}.(pdf|txt|md) — solo admins suben.
     match /kb/{file} {
       allow read: if isAgent();

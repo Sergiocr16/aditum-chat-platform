@@ -2,12 +2,20 @@ import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { defineSecret } from 'firebase-functions/params';
 import { logger } from 'firebase-functions/v2';
 import { HttpsError, onCall, onRequest } from 'firebase-functions/v2/https';
+import {
+  INVESTIGATION_MAX_FILE_BYTES,
+  INVESTIGATION_MAX_FILES,
+  INVESTIGATION_MAX_TOTAL_BYTES,
+  investigationFileKind,
+  type InvestigationFileKind,
+} from '@aditum-chat/shared';
 import type {
   InvestigatorPiConfig,
   Contact,
   Conversation,
   Investigation,
   InvestigationEvent,
+  InvestigationFile,
   InvestigationMessageRef,
   InvestigationQueryRecord,
   InvestigationReport,
@@ -16,7 +24,7 @@ import type {
   InvestigatorDbConfig,
   Message,
 } from '@aditum-chat/shared';
-import { db, FieldValue } from './lib/admin.js';
+import { db, FieldValue, storage } from './lib/admin.js';
 import { decryptJson, encryptJson } from './lib/crypto.js';
 import { getKek } from './pushConfig.js';
 import { checkPi } from './piCheck.js';
@@ -47,8 +55,11 @@ export interface TranscriptMessage {
   senderName: string;
   internalNote: boolean;
   text: string;
-  attachments: { type: string; name: string | null; mimeType: string | null }[];
+  attachments: { type: string; name: string | null; mimeType: string | null; fileId?: string }[];
 }
+
+/** What the analyzer needs to fetch a file. The path stays here: it asks by id. */
+export type InvestigationInputFile = InvestigationFile & { kind: InvestigationFileKind; md5: string | null };
 
 export function threadKeyOf(conv: Pick<Conversation, 'tipo' | 'contactId' | 'groupId'>): string | null {
   if (conv.tipo === 'grupo') return conv.groupId ? `group:${conv.groupId}` : null;
@@ -69,8 +80,56 @@ export function validateRequest(question: unknown, messages: unknown): string | 
   return valid ? null : 'La selección de mensajes no es válida.';
 }
 
-export function contentHash(question: string, transcript: TranscriptMessage[]): string {
-  return createHash('sha256').update(JSON.stringify({ question, transcript })).digest('hex');
+export function contentHash(question: string, transcript: TranscriptMessage[], files: { id: string; md5: string | null }[] = []): string {
+  const content = files.length ? { question, transcript, files: files.map(({ id, md5 }) => ({ id, md5 })) } : { question, transcript };
+  return createHash('sha256').update(JSON.stringify(content)).digest('hex');
+}
+
+/**
+ * A contact writes their own messages, so `storagePath` on one could point anywhere: only
+ * what's under that conversation's folder counts as its attachment. Same check as the bot's.
+ */
+export function isOwnChatAttachment(storagePath: unknown, conversationId: string): storagePath is string {
+  return typeof storagePath === 'string' && storagePath.startsWith(`adjuntos/${conversationId}/`) && !storagePath.includes('..');
+}
+
+/** An agent can only hand in what they uploaded themselves. */
+export function validateUploads(uploads: unknown, uid: string): string | null {
+  if (uploads === undefined) return null;
+  if (!Array.isArray(uploads) || uploads.length > INVESTIGATION_MAX_FILES) return 'Hay demasiados archivos.';
+  const valid = uploads.every(
+    (u) =>
+      typeof u?.storagePath === 'string' &&
+      u.storagePath.startsWith(`investigaciones/${uid}/`) &&
+      !u.storagePath.includes('..') &&
+      typeof u?.name === 'string' &&
+      u.name.length > 0 &&
+      u.name.length <= 200,
+  );
+  return valid ? null : 'Los archivos no son válidos.';
+}
+
+/** Checks that apply once every file's real size is known. */
+export function filesProblem(files: { size: number }[]): string | null {
+  if (files.length > INVESTIGATION_MAX_FILES) return `Se pueden analizar hasta ${INVESTIGATION_MAX_FILES} archivos. Quitá algunos o desmarcá mensajes.`;
+  if (files.some((f) => f.size > INVESTIGATION_MAX_FILE_BYTES)) return 'Hay un archivo de más de 25 MB.';
+  if (files.reduce((total, f) => total + f.size, 0) > INVESTIGATION_MAX_TOTAL_BYTES) return 'Los archivos suman más de 60 MB. Quitá algunos o desmarcá mensajes.';
+  return null;
+}
+
+/** The type comes from Storage, not from what the client said it was uploading. */
+async function fileFromStorage(
+  id: string,
+  source: InvestigationFile['source'],
+  storagePath: string,
+  name: string,
+): Promise<InvestigationInputFile | null> {
+  const [metadata] = await storage.bucket().file(storagePath).getMetadata().catch(() => [null]);
+  if (!metadata) return null;
+  const mimeType = metadata.contentType ?? '';
+  const kind = investigationFileKind(mimeType, name);
+  if (!kind) return null;
+  return { id, source, storagePath, name, mimeType, size: Number(metadata.size ?? 0), kind, md5: metadata.md5Hash ?? null };
 }
 
 export function secretMatches(given: string, expected: string): boolean {
@@ -88,12 +147,13 @@ const dayKey = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Costa
 
 export const requestInvestigation = onCall({ region: 'us-central1' }, async (req) => {
   if (req.auth?.token.kind !== 'agent') throw new HttpsError('permission-denied', 'Solo agentes.');
-  const { conversationId, messages, question } = req.data as {
+  const { conversationId, messages, question, uploads } = req.data as {
     conversationId: string;
     messages: InvestigationMessageRef[];
     question: string;
+    uploads?: { storagePath: string; name: string }[];
   };
-  const invalid = validateRequest(question, messages);
+  const invalid = validateRequest(question, messages) ?? validateUploads(uploads, req.auth.uid);
   if (invalid || typeof conversationId !== 'string' || !conversationId) {
     throw new HttpsError('invalid-argument', invalid ?? 'Falta la conversación.');
   }
@@ -116,19 +176,38 @@ export const requestInvestigation = onCall({ region: 'us-central1' }, async (req
   const snaps = await db.getAll(...uniqueRefs.map((m) => db.doc(`conversations/${m.conversationId}/messages/${m.messageId}`)));
   if (snaps.some((snap) => !snap.exists)) throw new HttpsError('not-found', 'Hay mensajes que ya no existen.');
 
-  const transcript = snaps
-    .map((snap) => ({ message: snap.data() as Message, at: toDate((snap.data() as Message).createdAt) }))
-    .sort((a, b) => (a.at?.getTime() ?? 0) - (b.at?.getTime() ?? 0))
-    .map(
-      ({ message, at }): TranscriptMessage => ({
-        at: at?.toISOString() ?? null,
-        senderType: message.sender.tipo,
-        senderName: message.sender.nombre,
-        internalNote: message.interno === true,
-        text: message.texto ?? '',
-        attachments: (message.adjuntos ?? []).map((a) => ({ type: a.tipo, name: a.nombre ?? null, mimeType: a.mimeType ?? null })),
-      }),
-    );
+  const files: InvestigationInputFile[] = [];
+  const transcript: TranscriptMessage[] = [];
+  const ordered = snaps
+    .map((snap) => ({ message: snap.data() as Message, at: toDate((snap.data() as Message).createdAt), convId: snap.ref.parent.parent!.id }))
+    .sort((a, b) => (a.at?.getTime() ?? 0) - (b.at?.getTime() ?? 0));
+  for (const { message, at, convId } of ordered) {
+    const attachments: TranscriptMessage['attachments'] = [];
+    for (const a of message.adjuntos ?? []) {
+      const name = a.nombre ?? a.storagePath?.split('/').pop() ?? 'archivo';
+      const file = isOwnChatAttachment(a.storagePath, convId)
+        ? await fileFromStorage(`f${files.length + 1}`, 'chat', a.storagePath, name)
+        : null;
+      if (file) files.push(file);
+      attachments.push({ type: a.tipo, name: a.nombre ?? null, mimeType: a.mimeType ?? null, ...(file && { fileId: file.id }) });
+    }
+    transcript.push({
+      at: at?.toISOString() ?? null,
+      senderType: message.sender.tipo,
+      senderName: message.sender.nombre,
+      internalNote: message.interno === true,
+      text: message.texto ?? '',
+      attachments,
+    });
+  }
+
+  for (const upload of uploads ?? []) {
+    const file = await fileFromStorage(`f${files.length + 1}`, 'agent', upload.storagePath, upload.name);
+    if (!file) throw new HttpsError('invalid-argument', `No se puede analizar ${upload.name}.`);
+    files.push(file);
+  }
+  const tooMany = filesProblem(files);
+  if (tooMany) throw new HttpsError('invalid-argument', tooMany);
 
   const contact = anchor.contactId
     ? ((await db.doc(`contacts/${anchor.contactId}`).get()).data() as Contact | undefined)
@@ -145,7 +224,8 @@ export const requestInvestigation = onCall({ region: 'us-central1' }, async (req
     question: trimmed,
     messageCount: transcript.length,
     messageRefs: uniqueRefs.map(({ conversationId: c, messageId }) => ({ conversationId: c, messageId })),
-    contentHash: contentHash(trimmed, transcript),
+    files: files.map(({ id, source, storagePath, name, mimeType, size }) => ({ id, source, storagePath, name, mimeType, size })),
+    contentHash: contentHash(trimmed, transcript, files),
     requestedBy: { uid: req.auth.uid, nombre: agent?.nombre ?? req.auth.token.email ?? 'Agente' },
     status: 'queued',
     createdAt: FieldValue.serverTimestamp(),
@@ -163,6 +243,7 @@ export const requestInvestigation = onCall({ region: 'us-central1' }, async (req
     tx.set(db.doc(`investigation_inputs/${ref.id}`), {
       question: trimmed,
       transcript,
+      files,
       context: {
         siteId: anchor.siteId,
         clientNombre: anchor.clientNombre ?? anchor.groupName ?? null,
@@ -254,6 +335,16 @@ interface CompleteBody {
   usedDatabase?: boolean;
   costUsd?: number | null;
   report?: InvestigationReport | null;
+  unreadableFiles?: string[];
+}
+
+/** Only while its job runs, and only files that job was given: the Pi asks by id, never by path. */
+async function attachmentFor(id: unknown, fileId: unknown): Promise<InvestigationInputFile | null> {
+  if (typeof id !== 'string' || !id || typeof fileId !== 'string') return null;
+  const investigation = await db.doc(`investigations/${id}`).get();
+  if (investigation.data()?.status !== 'running') return null;
+  const input = (await db.doc(`investigation_inputs/${id}`).get()).data() as { files?: InvestigationInputFile[] } | undefined;
+  return input?.files?.find((file) => file.id === fileId) ?? null;
 }
 
 async function complete(body: CompleteBody) {
@@ -272,6 +363,7 @@ async function complete(body: CompleteBody) {
       usedDatabase: body.usedDatabase === true,
       costUsd: body.costUsd ?? null,
       report: body.report ?? null,
+      unreadableFiles: (body.unreadableFiles ?? []).slice(0, INVESTIGATION_MAX_FILES).map((name) => String(name).slice(0, 200)),
       finishedAt: FieldValue.serverTimestamp(),
     });
   });
@@ -279,7 +371,8 @@ async function complete(body: CompleteBody) {
 }
 
 export const investigationRunner = onRequest(
-  { region: 'us-central1', secrets: [runnerSecret], timeoutSeconds: 60 },
+  // Sending a file to the Pi is what takes the time and the memory.
+  { region: 'us-central1', secrets: [runnerSecret], timeoutSeconds: 180, memory: '512MiB' },
   async (req, res) => {
     const bearer = (req.headers.authorization ?? '').replace(/^Bearer /, '');
     if (req.method !== 'POST' || !secretMatches(bearer, runnerSecret.value())) {
@@ -301,6 +394,15 @@ export const investigationRunner = onRequest(
         res.json(await saveProgress(req.body as ProgressBody));
       } else if (body.action === 'complete') {
         res.json(await complete(req.body as CompleteBody));
+      } else if (body.action === 'attachment') {
+        const { id, fileId } = req.body as { id?: unknown; fileId?: unknown };
+        const file = await attachmentFor(id, fileId);
+        if (!file) {
+          res.status(404).json({ error: 'not found' });
+          return;
+        }
+        const [buffer] = await storage.bucket().file(file.storagePath).download();
+        res.set('content-type', 'application/octet-stream').send(buffer);
       } else {
         res.status(400).json({ error: 'unknown action' });
       }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { contentHash, dbSettingsProblem, secretMatches, threadKeyOf, validateRequest } from './investigations.js';
+import { contentHash, dbSettingsProblem, filesProblem, isOwnChatAttachment, validateUploads, secretMatches, threadKeyOf, validateRequest } from './investigations.js';
 
 const ref = { conversationId: 'c', messageId: 'm' };
 
@@ -58,5 +58,40 @@ describe('dbSettingsProblem', () => {
     expect(dbSettingsProblem({ ...ok, port: 99999 }, false)).toMatch(/puerto/);
     expect(dbSettingsProblem({ ...ok, user: "x' OR 1" }, false)).toMatch(/usuario/);
     expect(dbSettingsProblem({ ...ok, database: 'mysql' }, false)).toMatch(/sistema/);
+  });
+});
+
+describe('investigation files', () => {
+  it('only takes a chat attachment from its own conversation', () => {
+    expect(isOwnChatAttachment('adjuntos/c1/abc_recibo.pdf', 'c1')).toBe(true);
+    expect(isOwnChatAttachment('adjuntos/c2/abc_recibo.pdf', 'c1')).toBe(false);
+    expect(isOwnChatAttachment('kb/manual.pdf', 'c1')).toBe(false);
+    expect(isOwnChatAttachment('adjuntos/c1/../c2/x.pdf', 'c1')).toBe(false);
+    expect(isOwnChatAttachment(undefined, 'c1')).toBe(false);
+  });
+
+  it('only takes uploads the agent made', () => {
+    const own = { storagePath: 'investigaciones/u1/abc_x.pdf', name: 'x.pdf' };
+    expect(validateUploads(undefined, 'u1')).toBeNull();
+    expect(validateUploads([own], 'u1')).toBeNull();
+    expect(validateUploads([own], 'u2')).not.toBeNull();
+    expect(validateUploads([{ ...own, storagePath: 'adjuntos/c1/x.pdf' }], 'u1')).not.toBeNull();
+    expect(validateUploads([{ ...own, storagePath: 'investigaciones/u1/../u2/x.pdf' }], 'u1')).not.toBeNull();
+    expect(validateUploads('nope', 'u1')).not.toBeNull();
+    expect(validateUploads(Array(11).fill(own), 'u1')).not.toBeNull();
+  });
+
+  it('limits by count, per file and in total', () => {
+    const mb = 1024 * 1024;
+    expect(filesProblem([{ size: mb }])).toBeNull();
+    expect(filesProblem(Array(11).fill({ size: 1 }))).not.toBeNull();
+    expect(filesProblem([{ size: 26 * mb }])).not.toBeNull();
+    expect(filesProblem(Array(3).fill({ size: 21 * mb }))).not.toBeNull();
+  });
+
+  it('hashes what the files were, and stays the same without any', () => {
+    const base = contentHash('q', []);
+    expect(contentHash('q', [], [])).toBe(base);
+    expect(contentHash('q', [], [{ id: 'f1', md5: 'a' }])).not.toBe(contentHash('q', [], [{ id: 'f1', md5: 'b' }]));
   });
 });
